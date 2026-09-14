@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -383,6 +384,60 @@ func TestDeliverTwiceChargesOnce(t *testing.T) {
 	u, _ := h.repo.UserByID(ctx, "u")
 	if u.Credits != 98 {
 		t.Errorf("credits = %d, want 98", u.Credits)
+	}
+}
+
+// TestDeliverIsAtomicUnderRace proves a job cannot be delivered twice even when
+// two clients race for it.
+//
+// The atomicity comes from results.Take removing and returning inside one
+// critical section: only one caller gets the result, so only one reaches the
+// charging transaction. Asserting the LEDGER ROW COUNT rather than the balance
+// is what makes this test able to fail for the right reason — a balance that
+// moved once could also mean the second call failed early for some unrelated
+// reason.
+func TestDeliverIsAtomicUnderRace(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+
+	j := upload(t, h, "u", router.UploadInput{Body: strings.NewReader("x")})
+	mustRun(t, h, j.ID, []string{"a", "b", "c"})
+
+	const n = 16
+	var (
+		mu   sync.Mutex
+		wins int
+		wg   sync.WaitGroup
+	)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := h.svc.Deliver(ctx, "u", j.ID, base); err == nil {
+				mu.Lock()
+				wins++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if wins != 1 {
+		t.Errorf("%d concurrent deliveries produced %d successes, want exactly 1", n, wins)
+	}
+	entries, err := h.repo.Ledger(ctx, "u", 10)
+	if err != nil {
+		t.Fatalf("Ledger: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("ledger rows = %d, want exactly 1 — more than one means the same job was "+
+			"charged twice, and each row would look legitimate on its own", len(entries))
+	}
+	u, _ := h.repo.UserByID(ctx, "u")
+	if u.Credits != 97 {
+		t.Errorf("credits = %d, want 97", u.Credits)
 	}
 }
 

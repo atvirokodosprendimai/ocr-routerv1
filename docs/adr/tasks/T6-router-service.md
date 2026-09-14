@@ -108,13 +108,13 @@ run second as regression. Red at authoring: `internal/router` does not exist.
 | `TestUploadRefusesWithoutCredits` | `internal/router/service_test.go` | `credits == 0` is `core.ErrNoCredits`, and no blob and no row are created | — | S2 |
 | `TestUploadRefusesAtBufferLimit` | `internal/router/service_test.go` | the `(limit+1)`-th in-flight upload is `core.ErrBufferFull`, and the limit counts `queued`+`processing`+`done` | — | S2 |
 | `TestUploadBufferLimitFreesOnDelivery` | `internal/router/service_test.go` | after delivering one job the customer can upload again — the limit is in-flight, not lifetime | — | S2, S6 |
-| `TestUploadPersistsBeforePublish` | `internal/router/service_test.go` | a repo write error yields **zero** published events | — | S2 |
+| `TestUploadPublishesWorkAfterPersisting` | `internal/router/service_test.go` | a work event is published only once the row is readable — persist before publish | — | S2 |
 | `TestUploadSetsDeadlineFromUserTTL` | `internal/router/service_test.go` | `expires_at = queued_at + job_ttl_secs`, and is NULL when the TTL is 0 | — | S2 |
 | `TestClaimLeasesOneQueuedJob` | `internal/router/service_test.go` | `Claim` returns a job now in `processing` with the lease set to `now+lease` and `worker_id` set | — | S3 |
 | `TestClaimOnEmptyQueue` | `internal/router/service_test.go` | with nothing claimable, `Claim` is `core.ErrNotFound` and writes nothing | — | S3 |
 | `TestCompleteRequiresLease` | `internal/router/service_test.go` | a worker that does not hold the lease gets `core.ErrConflict` and the result is not stored | — | S4 |
 | `TestCompleteRejectsExpiredLease` | `internal/router/service_test.go` | the original worker is refused after its lease expired and the job was requeued | — | S4, S9 |
-| `TestDeliverChargesOncePerPage` | `internal/router/service_test.go` | a 7-page result debits exactly 7, with one ledger row | — | S6 |
+| `TestDeliverChargesOncePerUnit` | `internal/router/service_test.go` | a 7-unit result debits exactly 7 | — | S6 |
 | `TestDeliverTwiceChargesOnce` | `internal/router/service_test.go` | the second `Deliver` is `core.ErrNotFound` and the balance is unchanged — the double-charge guard | — | S6 |
 | `TestDeliverIsAtomicUnderRace` | `internal/router/service_test.go` | N concurrent `Deliver` calls for one job produce exactly one success and one ledger row | — | S6 |
 | `TestDeliverRefusesOtherUsersJob` | `internal/router/service_test.go` | customer B cannot deliver customer A's job, and A is not charged | — | S6 |
@@ -123,20 +123,23 @@ run second as regression. Red at authoring: `internal/router` does not exist.
 | `TestUploadRejectsUnknownLabel` | `internal/router/service_test.go` | a label no live worker advertises is refused at upload with the available labels named, rather than queued to sit until its deadline | — | S2 |
 | `TestUploadRejectsBadParamKey` | `internal/router/service_test.go` | a param key failing `core.ValidParamKey` refuses the whole upload and writes no blob and no row | — | S2 |
 | `TestUploadWithoutBlobIsValid` | `internal/router/service_test.go` | a params-only crawler job is created with `has_blob=false`, no blob written, and is claimable | — | S2 |
-| `TestPipelineAdvancesWithoutNotifyingClient` | `internal/router/service_test.go` | completing stage 0 of a two-stage job requeues it under the next label and publishes **zero** `ready` events — counted, because "a ready was published" passes in both arrangements | — | S4 |
-| `TestPipelineReadyOnlyAfterLastStage` | `internal/router/service_test.go` | across both stages exactly **one** `ready` is published, after the second | — | S4 |
-| `TestPipelineIntermediateBecomesNextInput` | `internal/router/service_test.go` | stage 0's output is the blob stage 1 is handed; one element verbatim, two joined by a newline | — | S4 |
-| `TestPipelinePreservesQueuedAtAcrossStages` | `internal/router/service_test.go` | a job at stage 1 keeps its original `queued_at`, so it is preferred over a freshly uploaded one | — | S4 |
-| `TestPipelineAccruesPerStageRate` | `internal/router/service_test.go` | a crawl at rate 0 followed by OCR at rate 1 over 3 pages charges 3, debited once at delivery | — | S4, S6 |
-| `TestDeliverChargesAccruedTotal` | `internal/router/service_test.go` | the ledger row equals `accrued_credits`, not `len(result)`, so a multi-stage job is not under-billed | — | S6 |
+| `TestPipelineAdvancesWithoutNotifyingClient` | `internal/router/pipeline_test.go` | completing stage 0 of a two-stage job requeues it under the next label and publishes **zero** client events, and the whole pipeline publishes exactly **one** `ready` — counted, because "a ready was published" passes in both arrangements | — | S4 |
+| `TestPipelineIntermediateBecomesNextInput` | `internal/router/pipeline_test.go` | stage 0's output is the blob stage 1 is handed, verbatim, and `has_blob` flips for a job that started without one | — | S4 |
+| `TestPipelineMultiElementIntermediateIsJoined` | `internal/router/pipeline_test.go` | a multi-element intermediate is newline-joined — the documented, lossy encoding choice | — | S4 |
+| `TestPipelinePreservesQueuedAtAcrossStages` | `internal/router/pipeline_test.go` | a job at stage 1 keeps its original `queued_at`, so it is preferred over freshly uploaded work | — | S4 |
+| `TestPipelineAccruesPerStageRate` | `internal/router/pipeline_test.go` | crawl at rate 0 then OCR at rate 2 over 3 pages charges 6, in ONE ledger row equal to `accrued_credits` rather than to `len(result)` | — | S4, S6 |
+| `TestSingleStageUsesDefaultRateOfOne` | `internal/router/pipeline_test.go` | an unconfigured service costs 1 per unit — the operator's original "1 page = 1 credit" | — | S6 |
 | `TestFailRequeuesUntilMaxAttempts` | `internal/router/service_test.go` | attempts 1..N-1 requeue and attempt N is `dead` with the blob deleted | — | S5 |
 | `TestFailPreservesQueuedAt` | `internal/router/service_test.go` | a requeued job keeps its original `queued_at`, so a retry does not lose its accrued age | — | S5 |
-| `TestBacklogListsDoneJobs` | `internal/router/service_test.go` | only `done` jobs of that user are listed, with their page counts | — | S7 |
+| `TestBacklogListsCollectableResults` | `internal/router/service_test.go` | only this user's `done` jobs are listed, and a job whose result was swept is omitted rather than promised | — | S7 |
 | `TestRecoverOnBootRequeues` | `internal/router/reaper_test.go` | `processing` and `done` become `queued`, nothing is charged, no blob is deleted | — | S8 |
 | `TestReapRequeuesExpiredLease` | `internal/router/reaper_test.go` | a job whose lease passed is `queued` again with `attempts` incremented | — | S9 |
 | `TestReapExpiresOverdueQueued` | `internal/router/reaper_test.go` | an overdue `queued` job becomes `expired`, is not charged, its blob is deleted, and its owner receives `failed` with `reason:"expired"` | — | S9 |
 | `TestReapLeavesProcessingPastDeadline` | `internal/router/reaper_test.go` | a `processing` job past its deadline is **not** expired — work already started runs to completion | — | S9 |
 | `TestReapSweepsResultsAndRequeues` | `internal/router/reaper_test.go` | an expired result returns its job to `queued` rather than stranding it in `done` | — | S9 |
+| `TestReapAbandonsAfterMaxAttempts` | `internal/router/reaper_test.go` | three lapsed leases exhaust the attempt budget and the job becomes `dead` | — | S9 |
+| `TestRecoverOnBootWakesWorkers` | `internal/router/reaper_test.go` | boot recovery publishes work for every label that now has a queue, so recovered jobs do not sit until the next upload | — | S8 |
+| `TestAvailableLabelsUsesGraceWindow` | `internal/router/service_test.go` | a label stays valid inside `LabelGrace` after its last worker disconnects and is gone after it — the rolling-restart guard | — | S2 |
 
 ## Reachability
 
@@ -200,3 +203,4 @@ OCR N times costs the customer nothing and the operator N attempts of worker tim
 - 2026-09-15 · e9329c4* · exit 0 · `set -o pipefail …` · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · ms:4522
 - 2026-09-15 · e9329c4* · exit 0 · `set -o pipefail …` · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · ms:4298
 - 2026-09-15 · e9329c4* · exit 0 · `set -o pipefail …` · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · ms:4189
+- 2026-09-15 · e54cc8f* · exit 0 · `set -o pipefail …` · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · ms:5762
