@@ -91,33 +91,36 @@ Red at authoring: `internal/httpapi` does not exist.
 
 | Test name | File | Verifies | Covers | Steps |
 |-----------|------|----------|--------|-------|
-| `TestUnauthenticatedIsRejected` | `internal/httpapi/middleware_test.go` | all five routes are 401 without a token, **driven from the table returned by `New`** so a newly added unguarded route fails this test | — | S2, S3 |
-| `TestEveryRouteIsMounted` | `internal/httpapi/api_test.go` | each of the five paths resolves to a handler rather than chi's 404 — the test that goes red when a route is deleted | — | S2 |
-| `TestClaimRequiresWorkerRole` | `internal/httpapi/claim_test.go` | client and admin tokens get 403 on `POST /claim` | — | S3, S8 |
-| `TestUploadBranchesOnRoleNotBody` | `internal/httpapi/upload_test.go` | a **client** token posting a worker-shaped JSON body gets 400 and completes no job — the role-confusion guard | — | S4 |
-| `TestUploadClientCreatesJob` | `internal/httpapi/upload_test.go` | multipart from a client yields 201 and a `queued` job | — | S5 |
-| `TestUploadRejectsOversizeBody` | `internal/httpapi/upload_test.go` | a body past the cap is refused without buffering it all | — | S5 |
-| `TestUploadWorkerCompletesJob` | `internal/httpapi/upload_test.go` | worker JSON with pages yields 204 and a `done` job | — | S6 |
-| `TestUploadWorkerReportsFailure` | `internal/httpapi/upload_test.go` | worker JSON with `error` requeues the job | — | S6 |
-| `TestFilesClientGetsResultAndIsCharged` | `internal/httpapi/files_test.go` | a client gets the pages JSON and the balance moves | — | S7 |
-| `TestFilesClientSecondFetchIs404` | `internal/httpapi/files_test.go` | the result is gone after delivery | — | S7 |
+| `TestUnauthenticatedIsRejected` | `internal/httpapi/api_test.go` | all five routes are 401 with a `WWW-Authenticate` challenge, **driven from the route table `Routes()` returns** so a newly added unguarded route fails this test the moment it appears | — | S2, S3 |
+| `TestEveryRouteIsMounted` | `internal/httpapi/api_test.go` | each of the five paths resolves to a handler rather than chi's 404 — red when a route is deleted | — | S2 |
+| `TestClaimRequiresWorkerRole` | `internal/httpapi/api_test.go` | client and admin tokens get 403 on `POST /claim` | — | S3, S8 |
+| `TestUploadBranchesOnRoleNotBody` | `internal/httpapi/api_test.go` | a **client** token posting a worker-shaped JSON body does NOT complete a job and gets 400 — the role-confusion guard | — | S4 |
+| `TestUploadClientCreatesJob` | `internal/httpapi/api_test.go` | multipart from a client yields 201 and a `queued` job with its blob | — | S5 |
+| `TestUploadReadsLabelAndParams` | `internal/httpapi/api_test.go` | `?label=crawl&url=…` sets the label and the params, and the reserved `label`/`pipeline` keys do not leak into them | — | S5 |
+| `TestUploadAcceptsPipeline` | `internal/httpapi/api_test.go` | `?pipeline=crawl,strip-html` yields a two-stage job whose first label is `crawl` | — | S5 |
+| `TestUploadWithNoBodyIsValid` | `internal/httpapi/api_test.go` | a params-only POST with no body yields 201 — the crawler shape is legitimate, not malformed | — | S5 |
+| `TestUploadRejectsUnknownLabelWithAvailable` | `internal/httpapi/api_test.go` | an unknown label is 404 and the body NAMES the available labels, so a typo fails immediately instead of waiting for the deadline | — | S5 |
+| `TestUploadRejectsOversizeBody` | `internal/httpapi/api_test.go` | a body past the cap is refused | — | S5 |
+| `TestErrorStatusMapping` | `internal/httpapi/api_test.go` | every sentinel in `core` maps to its status, and a WRAPPED sentinel maps identically — so the mapper must use `errors.Is` and a new sentinel cannot default to 500 | — | S10 |
+| `TestFilesClientGetsResultAndIsCharged` | `internal/httpapi/files_test.go` | a client gets the units JSON and the balance moves by the unit count | — | S7 |
+| `TestFilesClientSecondFetchIs404` | `internal/httpapi/files_test.go` | the second fetch is 404 and leaves exactly one debit row | — | S7 |
+| `TestFilesRejectsOtherUsersJob` | `internal/httpapi/files_test.go` | another customer gets 404, not 403 — they must not learn the id exists | — | S7 |
 | `TestFilesWorkerNeedsLease` | `internal/httpapi/files_test.go` | a worker without the lease gets 409; the lease holder gets the bytes | — | S7 |
-| `TestFilesRejectsNonUUIDPath` | `internal/httpapi/files_test.go` | `../../etc/passwd` and a plain word are 404 before any filesystem call | — | S7 |
-| `TestUploadReadsLabelAndParams` | `internal/httpapi/upload_test.go` | `?label=crawl&url=x` yields a job with that label and `{"url":"x"}` as params, and the reserved `label`/`pipeline` keys do not leak into params | — | S5 |
-| `TestUploadAcceptsPipeline` | `internal/httpapi/upload_test.go` | `?pipeline=crawl,strip-html` yields a two-stage job whose first label is `crawl` | — | S5 |
-| `TestUploadWithNoBodyIsValid` | `internal/httpapi/upload_test.go` | a params-only POST with no multipart body yields 201, not 400 — the crawler shape | — | S5 |
-| `TestUploadRejectsUnknownLabelWithAvailable` | `internal/httpapi/upload_test.go` | an unknown label is 400 and the body names the labels that are available | — | S5 |
-| `TestClaimIsLabelScoped` | `internal/httpapi/claim_test.go` | a worker claiming `?label=strip-html` never receives an `ocr` job | — | S8 |
-| `TestClaimResponseCarriesParamsAndHasBlob` | `internal/httpapi/claim_test.go` | the claim response gives the worker everything it needs to build argv without a second request | — | S8 |
-| `TestServicesListsLiveLabels` | `internal/httpapi/api_test.go` | `GET /services` lists a label while a worker advertising it is connected, and keeps listing it inside the grace window after that worker disconnects | — | S2 |
-| `TestClaimEmptyQueueIs204` | `internal/httpapi/claim_test.go` | nothing claimable is 204 with an empty body, not 404 | — | S8 |
-| `TestSSEClearsWriteDeadline` | `internal/httpapi/sse_test.go` | against a server with a 100ms `WriteTimeout`, a stream still delivers an event after 300ms — **fails if the deadline clear is removed**, which no markup or handler assertion would catch | — | S9 |
-| `TestSSESendsBacklogOnConnect` | `internal/httpapi/sse_test.go` | a client with two `done` jobs receives both in `backlog` immediately on connect | — | S9 |
+| `TestFilesRejectsNonUUIDPath` | `internal/httpapi/files_test.go` | `..` and a malformed id are 404 before any filesystem call | — | S7 |
+| `TestClaimEmptyQueueIs204` | `internal/httpapi/files_test.go` | nothing claimable is 204, not 404 — an empty queue is the normal answer to a polling worker | — | S8 |
+| `TestClaimIsLabelScopedAndCarriesParams` | `internal/httpapi/files_test.go` | a `crawl` worker never receives an `ocr` job, and the claim carries params and `has_blob` so no second request is needed | — | S8 |
+| `TestUploadWorkerCompletesJob` | `internal/httpapi/files_test.go` | worker JSON with units yields 204 and a `done` job | — | S6 |
+| `TestUploadWorkerReportsFailure` | `internal/httpapi/files_test.go` | worker JSON with `error` requeues the job and records the reason | — | S6 |
+| `TestServicesListsLiveLabels` | `internal/httpapi/files_test.go` | `GET /services` lists the live labels, sorted | — | S2 |
+| `TestSSEClearsWriteDeadline` | `internal/httpapi/sse_test.go` | against a server with a **150ms `WriteTimeout`**, a stream still delivers an event 400ms later — the guard for a whole class of silent production failure, and deliberately run against a server that HAS a WriteTimeout so it cannot pass vacuously | — | S9 |
+| `TestSSESendsHelloAndBacklog` | `internal/httpapi/sse_test.go` | a client stream opens with `hello` then `backlog` | — | S9 |
 | `TestSSEDeliversReadyEvent` | `internal/httpapi/sse_test.go` | a `ready` published during the stream arrives on it | — | S9 |
-| `TestSSEIsUserScoped` | `internal/httpapi/sse_test.go` | customer A's stream never receives customer B's job id | — | S9 |
-| `TestSSESendsPing` | `internal/httpapi/sse_test.go` | with the interval shortened, a `ping` arrives on an idle stream | — | S9 |
-| `TestSSEUnsubscribesOnDisconnect` | `internal/httpapi/sse_test.go` | after the client cancels, `bus.Subscribers(topic)` returns to 0 | — | S9 |
-| `TestErrorStatusMapping` | `internal/httpapi/errors_test.go` | each sentinel maps to its status, table-driven over every sentinel in `core` so a new one cannot default to 500 | — | S10 |
+| `TestSSEIsUserScoped` | `internal/httpapi/sse_test.go` | customer A's stream never carries customer B's event | — | S9 |
+| `TestSSEWorkerStreamIsLabelScoped` | `internal/httpapi/sse_test.go` | an `ocr` worker stream ignores `strip-html` work and receives `ocr` work | — | S9 |
+| `TestSSEWorkerRequiresLabel` | `internal/httpapi/sse_test.go` | a worker stream without `?label` is 400 rather than subscribing to nothing and waiting forever | — | S9 |
+| `TestSSESendsPing` | `internal/httpapi/sse_test.go` | a `ping` arrives on an idle stream | — | S9 |
+| `TestSSEUnsubscribesOnDisconnect` | `internal/httpapi/sse_test.go` | `bus.Subscribers` returns to 0 after the client disconnects | — | S9 |
+| `TestSSEStopsWhenContextCancelled` | `internal/httpapi/sse_test.go` | the handler returns on `r.Context().Done()` rather than leaking a goroutine | — | S9 |
 
 ## Reachability
 
@@ -129,6 +132,12 @@ Red at authoring: `internal/httpapi` does not exist.
 | 4 — it is used | T8's end-to-end test drives all four endpoints over a real `httptest` server |
 
 ## Mutation Log
+
+- 2026-09-15 · d07ad51* · mutant killed · exit 1 · `internal/httpapi/sse.go` · WriteTimeout guillotines a long-lived stream with nothing in the logs; only the per-stream deadline clear prevents it, and no handler logic substitutes. · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e · covers:the cleared write deadline
+- 2026-09-15 · d07ad51* · mutant killed · exit 1 · `internal/httpapi/upload.go` · Letting the payload choose the branch is role confusion: a client could post a worker-shaped result, complete its own job with output it wrote, and be charged for it. · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e · covers:the role gate
+- 2026-09-15 · d07ad51* · mutant killed · exit 1 · `internal/httpapi/files.go` · The lease IS the authorisation for a worker to read a source file; without it any worker reads any customer's document by enumerating job ids. · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e
+- 2026-09-15 · d07ad51* · mutant killed · exit 1 · `internal/httpapi/api.go` · Every route must be authenticated; the table-driven guard walks the real route table so removing the middleware fails for all five at once. · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e
+- 2026-09-15 · d07ad51* · mutant killed · exit 1 · `internal/httpapi/errors.go` · A sentinel that loses its mapping becomes a 500, which tells the client to retry a condition that a retry cannot fix. · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e · covers:the status mapping
 
 ## Invariants
 
@@ -167,3 +176,10 @@ connection drops mid-download has been charged for bytes it did not finish readi
 - The binary and its flags — T8's.
 
 ## Verification Log
+- 2026-09-15 · d07ad51* · exit 0 · `set -o pipefail …` · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e · ms:7365
+- 2026-09-15 · d07ad51* · exit 0 · `set -o pipefail …` · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e · ms:5417
+- 2026-09-15 · d07ad51* · exit 0 · `set -o pipefail …` · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e · ms:4768
+- 2026-09-15 · d07ad51* · exit 0 · `set -o pipefail …` · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e · ms:4906
+- 2026-09-15 · d07ad51* · exit 0 · `set -o pipefail …` · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e · ms:7415
+- 2026-09-15 · d07ad51* · exit 0 · `set -o pipefail …` · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e · ms:4803
+- 2026-09-15 · d07ad51* · exit 0 · `set -o pipefail …` · acceptance-sha256:18609c9af391daaae46dcbbe7a7cc8a44383e6a3956f97d1ae944ed2f95e485e · ms:6680
