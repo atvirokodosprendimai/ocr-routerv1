@@ -90,6 +90,9 @@ one package whose whole subject is concurrency.
 
 ## Mutation Log
 
+- 2026-09-15 · be8d1d1* · mutant killed · exit 1 · `internal/bus/bus.go` · Dropping the superseded event rather than the new one is the whole policy; the inverse strands a reader on stale state forever and is equally easy to write. · acceptance-sha256:b05d7d6acdf355324e619a9a5280db73a41b1abbad7986195dc06f15bb47165d · covers:the drop-oldest send
+- 2026-09-15 · be8d1d1* · mutant killed · exit 1 · `internal/bus/bus.go` · An empty topic map entry must be reaped, or a long-lived router accumulates one empty map per user it has ever served. · acceptance-sha256:b05d7d6acdf355324e619a9a5280db73a41b1abbad7986195dc06f15bb47165d · covers:the unsubscribe under lock
+
 ## Invariants
 
 - `Publish` never blocks.
@@ -119,3 +122,7 @@ explicit operator decision (ADR §Out of Scope) and is not an implementation det
 - SSE framing — T7's.
 
 ## Verification Log
+- 2026-09-15 · be8d1d1* · exit 0 · `set -o pipefail …` · acceptance-sha256:b05d7d6acdf355324e619a9a5280db73a41b1abbad7986195dc06f15bb47165d · ms:2152
+- 2026-09-15 · be8d1d1* · exit 0 · `set -o pipefail …` · acceptance-sha256:b05d7d6acdf355324e619a9a5280db73a41b1abbad7986195dc06f15bb47165d · ms:2042
+- 2026-09-15 · be8d1d1* · exit 0 · `set -o pipefail …` · acceptance-sha256:b05d7d6acdf355324e619a9a5280db73a41b1abbad7986195dc06f15bb47165d · ms:2121
+- 2026-09-15 · be8d1d1* · exit 0 · `set -o pipefail …` · acceptance-sha256:b05d7d6acdf355324e619a9a5280db73a41b1abbad7986195dc06f15bb47165d · ms:2382

@@ -90,6 +90,10 @@ Red at authoring: neither package exists, so `go build ./...` fails.
 
 ## Mutation Log
 
+- 2026-09-15 · be8d1d1* · mutant killed · exit 1 · `internal/results/store.go` · Take must remove and return in one critical section; leaving the entry lets two clients receive the same result and both be charged. · acceptance-sha256:bbc0d61bda07c4715a69d492233707ce98d1266b2a6a95f51415be1892e535d4 · covers:the TTL clock
+- 2026-09-15 · be8d1d1* · mutant killed · exit 1 · `internal/results/store.go` · The returned ids ARE the contract: the caller requeues them, and dropping them strands each job in done with no result, forever. · acceptance-sha256:bbc0d61bda07c4715a69d492233707ce98d1266b2a6a95f51415be1892e535d4
+- 2026-09-15 · be8d1d1* · mutant killed · exit 1 · `internal/blob/store.go` · The id arrives from a URL path; without validation a traversal reads any file the process can open. · acceptance-sha256:bbc0d61bda07c4715a69d492233707ce98d1266b2a6a95f51415be1892e535d4
+
 ## Invariants
 
 - A result exists **only** in memory; nothing in `internal/results` touches the filesystem.
@@ -121,3 +125,7 @@ different failure (rejecting a finished result) that nobody has asked for.
 - Encryption at rest (deferred: docs/adr/BACKLOG.md).
 
 ## Verification Log
+- 2026-09-15 · be8d1d1* · exit 0 · `set -o pipefail …` · acceptance-sha256:bbc0d61bda07c4715a69d492233707ce98d1266b2a6a95f51415be1892e535d4 · ms:2474
+- 2026-09-15 · be8d1d1* · exit 0 · `set -o pipefail …` · acceptance-sha256:bbc0d61bda07c4715a69d492233707ce98d1266b2a6a95f51415be1892e535d4 · ms:1988
+- 2026-09-15 · be8d1d1* · exit 0 · `set -o pipefail …` · acceptance-sha256:bbc0d61bda07c4715a69d492233707ce98d1266b2a6a95f51415be1892e535d4 · ms:1714
+- 2026-09-15 · be8d1d1* · exit 0 · `set -o pipefail …` · acceptance-sha256:bbc0d61bda07c4715a69d492233707ce98d1266b2a6a95f51415be1892e535d4 · ms:1955
