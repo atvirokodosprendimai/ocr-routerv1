@@ -17,6 +17,7 @@ wins and the README must be regenerated. Regenerate rather than hand-edit.
 | 4 | T7 | T3, T6 |
 | 5 | T8, T9 | T7 |
 | 6 | T10 | T8 |
+| 7 | T11 | T8, T10 |
 
 ```
 T1 ──┬── T2 ──┬── T3 ──┐
@@ -39,6 +40,7 @@ T1 ──┬── T2 ──┬── T3 ──┐
 | T8 | cmd/router binary and end-to-end proof | pending | — | `go test ./cmd/router/... -race` |
 | T9 | Generic subprocess runner, worker agent, cmd/worker | pending | — | `go test ./internal/runner/... ./internal/agent/... -race` |
 | T10 | Admin dashboard over templ and datastar | pending | — | `go test ./internal/web/...` |
+| T11 | Liveness endpoint and Prometheus metrics | pending | — | `go test ./internal/monitor/... -race` |
 
 Status: `pending` | `partial` | `blocked` | `done`.
 
@@ -60,6 +62,7 @@ Status: `pending` | `partial` | `blocked` | `done`.
 | T6 | `router.Service` write API | T7, T10 | T6 before T7 |
 | T7 | `httpapi.New()` mounted handler | T8, T9, T10 | T7 before T8, T9 |
 | T8 | `cmd/router` binary | T10 | T8 before T10 |
+| T11 | `monitor.Registry`, `/healthz`, `/metrics` | none | T11 is last: it EDITS `cmd/router/{main,wire}.go`, which T8 creates and T10 also edits, so it is sequenced after both rather than sharing a wave with either |
 
 ## Notes
 

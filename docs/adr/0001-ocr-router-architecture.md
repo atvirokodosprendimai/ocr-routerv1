@@ -243,8 +243,64 @@ second process is a config change; with exactly one router there is no second su
 NATS to reach. The seam is kept as a one-interface `Bus` so adding NATS later is a second
 implementation, not a restructuring.
 
+**Monitoring: liveness on the public listener, metrics on a private one.** Added by the
+operator on 2026-09-15. The dashboard shows queue depth to a *person*; nothing here was
+machine-readable, and this ADR's own risk table offered "the dashboard shows per-label queue
+depth" as the mitigation for a label with no live workers — which is a human, not a monitor.
+
+`GET /healthz` is **unauthenticated, on the main listener, and deliberately narrow**. It
+answers exactly one question — *can this process still do its job?* — by doing real work: a
+`SELECT 1` through the read handle and a writability probe of the blob directory. It returns
+`200 {"ok":true,"version":…}` or `503` naming the failed check.
+
+⚠ **Liveness is not "everything is fine", and conflating them causes an outage.** Zero live
+workers for a label is *degraded*, not *dead*: the router is healthy, the queue is filling,
+and restarting it fixes nothing. If `/healthz` reported that as unhealthy, an orchestrator
+would kill and reschedule the one component still working. Worker availability is therefore
+a **metric and an alert**, never a liveness check.
+
+`GET /metrics` is Prometheus text format on a **separate listener** — `--metrics-addr`,
+default `127.0.0.1:9090`. Queue depths, customer counts and throughput are commercially
+sensitive (how much work a customer pushes is their business), and the main listener faces
+the internet. A separate bind is the standard remedy and needs no auth logic of its own;
+exposing it becomes a deliberate act by whoever runs the proxy.
+
+| metric | type | answers |
+|---|---|---|
+| `ocrr_workers_live{label}` | gauge | **the silent failure** — a label with 0 workers queues until deadline |
+| `ocrr_queue_oldest_age_seconds{label}` | gauge | **the best stall signal** — depth can be low while one job is stuck forever |
+| `ocrr_queue_depth{label}` | gauge | backlog size |
+| `ocrr_jobs_total{state}` | counter | throughput and terminal outcomes (`delivered`/`dead`/`expired`) |
+| `ocrr_stage_advances_total` | counter | pipelines are moving rather than stalled mid-chain |
+| `ocrr_reaper_actions_total{action}` | counter | requeues, expiries and sweeps are firing at all |
+| `ocrr_results_in_memory` | gauge | the unbounded-growth risk from the result store |
+| `ocrr_credits_debited_total` | counter | billing is happening and is plausible |
+
+⚠ **No metric carries `user_id`, `job_id` or `email` as a label.** Those are unbounded, and
+unbounded label cardinality is how a metrics endpoint takes down the scraper it feeds.
+Per-customer visibility stays on the dashboard, which is authenticated and paginated. The
+cardinality here is bounded by the labels live workers advertise, which is operator
+-controlled — a client cannot mint a new one, because an unknown label is rejected at upload.
+
 ## Alternatives Considered
 
+- **Putting `/metrics` on the main listener behind the admin bearer token.** Rejected: it
+  works, but it makes the scrape config hold a credential that also creates users and mints
+  tokens, and a scraper's config is the least-guarded file in most deployments. A separate
+  bind gives the same protection with no credential at all.
+- **Letting `/healthz` report unhealthy when a label has no workers.** Rejected, and it is
+  the trap worth naming: an orchestrator acting on that signal would restart the router,
+  which is the one component that is still fine. Degraded and dead are different states and
+  only one of them is a liveness question.
+- **OpenTelemetry with an OTLP collector**, as `wing_wgmesh`'s chimney chose (otelhttp
+  spans, OTEL metrics, slog with trace context). Rejected **for now**: it adds a collector
+  as a runtime dependency for a single-process system, and that project's decision was made
+  in a context with Coroot already running. It is a different project's call and is recorded
+  here as context, not as precedent. The metric names above are exportable via OTLP later
+  without changing what is measured.
+- **Per-customer metric labels.** Rejected on cardinality: unbounded label values are the
+  classic way to kill a Prometheus server, and the dashboard already answers the
+  per-customer question for the one human who needs it.
 - **Embedded NATS now, as the `cqrs` skill defaults to.** Rejected: the operator chose a
   single router, so NATS would have exactly one client — its own process. The skill's own
   §0b warns that a half-migration is the worst of the three states.
@@ -367,6 +423,9 @@ separate context; splitting billing out would be speculative at this size.
 | SSE event `failed` with `reason:"expired"` | new | router | client |
 | `--db`, `--blobs`, `--addr`, `--result-ttl`, `--lease`, `--max-attempts`, `--aging-step` | new | operator | `cmd/router` |
 | `--router`, `--token`, `--tmpdir`, `--ocr-cmd`, `--slots`, `--timeout` | new | operator | `cmd/worker` |
+| `GET /healthz` (unauthenticated, main listener) | new | router | load balancer, uptime check, orchestrator liveness probe |
+| `GET /metrics` (Prometheus text, private listener) | new | router | Prometheus scraper |
+| `--metrics-addr` (default `127.0.0.1:9090`) | new | operator | `cmd/router` |
 
 ## Inter-task Contracts
 
@@ -381,6 +440,7 @@ separate context; splitting billing out would be speculative at this size.
 | `httpapi.New()` mounted handler (T7) | T7 | T8, T9, T10 | No |
 | `cmd/router` binary (T8) | T8 | T10 | No |
 | `ocr.Runner.Run()` and `agent.Loop` (T9) | T9 | T9 (`cmd/worker`) | No |
+| `monitor.Registry` and the `/healthz` + `/metrics` handlers (T11) | T11 | T8 (`cmd/router` serves the second listener) | No |
 
 ## Implementation
 
@@ -438,7 +498,11 @@ More than three tasks, so task files are the source of truth: see
 | Pipeline jobs starve behind fresh single-stage jobs | Med | Med | `queued_at` is preserved across stages, so a half-done pipeline keeps its accrued age and is preferred. Asserted in T6 alongside the retry case, which shares the mechanism. |
 | Intermediate blobs accumulate for abandoned pipelines | Low | Med | Each stage replaces the previous stage's blob and deletes it after the successful advance; the terminal paths (`delivered`/`dead`/`expired`) delete the last one. |
 | A stage output containing newlines is corrupted by the `\n` join into the next stage's blob | Med | Med | Documented as the author's encoding choice rather than hidden. Single-element outputs — the common pipeline case — are written verbatim and unaffected. Revisit if a multi-element intermediate becomes real. |
-
+| A `/healthz` that returns 200 without checking anything — the classic vacuous gate | Med | High — every probe green through a total outage | It performs a real `SELECT 1` on the read handle and a blob-dir writability probe, and T11 asserts it returns 503 when each dependency is broken in turn. A health check that cannot fail is worse than none, because it is trusted. |
+| `/healthz` conflating degraded with dead, so an orchestrator restarts a healthy router because a label has no workers | Med | High — a restart loop on the one component still working | Worker availability is deliberately **not** a liveness input; it is `ocrr_workers_live{label}` and an alert. Recorded in the Decision and as a rejected alternative, because the tempting version of this check is the harmful one. |
+| Unbounded metric label cardinality kills the scraper | Low | High | No metric carries `user_id`, `job_id` or `email`. Cardinality is bounded by the labels live workers advertise, which a client cannot mint. T11 asserts the exported label set against an allow-list, so adding an unbounded label fails a test rather than a Prometheus server. |
+| `/metrics` published on the internet-facing listener leaks customer volume | Med | Med — commercially sensitive, not a breach | Separate listener bound to loopback by default; exposing it is a deliberate act in the operator's proxy config. |
+| Metrics are collected on the request path and slow it down | Low | Med | Gauges are computed from the read handle on scrape, not maintained on every write; counters are atomic increments. The scrape pays the cost, not the upload. |
 | datastar v1 attributes written from model priors (`data-on-load`, hyphenated events) fail **silently** | High | Med — the dashboard looks empty with no console error | T9 uses only the cached v1 surface; the SSE subscription is opened with `data-init`. |
 | Two content types on one `POST /upload` path invite a role-confusion bug | Low | High — a client could post a fabricated result | The role is read from the authenticated token, never from the body; T3 and T7 assert a client token posting a worker payload is rejected. |
 
