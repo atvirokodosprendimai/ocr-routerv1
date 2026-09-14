@@ -30,3 +30,20 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Built binaries
+/router
+/worker
+/bin/
+
+# Local development state, never committed. The blob directory holds customer
+# source files and the database holds token hashes; both are operational state
+# rather than source. A .gitignore entry protects a NAME, not the content — an
+# editor swap file holds the same bytes under a different name — so these
+# patterns cover the swap and journal forms too.
+*.db
+*.db-wal
+*.db-shm
+.*.db.sw?
+/blobs/
+/tmp/

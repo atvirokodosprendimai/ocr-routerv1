@@ -102,6 +102,9 @@ package with zero tests reading as a pass, which is the state `go test` reports 
 
 ## Mutation Log
 
+- 2026-09-15 · c201a08* · mutant killed · exit 1 · `internal/core/core.go` · ValidParamKey is a trust boundary: the key becomes a subprocess flag name. Disabling the first-character check must be caught by the uppercase and leading-digit cases. · acceptance-sha256:b4bb90d270f3a2af10696b4f5a21ac9eb5024e345f81a187a9634c7db7aadd3d
+- 2026-09-15 · c201a08* · mutant killed · exit 1 · `internal/core/core.go` · The transition table is the lifecycle. Widening one row must be caught by the full refusal matrix, not only by the happy edges. · acceptance-sha256:b4bb90d270f3a2af10696b4f5a21ac9eb5024e345f81a187a9634c7db7aadd3d
+
 ## Invariants
 
 - `internal/core` imports nothing outside the standard library and `github.com/google/uuid`.
@@ -129,3 +132,6 @@ operator wants a different module path than
 - `templ generate`; no `.templ` file exists until T10.
 
 ## Verification Log
+- 2026-09-15 · c201a08* · exit 0 · `set -o pipefail …` · acceptance-sha256:b4bb90d270f3a2af10696b4f5a21ac9eb5024e345f81a187a9634c7db7aadd3d · ms:496
+- 2026-09-15 · c201a08* · exit 0 · `set -o pipefail …` · acceptance-sha256:b4bb90d270f3a2af10696b4f5a21ac9eb5024e345f81a187a9634c7db7aadd3d · ms:548
+- 2026-09-15 · c201a08* · exit 0 · `set -o pipefail …` · acceptance-sha256:b4bb90d270f3a2af10696b4f5a21ac9eb5024e345f81a187a9634c7db7aadd3d · ms:488

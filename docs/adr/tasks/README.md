@@ -30,7 +30,7 @@ T1 ──┬── T2 ──┬── T3 ──┐
 
 | ID | Title | Status | Covers | Acceptance |
 |----|-------|--------|--------|------------|
-| T1 | Module skeleton and domain kernel | pending | — | `go build ./... && go test ./internal/core/...` |
+| T1 | Module skeleton and domain kernel | done | — | `go build ./... && go test ./internal/core/...` |
 | T2 | SQLite two-handle store and schema migration | pending | — | `go test ./internal/store/...` |
 | T3 | Users, hashed bearer tokens, auth middleware | pending | — | `go test ./internal/identity/...` |
 | T4 | Blob store on disk and TTL result store | pending | — | `go test ./internal/blob/... ./internal/results/...` |
