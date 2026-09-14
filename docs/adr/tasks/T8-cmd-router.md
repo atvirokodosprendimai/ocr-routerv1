@@ -20,7 +20,7 @@ uploaded by a real client is claimed by a real worker, OCR'd, delivered and char
 | File | Change | Why |
 |------|--------|-----|
 | `cmd/router/main.go` | add | flags, **the composition root**, HTTP server, shutdown |
-| `cmd/router/wire.go` | add | `buildHandler(Config) (http.Handler, func(), error)` — constructed once, called by both `main` and the tests |
+| `cmd/router/wire.go` | add | `buildApp(Config) (*App, error)` — the composition root, constructed once and used by BOTH `main` and the tests |
 | `cmd/router/main_test.go` | add | composition-root and end-to-end tests |
 | `README.md` | edit | how to run the router, mint the first admin token, and the three client URLs |
 
@@ -36,9 +36,10 @@ that is the class of bug no unit test in T2–T7 can reach.
 2. [S2] `urfave/cli/v3` flags: `--addr` (`:8080`), `--db`, `--blobs`, `--result-ttl` (1h),
    `--lease` (5m), `--max-attempts` (3), `--aging-step` (60s), `--reap-interval` (30s),
    `--max-upload` (64MiB). Every one has a default that works.
-3. [S3] `buildHandler` opens the store, runs migrations, constructs `blob`, `results`,
-   `bus`, `identity` and `router.Service`, calls `RecoverOnBoot`, and returns
-   `httpapi.New(deps)` plus a cleanup func. **One place** builds the graph.
+3. [S3] `buildApp` opens the store, runs migrations, constructs `blob`, `results`, `bus`,
+   `identity` and `router.Service`, calls `RecoverOnBoot`, mounts `httpapi.New(deps)` and
+   returns the handler plus its cleanup. **One place** builds the graph, and the tests use
+   that place rather than assembling their own.
 4. [S4] `main` starts the reaper ticker calling `router.Reap(now)` every `--reap-interval`,
    in a goroutine cancelled by the server's context.
 5. [S5] The `http.Server` sets `ReadHeaderTimeout` but **leaves `WriteTimeout` at zero**,
@@ -73,14 +74,13 @@ exist.
 
 | Test name | File | Verifies | Covers | Steps |
 |-----------|------|----------|--------|-------|
-| `TestEndToEndUploadToDelivery` | `cmd/router/main_test.go` | against a server built by `buildHandler`: a client uploads, a worker claims, downloads the blob, posts pages, the client's SSE stream receives `ready`, the client GETs the result and the balance drops by the page count | — | S3 |
-| `TestEndToEndUsesBuildHandler` | `cmd/router/main_test.go` | the test server is built by the same `buildHandler` `main` calls — asserted by construction, and the reason the composition root is covered at all | — | S3 |
-| `TestReaperRunsInBinary` | `cmd/router/main_test.go` | with a tiny `--reap-interval` and an expired lease, the job returns to `queued` **without the test calling `Reap`** — goes red when the ticker in S4 is deleted, which every `internal/router` test would survive | — | S4 |
-| `TestRecoverOnBootRequeuesAcrossRestart` | `cmd/router/main_test.go` | build, upload, claim, tear down, rebuild on the same file → the job is `queued` and nothing was charged | — | S3, S7 |
-| `TestBootstrapCreatesAdminOnce` | `cmd/router/main_test.go` | the command prints a token and creates exactly one admin; a second run on the same email is refused | — | S6 |
-| `TestBootstrapTokenAuthenticates` | `cmd/router/main_test.go` | the printed token actually authenticates against the built handler — the token is useless if it does not, and printing one proves nothing | — | S6 |
-| `TestSSESurvivesDefaultServerConfig` | `cmd/router/main_test.go` | a stream on the server `main` configures stays open past `--reap-interval` and receives a ping | — | S5 |
-| `TestFlagDefaultsAreUsable` | `cmd/router/main_test.go` | with no flags but `--db`/`--blobs` pointed at a temp dir, the handler builds and serves | — | S2 |
+| `TestEndToEndUploadToDelivery` | `cmd/router/main_test.go` | against a server built by `buildApp`, over real HTTP: the client uploads, the worker is woken, claims, downloads the blob, posts units; the client's stream receives `ready`; the client GETs the result, is charged 3, the job is `delivered` and the blob is gone | — | S3 |
+| `TestReaperRunsInBinary` | `cmd/router/main_test.go` | with a 100ms lease and a silent worker, the job returns to `queued` **without the test ever calling `Reap`** — red when the ticker is deleted, which every `internal/router` test survives because they all drive `Reap` directly | — | S4 |
+| `TestRecoverOnBootRequeuesAcrossRestart` | `cmd/router/main_test.go` | upload, claim, tear the app down, rebuild on the same files → the job is `queued` and no debit was written | — | S3, S7 |
+| `TestBootstrapCreatesAdminOnceAndTheTokenWorks` | `cmd/router/main_test.go` | the first bootstrap creates an admin whose printed token AUTHENTICATES against the running server, and a second bootstrap is refused | — | S6 |
+| `TestSSESurvivesTheServersOwnConfig` | `cmd/router/main_test.go` | a stream on the server `main` configures stays open and receives a ping | — | S5 |
+| `TestFlagDefaultsBuildAServer` | `cmd/router/main_test.go` | a minimal config with only paths builds a working handler | — | S2 |
+| `TestCLIExposesEveryFlag` | `cmd/router/main_test.go` | every field in `Config` has a command-line flag — rung 3, because a setting an operator cannot reach is not configuration | — | S2 |
 
 ## Reachability
 
@@ -92,6 +92,10 @@ exist.
 | 4 — it is used | it is the product; the dashboard (T10) and the worker (T9) both talk to this binary |
 
 ## Mutation Log
+
+- 2026-09-15 · 621bae6* · mutant killed · exit 1 · `cmd/router/wire.go` · The ticker is the one thing no test in internal/router watches: every one of them drives Reap directly, so all of them pass with it deleted. · acceptance-sha256:f01dd49f5306c6fccda4765c18b578bb1a8c43334caf26a6e2d9e6c5f21de98b · covers:the reaper ticker
+- 2026-09-15 · 621bae6* · mutant killed · exit 1 · `cmd/router/wire.go` · Without boot recovery every job in flight at shutdown stays processing forever: its lease belongs to a process that no longer exists and no worker will ever report on it. · acceptance-sha256:f01dd49f5306c6fccda4765c18b578bb1a8c43334caf26a6e2d9e6c5f21de98b · covers:the composition root
+- 2026-09-15 · 621bae6* · mutant killed · exit 1 · `cmd/router/wire.go` · A handler that is constructed and not mounted is finished, tested and called by nothing — the defect this task exists to make visible. · acceptance-sha256:f01dd49f5306c6fccda4765c18b578bb1a8c43334caf26a6e2d9e6c5f21de98b
 
 ## Invariants
 
@@ -125,3 +129,8 @@ contradicts the single-binary design.
 - Packaging, systemd units, containers (deferred: docs/adr/BACKLOG.md).
 
 ## Verification Log
+- 2026-09-15 · 621bae6* · exit 0 · `set -o pipefail …` · acceptance-sha256:f01dd49f5306c6fccda4765c18b578bb1a8c43334caf26a6e2d9e6c5f21de98b · ms:8238
+- 2026-09-15 · 621bae6* · exit 0 · `set -o pipefail …` · acceptance-sha256:f01dd49f5306c6fccda4765c18b578bb1a8c43334caf26a6e2d9e6c5f21de98b · ms:5119
+- 2026-09-15 · 621bae6* · exit 0 · `set -o pipefail …` · acceptance-sha256:f01dd49f5306c6fccda4765c18b578bb1a8c43334caf26a6e2d9e6c5f21de98b · ms:5394
+- 2026-09-15 · 621bae6* · exit 0 · `set -o pipefail …` · acceptance-sha256:f01dd49f5306c6fccda4765c18b578bb1a8c43334caf26a6e2d9e6c5f21de98b · ms:5254
+- 2026-09-15 · 621bae6* · exit 0 · `set -o pipefail …` · acceptance-sha256:f01dd49f5306c6fccda4765c18b578bb1a8c43334caf26a6e2d9e6c5f21de98b · ms:10594

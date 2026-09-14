@@ -1,0 +1,161 @@
+// Command router is the OCR router: it accepts jobs from customers, hands them
+// to workers by label, and meters the results.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/urfave/cli/v3"
+)
+
+func main() {
+	if err := newCLI().Run(context.Background(), os.Args); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+}
+
+func newCLI() *cli.Command {
+	return &cli.Command{
+		Name:  "router",
+		Usage: "route jobs to workers and meter the results",
+		Flags: configFlags(),
+		Commands: []*cli.Command{
+			{
+				Name:  "admin",
+				Usage: "administrative commands",
+				Commands: []*cli.Command{
+					{
+						Name:  "bootstrap",
+						Usage: "create the first administrator and print its token",
+						Flags: append(configFlags(), &cli.StringFlag{
+							Name:     "email",
+							Usage:    "the administrator's email address",
+							Required: true,
+						}),
+						Action: runBootstrap,
+					},
+				},
+			},
+		},
+		Action: runServe,
+	}
+}
+
+// configFlags are shared by serve and by the admin commands, because both have
+// to open the same database and blob directory.
+func configFlags() []cli.Flag {
+	return []cli.Flag{
+		&cli.StringFlag{Name: "addr", Value: ":8080", Usage: "listen address"},
+		&cli.StringFlag{Name: "db", Value: "ocr-router.db", Usage: "SQLite database path"},
+		&cli.StringFlag{Name: "blobs", Value: "blobs", Usage: "directory for source files"},
+		&cli.DurationFlag{Name: "result-ttl", Value: time.Hour,
+			Usage: "how long an uncollected result is kept in memory before its job is requeued"},
+		&cli.DurationFlag{Name: "lease", Value: 5 * time.Minute,
+			Usage: "how long a worker holds a job before the reaper takes it back"},
+		&cli.IntFlag{Name: "max-attempts", Value: 3,
+			Usage: "attempts before a job is abandoned as dead"},
+		&cli.DurationFlag{Name: "aging-step", Value: time.Minute,
+			Usage: "waiting time that buys one point of effective priority"},
+		&cli.DurationFlag{Name: "label-grace", Value: 5 * time.Minute,
+			Usage: "how long a service stays available after its last worker disconnects"},
+		&cli.DurationFlag{Name: "reap-interval", Value: 30 * time.Second,
+			Usage: "how often expired leases, deadlines and results are swept"},
+		&cli.IntFlag{Name: "max-upload", Value: 64 << 20, Usage: "maximum upload size in bytes"},
+		&cli.StringFlag{Name: "default-label", Value: "ocr",
+			Usage: "the service a client gets when it names none"},
+	}
+}
+
+func configFrom(c *cli.Command) Config {
+	return Config{
+		Addr:         c.String("addr"),
+		DBPath:       c.String("db"),
+		BlobDir:      c.String("blobs"),
+		ResultTTL:    c.Duration("result-ttl"),
+		Lease:        c.Duration("lease"),
+		MaxAttempts:  c.Int("max-attempts"),
+		AgingStep:    c.Duration("aging-step"),
+		LabelGrace:   c.Duration("label-grace"),
+		ReapInterval: c.Duration("reap-interval"),
+		MaxUpload:    int64(c.Int("max-upload")),
+		DefaultLabel: c.String("default-label"),
+	}
+}
+
+func runServe(ctx context.Context, c *cli.Command) error {
+	cfg := configFrom(c)
+
+	app, err := buildApp(cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = app.Close() }()
+
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	app.StartReaper(ctx, cfg.ReapInterval)
+
+	srv := &http.Server{
+		Addr:    cfg.Addr,
+		Handler: app.Handler,
+		// ⚠ WriteTimeout is deliberately ZERO. A non-zero value applies to the
+		// whole response, which for an SSE stream means the connection dies
+		// mid-session. The stream handler also clears its own deadline, so this
+		// is belt and braces — a later operator adding a WriteTimeout here for
+		// good reasons must not silently break every stream.
+		ReadHeaderTimeout: 10 * time.Second,
+		BaseContext:       func(_ net.Listener) context.Context { return ctx },
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		fmt.Printf("router listening on %s (db=%s blobs=%s)\n", cfg.Addr, cfg.DBPath, cfg.BlobDir)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errc <- err
+		}
+	}()
+
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+
+	// Stop accepting, then give open streams a moment to notice their context
+	// is done and return. In-memory results are lost by design; their jobs go
+	// back to the queue on the next boot.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	fmt.Println("shutting down")
+	return srv.Shutdown(shutdownCtx)
+}
+
+func runBootstrap(ctx context.Context, c *cli.Command) error {
+	app, err := buildApp(configFrom(c))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = app.Close() }()
+
+	user, token, err := app.Ident.Bootstrap(ctx, c.String("email"), time.Now())
+	if err != nil {
+		return err
+	}
+
+	// Printed exactly once, and recoverable from nowhere afterwards.
+	fmt.Printf("administrator created: %s (%s)\n", user.Email, user.ID)
+	fmt.Printf("token: %s\n", token)
+	fmt.Println("\nThis token is shown once and is not stored in recoverable form.")
+	fmt.Println("Save it now; if it is lost, create another administrator with a new email.")
+	return nil
+}
