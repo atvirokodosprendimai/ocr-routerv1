@@ -149,6 +149,13 @@ run second as regression. Red at authoring: `internal/router` does not exist.
 
 ## Mutation Log
 
+- 2026-09-15 · e9329c4* · mutant killed · exit 1 · `internal/router/service.go` · A pipeline is one job to the client: only the LAST stage may publish ready, or the client collects a half-processed intermediate as the finished result. · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · covers:the delivery transaction
+- 2026-09-15 · e9329c4* · mutant killed · exit 1 · `internal/router/service.go` · A multi-stage job must be billed for the sum accrued across stages at each stage's rate, not for the size of the final output. · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00
+- 2026-09-15 · e9329c4* · mutant killed · exit 1 · `internal/router/service.go` · The buffer limit is the back-pressure that stops one customer monopolising the worker pool. · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · covers:the buffer-limit count
+- 2026-09-15 · e9329c4* · mutant killed · exit 1 · `internal/router/service.go` · A worker whose lease lapsed may have had its job requeued and run elsewhere; accepting its late result delivers one worker's output for a job another is still doing. · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · covers:the lease clock
+- 2026-09-15 · e9329c4* · mutant killed · exit 1 · `internal/router/reaper.go` · An expiry nobody is told about is indistinguishable from a job still waiting, which is the worst of both states. · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00
+- 2026-09-15 · e9329c4* · mutant killed · exit 1 · `internal/router/reaper.go` · A swept result whose job is not requeued strands that job in done forever with nothing to serve. · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00
+
 ## Invariants
 
 - `router.Service` is the **only** writer of `jobs`, `credit_entries` and `users.credits`.
@@ -186,3 +193,10 @@ OCR N times costs the customer nothing and the operator N attempts of worker tim
 - Notifying the admin dashboard of state changes — T10 subscribes to the same bus.
 
 ## Verification Log
+- 2026-09-15 · e9329c4* · exit 0 · `set -o pipefail …` · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · ms:6069
+- 2026-09-15 · e9329c4* · exit 0 · `set -o pipefail …` · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · ms:4318
+- 2026-09-15 · e9329c4* · exit 0 · `set -o pipefail …` · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · ms:4129
+- 2026-09-15 · e9329c4* · exit 0 · `set -o pipefail …` · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · ms:3953
+- 2026-09-15 · e9329c4* · exit 0 · `set -o pipefail …` · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · ms:4522
+- 2026-09-15 · e9329c4* · exit 0 · `set -o pipefail …` · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · ms:4298
+- 2026-09-15 · e9329c4* · exit 0 · `set -o pipefail …` · acceptance-sha256:f5d29feaefe3875a6935efbb17846d060f4ad142571ebd7534f865eb2b5abc00 · ms:4189

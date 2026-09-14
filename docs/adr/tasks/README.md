@@ -35,7 +35,7 @@ T1 ──┬── T2 ──┬── T3 ──┐
 | T3 | Users, hashed bearer tokens, authentication | done | — | `go test ./internal/identity/...` |
 | T4 | Blob store on disk and TTL result store | done | — | `go test ./internal/blob/... ./internal/results/...` |
 | T5 | In-process per-label event bus | done | — | `go test ./internal/bus/... -race` |
-| T6 | Router service: the single writer | pending | — | `go test ./internal/router/... -race` |
+| T6 | Router service: the single writer | done | — | `go test ./internal/router/... -race` |
 | T7 | HTTP boundary: upload, claim, files, SSE | pending | — | `go test ./internal/httpapi/... -race` |
 | T8 | cmd/router binary and end-to-end proof | pending | — | `go test ./cmd/router/... -race` |
 | T9 | Generic subprocess runner, worker agent, cmd/worker | pending | — | `go test ./internal/runner/... ./internal/agent/... -race` |

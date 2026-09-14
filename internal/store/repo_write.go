@@ -197,6 +197,17 @@ func (r *Repo) AdvanceStage(ctx context.Context, jobID, nextLabel string, accrue
 	return affectedOne(res, err)
 }
 
+// MarkHasBlob records that a job now has a source blob.
+//
+// It exists for one case: a params-only job — a crawler — whose first stage
+// produced output. That output becomes the next stage's input blob, so a job
+// that started with no file now has one, and the worker for the next stage must
+// be told to pass -i. Inferring this from the filename would be guessing.
+func (r *Repo) MarkHasBlob(ctx context.Context, jobID string) error {
+	res, err := r.write.ExecContext(ctx, `UPDATE jobs SET has_blob = 1 WHERE id = ?`, jobID)
+	return affectedOne(res, err)
+}
+
 // RequeueJob returns a leased job to the queue after a reported failure or an
 // expired lease, incrementing attempts. queued_at is preserved, as above.
 func (r *Repo) RequeueJob(ctx context.Context, jobID, lastErr string, now time.Time) error {
