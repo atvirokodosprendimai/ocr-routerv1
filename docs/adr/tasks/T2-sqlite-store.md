@@ -20,7 +20,7 @@ atomic claim that implements aged priority and the queue deadline.
 
 | File | Change | Why |
 |------|--------|-----|
-| `db/migrations/00001_init.sql` | add | `users`, `tokens`, `jobs`, `credit_entries`, `service_rates` |
+| `internal/store/migrations/00001_init.sql` | add | `users`, `tokens`, `jobs`, `credit_entries`, `service_rates`. ⚠ Moved here from `db/migrations/` during execution: `//go:embed` cannot traverse upward out of its own package directory, so `internal/store` physically cannot embed `db/migrations`. A language constraint, not a design change — the SQL now sits beside the only code that runs it. |
 | `internal/store/store.go` | add | `Open()`, DSN construction, pragmas, migration runner |
 | `internal/store/migrations.go` | add | `//go:embed db/migrations/*.sql` |
 | `internal/store/repo.go` | add | `Repo` — every query and write statement |
@@ -134,6 +134,15 @@ Red at authoring: `internal/store` does not exist, so `go build ./...` fails.
 
 ## Mutation Log
 
+- 2026-09-15 · 1b23108* · mutant killed · exit 1 · `internal/store/repo_write.go` · Aging is what stops the bottom tier starving. Neutralising the term must be caught by the overtake test, not merely by a formula check. · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d
+- 2026-09-15 · 1b23108* · mutant killed · exit 1 · `internal/store/repo_write.go` · Label isolation is what lets one queue serve many services; without it a strip-html worker receives OCR jobs. · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d
+- 2026-09-15 · 1b23108* · mutant killed · exit 1 · `internal/store/repo_write.go` · The deadline predicate sits in the same WHERE as the selection so an expiring job cannot be claimed in a race; removing it must be caught. · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d
+- 2026-09-15 · 1b23108* · mutant killed · exit 1 · `internal/store/repo_write.go` · The deadline predicate sits in the same WHERE as the selection so an expiring job cannot be claimed in a race; removing it must be caught. · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d
+- 2026-09-15 · 1b23108* · mutant killed · exit 1 · `internal/store/repo_write.go` · Expiry must never kill work a worker has already started; the worker time spent is not recovered by discarding it. · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d
+- 2026-09-15 · 1b23108* · mutant killed · exit 1 · `internal/store/repo_write.go` · The state='done' guard is what makes a second delivery charge nothing; without it a re-delivery debits twice. · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d
+- 2026-09-15 · 1b23108* · mutant killed · exit 1 · `internal/store/store.go` · query_only is what makes 'read models never write' a driver-enforced invariant rather than a review rule; dropping it must be caught. · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · covers:the query_only refusal
+- 2026-09-15 · 1b23108* · mutant killed · exit 1 · `internal/store/repo_write.go` · Reverting the claim to strict priority (no aging term) starves the bottom tier; the overtake test must catch it. · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · covers:the claim ORDER BY
+
 ## Invariants
 
 - The read handle **never** writes, enforced by the driver rather than by review.
@@ -170,3 +179,13 @@ needs a different mechanism, which is a decision, not an implementation detail.
 - Notifying clients that a job expired — T6 publishes, T7 delivers.
 
 ## Verification Log
+- 2026-09-15 · 1b23108* · exit 0 · `set -o pipefail …` · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · ms:2711
+- 2026-09-15 · 1b23108* · exit 0 · `set -o pipefail …` · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · ms:2598
+- 2026-09-15 · 1b23108* · exit 0 · `set -o pipefail …` · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · ms:2630
+- 2026-09-15 · 1b23108* · exit 0 · `set -o pipefail …` · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · ms:3438
+- 2026-09-15 · 1b23108* · exit 0 · `set -o pipefail …` · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · ms:3567
+- 2026-09-15 · 1b23108* · exit 0 · `set -o pipefail …` · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · ms:3402
+- 2026-09-15 · 1b23108* · exit 0 · `set -o pipefail …` · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · ms:2668
+- 2026-09-15 · 1b23108* · exit 0 · `set -o pipefail …` · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · ms:3728
+- 2026-09-15 · 1b23108* · exit 0 · `set -o pipefail …` · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · ms:2689
+- 2026-09-15 · 1b23108* · exit 0 · `set -o pipefail …` · acceptance-sha256:8ad3c2f2b9088d1203a9f02b1f84b911a2e9d9dd819f9f1f10c6e5043456991d · ms:2672

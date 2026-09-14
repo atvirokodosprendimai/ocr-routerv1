@@ -1,0 +1,3 @@
+{
+  "check": "go build ./... && go vet ./... && test -z \"$(gofmt -l .)\" && go test ./... -count=1"
+}

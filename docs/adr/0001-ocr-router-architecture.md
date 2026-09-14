@@ -5,7 +5,7 @@
 **Owner:** M (operator) — authored by claude-code-aks
 **Spec:** None — no spec stage
 **Cross-references:** none
-**Governs:** `cmd/**`, `internal/**`, `db/migrations/**`, `docs/adr/0001-ocr-router-architecture.md`
+**Governs:** `cmd/**`, `internal/**`, `docs/adr/0001-ocr-router-architecture.md`
 **Enforced-by:** None — this is a greenfield structural decision; its clauses are enforced by the per-task Acceptance fences and their bound mutants, not by a standing gate. The single-writer clause has no cheap mechanical check: naming `go vet` here would name a check that cannot fail on it.
 **Invalidates:** none — checked (`adr-state.mjs` reports no decision records under this repository, 2026-09-15)
 **Served-path change:** A customer with a bearer token can `POST /upload` a document and receive OCR'd page text back over `GET /files/{id}` after being told on `GET /sse` that it is ready; nothing served this before, the repository was empty.

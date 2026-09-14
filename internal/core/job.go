@@ -89,6 +89,23 @@ func (j Job) NextLabel() (string, bool) {
 	return j.Pipeline[j.Stage+1], true
 }
 
+// LedgerEntry is one movement of credits, append-only.
+//
+// The ledger is the system of record for money: a correction is a compensating
+// entry and never an edit, which is why this type has no update path and why the
+// table it maps to is written but never modified.
+type LedgerEntry struct {
+	ID     string
+	UserID string
+	// JobID is empty for movements that are not a delivery — an admin top-up,
+	// a manual adjustment.
+	JobID string
+	// Delta is negative for a charge and positive for a grant.
+	Delta     int
+	Reason    string
+	CreatedAt time.Time
+}
+
 // Result is a finished job's output, held only in memory.
 //
 // It never touches disk: the source blob on disk is the durable copy, and a
