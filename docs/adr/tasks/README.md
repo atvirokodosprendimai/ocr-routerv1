@@ -32,7 +32,7 @@ T1 ──┬── T2 ──┬── T3 ──┐
 |----|-------|--------|--------|------------|
 | T1 | Module skeleton and domain kernel | done | — | `go build ./... && go test ./internal/core/...` |
 | T2 | SQLite two-handle store and schema migration | done | — | `go test ./internal/store/...` |
-| T3 | Users, hashed bearer tokens, auth middleware | pending | — | `go test ./internal/identity/...` |
+| T3 | Users, hashed bearer tokens, authentication | done | — | `go test ./internal/identity/...` |
 | T4 | Blob store on disk and TTL result store | done | — | `go test ./internal/blob/... ./internal/results/...` |
 | T5 | In-process per-label event bus | done | — | `go test ./internal/bus/... -race` |
 | T6 | Router service: the single writer | pending | — | `go test ./internal/router/... -race` |

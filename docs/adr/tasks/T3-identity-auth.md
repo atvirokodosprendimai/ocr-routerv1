@@ -79,6 +79,9 @@ runs second as regression. Red at authoring: `internal/identity` does not exist.
 | `TestCreateUserNormalisesEmail` | `internal/identity/service_test.go` | ` Foo@Example.COM ` and `foo@example.com` collide | — | S5 |
 | `TestMintTokenReturnsPlaintextOnce` | `internal/identity/token_test.go` | the stored row holds only the hash, and no read path returns plaintext | — | S3 |
 | `TestTokenHashIsStable` | `internal/identity/token_test.go` | the same token hashes identically across calls, and two tokens do not collide | — | S3 |
+| `TestTokenRoleIsIndependentOfUserRole` | `internal/identity/service_test.go` | an ADMIN user holding a CLIENT-scoped token authenticates as a client and cannot create users — added after a SURVIVED mutant showed every other fixture minted tokens whose role equalled their user's, making `tok.Role` and `u.Role` indistinguishable | — | S4, S6 |
+| `TestBootstrapCreatesOneAdmin` | `internal/identity/service_test.go` | the first admin is created, its printed token authenticates, and a second bootstrap is refused | — | S5 |
+| `TestGenerateTokenShape` | `internal/identity/token_test.go` | tokens are unique, carry their role's prefix, and are long enough to hold 32 bytes of entropy | — | S2 |
 
 ## Reachability
 
@@ -90,6 +93,14 @@ runs second as regression. Red at authoring: `internal/identity` does not exist.
 | 4 — it is used | every request to the router passes through it; T8's end-to-end test authenticates a real client and a real worker |
 
 ## Mutation Log
+
+- 2026-09-15 · a17fe3e* · mutant survived · exit 0 · `internal/identity/service.go` · The role must come from the TOKEN row, not the user row: a user may hold tokens of different scopes, and conflating them silently widens every token to the account's own role. · acceptance-sha256:44304868802f449d70978dad58d78cdb65fcd2361ec05c97bfaec031d6e100cd · covers:the role check
+  ```
+  the fence passed with the mechanism broken; it may not materialize, compile, load, or assert on the changed path
+  ```
+- 2026-09-15 · a17fe3e* · mutant killed · exit 1 · `internal/identity/service.go` · Revocation must actually stop a token; a single 'unknown token is refused' test covers a different code path and would not notice. · acceptance-sha256:44304868802f449d70978dad58d78cdb65fcd2361ec05c97bfaec031d6e100cd
+- 2026-09-15 · a17fe3e* · mutant killed · exit 1 · `internal/identity/service.go` · Only an admin creates accounts; without the gate any client token could mint users and tokens. · acceptance-sha256:44304868802f449d70978dad58d78cdb65fcd2361ec05c97bfaec031d6e100cd
+- 2026-09-15 · a17fe3e* · mutant killed · exit 1 · `internal/identity/service.go` · The role must come from the TOKEN row, not the user row: a user may hold tokens of different scopes, and conflating them silently widens every token to the account's own role. · acceptance-sha256:44304868802f449d70978dad58d78cdb65fcd2361ec05c97bfaec031d6e100cd · covers:the role check
 
 ## Invariants
 
@@ -120,3 +131,9 @@ customer's file, so a customer-owned worker token would be a privilege escalatio
 - Password login and sessions; there are none, only bearer tokens.
 
 ## Verification Log
+- 2026-09-15 · a17fe3e* · exit 0 · `set -o pipefail …` · acceptance-sha256:44304868802f449d70978dad58d78cdb65fcd2361ec05c97bfaec031d6e100cd · ms:4593
+- 2026-09-15 · a17fe3e* · exit 0 · `set -o pipefail …` · acceptance-sha256:44304868802f449d70978dad58d78cdb65fcd2361ec05c97bfaec031d6e100cd · ms:3694
+- 2026-09-15 · a17fe3e* · exit 0 · `set -o pipefail …` · acceptance-sha256:44304868802f449d70978dad58d78cdb65fcd2361ec05c97bfaec031d6e100cd · ms:2685
+- 2026-09-15 · a17fe3e* · exit 0 · `set -o pipefail …` · acceptance-sha256:44304868802f449d70978dad58d78cdb65fcd2361ec05c97bfaec031d6e100cd · ms:2760
+- 2026-09-15 · a17fe3e* · exit 0 · `set -o pipefail …` · acceptance-sha256:44304868802f449d70978dad58d78cdb65fcd2361ec05c97bfaec031d6e100cd · ms:3288
+- 2026-09-15 · a17fe3e* · exit 0 · `set -o pipefail …` · acceptance-sha256:44304868802f449d70978dad58d78cdb65fcd2361ec05c97bfaec031d6e100cd · ms:2613
