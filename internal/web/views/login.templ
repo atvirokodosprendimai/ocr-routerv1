@@ -22,10 +22,7 @@ templ Login(errMsg string, requireTLS bool) {
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
 			<title>Sign in — ocr-router</title>
-			<style type="text/css">
-				{ css }
-				{ loginCSS }
-			</style>
+			<link rel="stylesheet" href={ stylesheetHref() }/>
 		</head>
 		<body>
 			<main id="main" class="login-wrap">
@@ -78,39 +75,7 @@ templ Login(errMsg string, requireTLS bool) {
 	</html>
 }
 
-// loginCSS is scoped to this page. It is separate from the dashboard's stylesheet
-// because the login page is the one view with no navigation, no tables and no
-// live region — sharing a layout with them would mean styling around three
-// things that are not there.
-const loginCSS = `
-.login-wrap {
-  min-height: 100dvh;
-  display: grid;
-  place-items: center;
-  padding: 1.5rem;
-}
-.login-card {
-  width: 100%;
-  max-width: 24rem;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 2rem;
-}
-.login-card h1 { font-size: 1.25rem; margin: 0; }
-.login-card > .muted { margin: .25rem 0 1.5rem; }
-.login-card .field { margin-bottom: 1rem; }
-.login-card label { display: block; margin-bottom: .35rem; font-size: .85rem; }
-.login-card input { width: 100%; }
-.login-card button { width: 100%; margin-top: .5rem; }
-.login-error {
-  background: color-mix(in srgb, var(--bad) 12%, transparent);
-  border: 1px solid var(--bad);
-  border-radius: var(--radius);
-  color: var(--text);
-  padding: .75rem;
-  margin: 0 0 1rem;
-  font-size: .9rem;
-}
-.login-hint { font-size: .8rem; margin: 1.5rem 0 0; }
-`
+// The login page's own rules live in assets/app.css alongside the dashboard's,
+// under the .login-* prefix. They were briefly a second Go constant here, which
+// had the same defect as the main stylesheet: templ does not interpolate inside
+// <style>, so both were rendering as literal text.

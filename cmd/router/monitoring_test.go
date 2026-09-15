@@ -79,6 +79,12 @@ func TestOnlyLoginAndHealthzAreUnauthenticated(t *testing.T) {
 		"GET /healthz":      "a load balancer and an orchestrator probe cannot hold a bearer token",
 		"GET /admin/login":  "the sign-in page, which by definition precedes having a credential",
 		"POST /admin/login": "the sign-in submission itself",
+		// The login page is unauthenticated and needs its stylesheet, so gating
+		// the assets would render the one page a locked-out operator sees as
+		// unstyled HTML. Both are public, pinned, stateless static files that are
+		// byte-identical for every visitor.
+		"GET /admin/assets/app.css":     "the stylesheet the unauthenticated login page needs",
+		"GET /admin/assets/datastar.js": "the client library, embedded in this binary",
 	}
 
 	var checked int

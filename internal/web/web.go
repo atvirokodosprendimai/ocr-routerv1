@@ -104,6 +104,16 @@ func (wb *Web) Mount(r chi.Router, authenticate func(http.Handler) http.Handler,
 		r.Get("/login", wb.showLogin)
 		r.Post("/login", wb.doLogin)
 
+		// ⚠ ALSO UNAUTHENTICATED, and it has to be: the login page is
+		// unauthenticated and needs its stylesheet, so gating the assets would
+		// render the one page a locked-out operator sees as unstyled HTML.
+		//
+		// The exposure is nil — these are two public, pinned, third-party-and-own
+		// static files, identical for every visitor and carrying no state. They
+		// are listed in cmd/router's unauthenticated-route allow-list.
+		r.Get("/assets/datastar.js", wb.serveDatastar)
+		r.Get("/assets/app.css", wb.serveCSS)
+
 		r.Group(func(r chi.Router) {
 			r.Use(authenticate)
 			r.Use(wb.requireAdmin)

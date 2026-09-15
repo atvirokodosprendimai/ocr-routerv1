@@ -28,10 +28,12 @@ templ Layout(title string, signals string) {
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
 			<title>{ title } — ocr-router</title>
-			<script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.2/bundles/datastar.js"></script>
-			<style type="text/css">
-				{ css }
-			</style>
+			// ⚠ SERVED BY THIS BINARY, never from a CDN. See assets.go: a
+			// self-hosted admin console that fetches its own JavaScript from a
+			// third party is dead without egress, leaks its usage, and puts a
+			// remote host inside the page that mints API tokens.
+			<script type="module" src="/admin/assets/datastar.js"></script>
+			<link rel="stylesheet" href={ stylesheetHref() }/>
 		</head>
 		<body data-signals={ signals }>
 			<a class="skip" href="#main">Skip to content</a>

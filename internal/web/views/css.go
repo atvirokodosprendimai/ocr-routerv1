@@ -1,95 +1,40 @@
 package views
 
-// css is the whole stylesheet, kept as a Go constant so templ can insert it
-// without a variable inside a <style> element — templ forbids that at COMPILE
-// time, which is the real safety argument for using it here.
+import (
+	"crypto/sha256"
+	_ "embed"
+	"encoding/hex"
+)
+
+// appCSS is the whole stylesheet, served as a real file.
+//
+// ⚠ IT USED TO BE A Go CONSTANT INTERPOLATED INTO A <style> ELEMENT, and that
+// did not work — it shipped for the life of T10 with the literal text `{ css }`
+// as the page's entire stylesheet, so the dashboard rendered completely
+// unstyled. templ treats the contents of <style> and <script> as RAW TEXT and
+// does not evaluate expressions inside them: no error, no warning, no build
+// failure, just a brace-wrapped identifier sitting in the document. The comment
+// that used to live here asserted the opposite, which is why nobody looked.
+//
+// The lesson is narrower than "test your CSS": a templating language that
+// silently declines to interpolate in one context will hand you a page that
+// compiles, renders, passes every structural assertion, and is visibly broken
+// only to a human looking at it. TestStylesheetIsRealCSS asserts the served
+// bytes contain actual rules.
 //
 // Deliberately small and unfashionable: system fonts, one accent, a single
 // breakpoint. An operator console is read at 3am by someone who is annoyed, and
 // the job is legibility rather than personality.
-const css = `
-:root {
-  --bg: #0f1115;
-  --panel: #171a21;
-  --line: #262b36;
-  --text: #e6e9ef;
-  --muted: #98a2b3;
-  --accent: #6ea8fe;
-  --ok: #4ade80;
-  --warn: #fbbf24;
-  --bad: #f87171;
-  --radius: 8px;
+//
+//go:embed assets/app.css
+var appCSS []byte
+
+// AppCSS returns the stylesheet bytes.
+func AppCSS() []byte { return appCSS }
+
+// AppCSSDigest is used to build the cache-busting query on the <link> href, so a
+// deployed browser picks up a changed stylesheet without a hard refresh.
+func AppCSSDigest() string {
+	sum := sha256.Sum256(appCSS)
+	return hex.EncodeToString(sum[:])[:12]
 }
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f7f8fa; --panel: #fff; --line: #e3e6ec; --text: #1a1d23;
-    --muted: #5a6474; --accent: #1d4ed8;
-  }
-}
-* { box-sizing: border-box; }
-body {
-  margin: 0; background: var(--bg); color: var(--text);
-  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-}
-.skip {
-  position: absolute; left: -9999px; top: 0; background: var(--accent);
-  color: #fff; padding: .6rem 1rem; z-index: 10;
-}
-.skip:focus { left: 0; }
-header {
-  display: flex; flex-wrap: wrap; gap: 1rem; align-items: baseline;
-  padding: 1rem 1.25rem; border-bottom: 1px solid var(--line); background: var(--panel);
-}
-header h1 { font-size: 1.05rem; margin: 0; letter-spacing: .02em; }
-nav { display: flex; gap: 1rem; }
-nav a { color: var(--muted); text-decoration: none; padding: .25rem 0; }
-nav a:hover, nav a:focus-visible { color: var(--text); }
-nav a[aria-current="page"] { color: var(--accent); border-bottom: 2px solid var(--accent); }
-main { padding: 1.25rem; max-width: 1100px; margin: 0 auto; }
-section { margin-bottom: 2rem; }
-h2 { font-size: .95rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-.cards { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; }
-.card .n { font-size: 1.8rem; font-variant-numeric: tabular-nums; }
-.card .k { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; }
-table { width: 100%; border-collapse: collapse; background: var(--panel);
-        border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-th, td { text-align: left; padding: .6rem .75rem; border-bottom: 1px solid var(--line); }
-th { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
-tr:last-child td { border-bottom: 0; }
-td.num { font-variant-numeric: tabular-nums; text-align: right; }
-.tag { display: inline-block; padding: .1rem .5rem; border-radius: 999px;
-       font-size: .75rem; border: 1px solid var(--line); }
-.tag.queued { color: var(--muted); }
-.tag.processing { color: var(--accent); border-color: var(--accent); }
-.tag.done { color: var(--ok); border-color: var(--ok); }
-.tag.delivered { color: var(--ok); }
-.tag.dead, .tag.expired { color: var(--bad); border-color: var(--bad); }
-.row { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end; }
-label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: .25rem; }
-input, select {
-  background: var(--bg); color: var(--text); border: 1px solid var(--line);
-  border-radius: 6px; padding: .5rem .6rem; font: inherit; min-height: 44px;
-}
-input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible {
-  outline: 2px solid var(--accent); outline-offset: 2px;
-}
-button {
-  background: var(--accent); color: #fff; border: 0; border-radius: 6px;
-  padding: .55rem 1rem; font: inherit; cursor: pointer; min-height: 44px;
-}
-button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
-button:disabled { opacity: .5; cursor: not-allowed; }
-.muted { color: var(--muted); }
-.empty { padding: 1.5rem; text-align: center; color: var(--muted);
-         border: 1px dashed var(--line); border-radius: var(--radius); }
-.error { color: var(--bad); font-size: .85rem; margin-top: .4rem; }
-.token { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
-         background: var(--bg); border: 1px solid var(--warn); border-radius: 6px; padding: .75rem; }
-.spin { color: var(--muted); font-size: .85rem; }
-@media (max-width: 861px) {
-  .cards { grid-template-columns: 1fr 1fr; }
-  table { display: block; overflow-x: auto; white-space: nowrap; }
-  .row { flex-direction: column; align-items: stretch; }
-}
-`

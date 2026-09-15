@@ -44,41 +44,54 @@ func Login(errMsg string, requireTLS bool) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Sign in — ocr-router</title><style type=\"text/css\">\n\t\t\t\t{ css }\n\t\t\t\t{ loginCSS }\n\t\t\t</style></head><body><main id=\"main\" class=\"login-wrap\"><div class=\"login-card\"><h1>ocr-router</h1><p class=\"muted\">Administrator sign-in</p>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Sign in — ocr-router</title><link rel=\"stylesheet\" href=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var2 templ.SafeURL
+		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinURLErrs(stylesheetHref())
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/login.templ`, Line: 25, Col: 49}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\"></head><body><main id=\"main\" class=\"login-wrap\"><div class=\"login-card\"><h1>ocr-router</h1><p class=\"muted\">Administrator sign-in</p>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if requireTLS {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<p class=\"login-error\" role=\"alert\">This page is being served over plain HTTP. The session cookie is marked Secure, so a browser would discard it and the sign-in would appear to succeed and then fail. Put TLS in front of the router before signing in.</p>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<p class=\"login-error\" role=\"alert\">This page is being served over plain HTTP. The session cookie is marked Secure, so a browser would discard it and the sign-in would appear to succeed and then fail. Put TLS in front of the router before signing in.</p>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
 			if errMsg != "" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<p class=\"login-error\" role=\"alert\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<p class=\"login-error\" role=\"alert\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var2 string
-				templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(errMsg)
+				var templ_7745c5c3_Var3 string
+				templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(errMsg)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/login.templ`, Line: 44, Col: 51}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/login.templ`, Line: 41, Col: 51}
 				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</p>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</p>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, " <form method=\"post\" action=\"/admin/login\"><div class=\"field\"><label for=\"email\">Email</label> <input id=\"email\" name=\"email\" type=\"email\" autocomplete=\"username\" required autofocus></div><div class=\"field\"><label for=\"password\">Password</label> <input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required></div><button type=\"submit\">Sign in</button></form>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, " <form method=\"post\" action=\"/admin/login\"><div class=\"field\"><label for=\"email\">Email</label> <input id=\"email\" name=\"email\" type=\"email\" autocomplete=\"username\" required autofocus></div><div class=\"field\"><label for=\"password\">Password</label> <input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required></div><button type=\"submit\">Sign in</button></form>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<p class=\"muted login-hint\">Sessions last 12 hours and are not extended by use. Signing out ends the session everywhere, including other tabs.</p></div></main></body></html>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<p class=\"muted login-hint\">Sessions last 12 hours and are not extended by use. Signing out ends the session everywhere, including other tabs.</p></div></main></body></html>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -86,41 +99,8 @@ func Login(errMsg string, requireTLS bool) templ.Component {
 	})
 }
 
-// loginCSS is scoped to this page. It is separate from the dashboard's stylesheet
-// because the login page is the one view with no navigation, no tables and no
-// live region — sharing a layout with them would mean styling around three
-// things that are not there.
-const loginCSS = `
-.login-wrap {
-  min-height: 100dvh;
-  display: grid;
-  place-items: center;
-  padding: 1.5rem;
-}
-.login-card {
-  width: 100%;
-  max-width: 24rem;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 2rem;
-}
-.login-card h1 { font-size: 1.25rem; margin: 0; }
-.login-card > .muted { margin: .25rem 0 1.5rem; }
-.login-card .field { margin-bottom: 1rem; }
-.login-card label { display: block; margin-bottom: .35rem; font-size: .85rem; }
-.login-card input { width: 100%; }
-.login-card button { width: 100%; margin-top: .5rem; }
-.login-error {
-  background: color-mix(in srgb, var(--bad) 12%, transparent);
-  border: 1px solid var(--bad);
-  border-radius: var(--radius);
-  color: var(--text);
-  padding: .75rem;
-  margin: 0 0 1rem;
-  font-size: .9rem;
-}
-.login-hint { font-size: .8rem; margin: 1.5rem 0 0; }
-`
-
+// The login page's own rules live in assets/app.css alongside the dashboard's,
+// under the .login-* prefix. They were briefly a second Go constant here, which
+// had the same defect as the main stylesheet: templ does not interpolate inside
+// <style>, so both were rendering as literal text.
 var _ = templruntime.GeneratedTemplate

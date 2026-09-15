@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -215,6 +216,29 @@ func isSecure(r *http.Request) bool {
 		return true
 	}
 	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+// serveDatastar serves the embedded client library.
+func (wb *Web) serveDatastar(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, "application/javascript; charset=utf-8", views.DatastarJS())
+}
+
+// serveCSS serves the embedded stylesheet.
+func (wb *Web) serveCSS(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, "text/css; charset=utf-8", views.AppCSS())
+}
+
+// serveAsset writes an embedded file with a long cache lifetime.
+//
+// A year is safe because the href carries a content digest: a changed file is a
+// changed URL, so nothing stale is ever reachable. Without the digest this
+// would be the classic "users see last month's CSS until they hard-refresh".
+func serveAsset(w http.ResponseWriter, r *http.Request, contentType string, body []byte) {
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	// http.ServeContent handles conditional requests and ranges, and needs a
+	// ReadSeeker — a bytes.Reader over the embedded slice, which copies nothing.
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(body))
 }
 
 // renderPage writes a templ component as a complete HTML response.
