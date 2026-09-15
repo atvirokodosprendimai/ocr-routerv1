@@ -74,6 +74,25 @@ func configFlags() []cli.Flag {
 			Usage: "PRIVATE listener for /metrics; loopback by default because queue depth and throughput are commercially sensitive"},
 		&cli.StringFlag{Name: "default-label", Value: "ocr",
 			Usage: "the service a client gets when it names none"},
+
+		// Rate limits are an ABUSE CEILING, not a quota: they sit far above any
+		// legitimate use, and 0 on any of them disables limiting for that role —
+		// which is the operational rollback, available without a redeploy.
+		&cli.FloatFlag{Name: "rate-client", Value: 10,
+			Usage: "client requests per second per token (0 = unlimited)"},
+		&cli.FloatFlag{Name: "rate-worker", Value: 30,
+			Usage: "worker requests per second per token (0 = unlimited) — above the poll rate"},
+		&cli.FloatFlag{Name: "rate-admin", Value: 30,
+			Usage: "admin requests per second per token (0 = unlimited)"},
+		&cli.IntFlag{Name: "rate-burst", Value: 20,
+			Usage: "requests allowed at once before the rate applies"},
+		&cli.DurationFlag{Name: "rate-idle", Value: 10 * time.Minute,
+			Usage: "how long a silent token's bucket is kept before it is evicted"},
+
+		&cli.StringFlag{Name: "log-level", Value: "info",
+			Usage: "debug, info, warn or error"},
+		&cli.StringFlag{Name: "log-format", Value: "json",
+			Usage: "json or text"},
 	}
 }
 
@@ -92,6 +111,13 @@ func configFrom(c *cli.Command) Config {
 		DefaultLabel: c.String("default-label"),
 		MetricsAddr:  c.String("metrics-addr"),
 		Version:      version,
+		RateClient:   c.Float("rate-client"),
+		RateWorker:   c.Float("rate-worker"),
+		RateAdmin:    c.Float("rate-admin"),
+		RateBurst:    c.Int("rate-burst"),
+		RateIdle:     c.Duration("rate-idle"),
+		LogLevel:     c.String("log-level"),
+		LogFormat:    c.String("log-format"),
 	}
 }
 

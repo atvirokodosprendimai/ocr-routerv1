@@ -57,6 +57,10 @@ type Service struct {
 	// counter records what happened, for the metrics endpoint. Never nil: the
 	// constructor installs a no-op so no call site needs a guard.
 	counter Counter
+	// logger records the same transitions in prose. Counters say three jobs
+	// died; this says WHICH, on which worker, after how long in each state.
+	// Never nil, same reasoning.
+	logger Logger
 }
 
 // New builds the service.
@@ -68,6 +72,7 @@ func New(repo *store.Repo, blobs *blob.Store, res *results.Store, b *bus.Bus, cf
 		repo: repo, blobs: blobs, results: res, bus: b, cfg: cfg,
 		labelSeen: make(map[string]time.Time),
 		counter:   nopCounter{},
+		logger:    nopLogger{},
 	}
 }
 
@@ -176,6 +181,10 @@ func (s *Service) Upload(ctx context.Context, userID string, in UploadInput, now
 		return core.Job{}, err
 	}
 
+	// The job's first appearance in the log, and the only place its param KEYS
+	// are recorded — which is what lets a later failure be read against what was
+	// actually asked for.
+	s.logTransition(job, "", core.JobQueued, now, "client", "", "", now)
 	s.publishWork(job.Label)
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 	return job, nil
@@ -192,6 +201,11 @@ func (s *Service) Claim(ctx context.Context, workerID, label string, now time.Ti
 	if err != nil {
 		return core.Job{}, err
 	}
+	// QueuedAt, not UpdatedAt: the row returned here has already been stamped by
+	// the claim, and "how long did this job wait to be picked up" is the number
+	// worth having.
+	s.logTransition(job, core.JobQueued, core.JobProcessing, job.QueuedAt,
+		"worker", workerID, "", now)
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 	return job, nil
 }
@@ -247,6 +261,11 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 			}
 		}
 		s.counter.Inc(metricStageAdvances, nil)
+		// Paired with the counter deliberately: a pipeline that stops advancing
+		// looks exactly like a slow one, and the count says it happened while the
+		// line says which job moved to which label after how long.
+		s.logTransition(job, core.JobProcessing, core.JobQueued, job.UpdatedAt,
+			"router", workerID, "", now)
 		s.publishWork(next)
 		s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 		return nil
@@ -258,6 +277,8 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 		s.results.Drop(job.ID)
 		return err
 	}
+	s.logTransition(job, core.JobProcessing, core.JobDone, job.UpdatedAt,
+		"worker", workerID, "", now)
 	s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
 		Kind: bus.KindReady, JobID: job.ID, Units: len(out),
 	})
@@ -287,14 +308,24 @@ func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, now 
 	if !holdsLease(job, workerID, now) {
 		return core.ErrConflict
 	}
-	return s.failJob(ctx, job, reason, now)
+	return s.failJob(ctx, job, "worker", reason, now)
 }
 
-func (s *Service) failJob(ctx context.Context, job core.Job, reason string, now time.Time) error {
+// failJob retries or abandons a job.
+//
+// `actor` says who caused it — a worker reporting failure, or the reaper taking
+// back an expired lease. The two are indistinguishable in the job row afterwards
+// and mean entirely different things to whoever is debugging.
+func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason string, now time.Time) error {
 	if job.Attempts+1 < s.cfg.MaxAttempts {
 		if err := s.repo.RequeueJob(ctx, job.ID, reason, now); err != nil {
 			return err
 		}
+		// The retry is the transition nothing else records: a job that succeeds
+		// on attempt 3 looks identical in the metrics to one that succeeded
+		// first time.
+		s.logTransition(job, job.State, core.JobQueued, job.UpdatedAt,
+			actor, job.WorkerID, reason, now)
 		s.publishWork(job.Label)
 		s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 		return nil
@@ -304,6 +335,10 @@ func (s *Service) failJob(ctx context.Context, job core.Job, reason string, now 
 	if err := s.repo.FailJobDead(ctx, job.ID, reason, now); err != nil {
 		return err
 	}
+	// The line the counter cannot give you: which job, on which worker, for what
+	// reason, at which attempt.
+	s.logTransition(job, job.State, core.JobDead, job.UpdatedAt,
+		actor, job.WorkerID, reason, now)
 	// Terminal: the blob has no further use and nothing was charged.
 	_ = s.blobs.Delete(job.ID)
 	s.results.Drop(job.ID)
@@ -348,6 +383,8 @@ func (s *Service) Deliver(ctx context.Context, userID, jobID string, now time.Ti
 	// delivered job whose blob was deleted before a failed commit is not.
 	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDelivered)})
 	s.counter.Add(metricCreditsDebited, nil, int64(job.AccruedCredits))
+	s.logTransition(job, job.State, core.JobDelivered, job.UpdatedAt,
+		"client", "", "", now)
 	_ = s.blobs.Delete(jobID)
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: jobID})
 	return res, nil

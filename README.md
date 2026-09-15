@@ -110,7 +110,83 @@ uncharged. A job a worker has already started runs to completion regardless.
 --max-upload     maximum upload size in bytes                     (64MiB)
 --default-label  the service used when none is named              (ocr)
 --metrics-addr   PRIVATE listener for /metrics                    (127.0.0.1:9090)
+--rate-client    client requests/second per token, 0 = off        (10)
+--rate-worker    worker requests/second per token, 0 = off        (30)
+--rate-admin     admin requests/second per token, 0 = off         (30)
+--rate-burst     requests allowed at once before the rate applies (20)
+--rate-idle      how long a silent token's bucket is kept         (10m)
+--log-level      debug, info, warn or error                       (info)
+--log-format     json or text                                     (json)
 ```
+
+## Rate limits
+
+Limits are **per bearer token**, not per customer — `buffer_limit` already meters
+per customer, one axis over, and the threat this addresses is a *leaked
+credential*: a per-user limit would let a compromised token eat the legitimate
+one's allowance.
+
+They are an **abuse ceiling, not a quota.** The defaults sit far above any
+realistic integration; they exist so one token cannot monopolise the single
+write connection, not to shape what customers may do. Over the limit you get:
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 2
+
+{"error":"rate limited"}
+```
+
+`Retry-After` is always at least 1 second and is the real time until your next
+token. Set any `--rate-*` flag to `0` to disable limiting for that role — that is
+the rollback, and it needs no redeploy.
+
+⚠ **Unauthenticated requests are not rate limited here.** A caller with no token
+is rejected before any database work, and defending the socket against a
+credential-less flood is a reverse proxy's job. ⚠ **The limiter is per process**,
+so if you ever run more than one router the effective limit is multiplied by the
+replica count.
+
+## Logs
+
+`log/slog` JSON on stdout. Two shapes.
+
+One line per request, covering the 401s and 429s too:
+
+```json
+{"time":"2026-09-15T12:00:00Z","level":"INFO","msg":"request","method":"POST",
+ "route":"/files/{id}","status":200,"duration":12000000,
+ "user_id":"0192f…","token_id":"0192a…","role":"client"}
+```
+
+One line per job state transition, which is what makes a single failure
+readable:
+
+```json
+{"time":"2026-09-15T12:05:00Z","level":"INFO","msg":"transition",
+ "job":{"id":"0192f…","user_id":"0192a…","label":"crawl","params":["depth","url"]},
+ "from":"queued","to":"processing","actor":"worker","attempt":0,"stage":0,
+ "in_state":300000000000,"worker_id":"w-3"}
+```
+
+`in_state` is how long the job spent in the state it just left — the field that
+turns *"the job died"* into *"it sat queued for five minutes and then failed in
+two seconds"*. It is computed from stored timestamps, so it stays correct across
+a restart.
+
+⚠ **Job parameter VALUES are never logged — only their keys.** This is a
+guarantee you can rely on, and it is enforced by the shape of the code rather
+than by convention: no function in the logging package accepts a value, so no
+call site can leak one by forgetting. A crawler's `?url=` may carry credentials,
+and `params` will show `["url"]` and never its contents. Bearer tokens are never
+logged either; `token_id` is a database key, not the secret.
+
+The route **pattern** is logged rather than the path, so `/files/{id}` groups in
+an aggregator instead of producing one unique line per job.
+
+Use `--log-format text` for a human at a terminal. The three startup lines stay
+plain `fmt.Printf` deliberately, so a misconfigured logger cannot make the
+process look dead at boot.
 
 ## Health and metrics
 
@@ -163,7 +239,9 @@ deployment, and this repository does not know yours.
 ## Operational notes
 
 - **The router is a single process.** Clients and workers scale out; it does
-  not.
+  not. The rate limiter lives in that process's memory, so running two routers
+  would silently double every limit — that is the first thing to change if
+  replication is ever on the table.
 - **Results live only in memory.** A restart returns in-flight jobs to the
   queue and they are redone from the source file on disk. Since nothing is
   charged before collection, a restart costs repeated work and never money.

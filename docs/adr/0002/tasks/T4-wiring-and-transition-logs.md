@@ -92,6 +92,10 @@ test file does not compile and `^FAIL` matches.
 | `TestRateFlagZeroDisablesLimiting` | `cmd/router/logging_test.go` | with the client rate at 0, 200 uploads are never throttled — the documented rollback, asserted rather than described | — | S6 |
 | `TestEvictionRunsOnTheReaperTick` | `cmd/router/logging_test.go` | after idle keys and enough ticks, the limiter's `Len()` **drops** — red if the `EvictIdle` call is deleted from `StartReaper`, which no `internal/ratelimit` test can see | — | S8 |
 | `TestBinaryLogsRequestsAndTransitions` | `cmd/router/logging_test.go` | one upload through the binary produces both a request line and a transition line on the captured output — red if either wiring line is deleted | — | S7 |
+| `TestBinaryNeverLogsAParamValue` | `cmd/router/logging_test.go` | a real upload through the binary carrying `?url=…hunter2…` logs the key `url` and never the secret — through `wire.go`'s OWN adapter, which `internal/router`'s test cannot reach because it builds its own. Added after a mutant survived | — | S3 |
+| `TestConfigFromReadsEveryNewFlag` | `cmd/router/logging_test.go` | running the real command with distinct prime values for all seven flags lands each one on the matching `Config` field — added after a mutant that read `--rate-burst` and discarded it survived the whole suite | — | S6 |
+| `TestBadLogFormatFailsBoot` | `cmd/router/logging_test.go` | `--log-format logfmt` fails the boot rather than falling back | — | S7 |
+| `TestBinaryLogsAreValidJSONLines` | `cmd/router/logging_test.go` | every emitted line beginning `{` parses as JSON, and at least one exists so the assertion is not vacuous | — | S7 |
 | `TestBadLogLevelFailsBoot` | `cmd/router/logging_test.go` | `buildApp` with `LogLevel: "verbose"` returns an error and starts nothing — a silent fallback would leave the operator with logging they cannot discover is wrong | — | S7 |
 | `TestCLIExposesTheNewFlags` | `cmd/router/logging_test.go` | all seven flags appear on the real command — a flag in `Config` that is not on the command line is unreachable by an operator | — | S6 |
 | `TestWorkerKeepsPollingThroughA429` | `cmd/router/logging_test.go` | a worker agent facing a `429` on `/claim` backs off and claims successfully afterwards rather than exiting — ADR-0002 Risk 12 | — | S7 |
@@ -106,6 +110,43 @@ test file does not compile and `^FAIL` matches.
 | 4 — it is used | `ocrr_requests_throttled_total{role}` shows throttling; nothing in this repository consumes the logs, which is the operator's deployment and is recorded honestly rather than claimed |
 
 ## Mutation Log
+
+- 2026-09-15 · a8fb0be* · mutant killed · exit 1 · `cmd/router/wire.go` · nothing ever evicts, so the limiter map grows one entry per token for the process lifetime — the memory leak no internal/ratelimit test can see · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · covers:the eviction tick
+- 2026-09-15 · a8fb0be* · mutant killed · exit 1 · `cmd/router/wire.go` · no job state change is ever logged, so a dead job leaves nothing saying which worker took it or how long it waited · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · covers:the transition log call sites
+- 2026-09-15 · a8fb0be* · mutant killed · exit 1 · `internal/router/logger.go` · every transition reports an instantaneous duration, so a job wedged for forty minutes is indistinguishable from one that flew through · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · covers:the flag wiring
+- 2026-09-15 · a8fb0be* · mutant survived · exit 0 · `cmd/router/wire.go` · the adapter smuggles a customer-supplied param VALUE into a key position, so a crawler URL carrying a password reaches every log line despite the logging package being unchanged · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · covers:the redaction at the call site
+  ```
+  the fence passed with the mechanism broken; it may not materialize, compile, load, or assert on the changed path
+  ```
+- 2026-09-15 · a8fb0be* · mutant survived · exit 0 · `cmd/router/main.go` · the burst flag is read and discarded, so every role gets a zero burst which the limiter treats as unlimited — the flag exists, is documented, and does nothing · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · covers:the flag wiring
+  ```
+  the fence passed with the mechanism broken; it may not materialize, compile, load, or assert on the changed path
+  ```
+- 2026-09-15 · a8fb0be* · mutant killed · exit 1 · `cmd/router/wire.go` · the binary adapter smuggles a customer-supplied param VALUE into a key position, so a crawler URL carrying a password reaches every log line despite the logging package being unchanged · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · covers:the redaction at the call site
+- 2026-09-15 · a8fb0be* · mutant killed · exit 1 · `cmd/router/main.go` · the burst flag is read and discarded, so the flag exists, --help advertises it, and it does nothing · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · covers:the flag wiring
+
+## Notes on the Mutation Log
+
+Two mutants **survived** on the first run, and both were real coverage gaps rather than bad
+mutants. Both were then closed with a test and re-run to a kill; the surviving rows stay in the log
+because the run happened.
+
+- **`the redaction at the call site` survived.** `internal/router/logger_test.go` builds its OWN
+  adapter, which proves the logging package redacts and that an adapter *can* be written correctly
+  — and proves nothing about `routerLogger` in `wire.go`, the one the binary actually uses. A
+  mutant that made that adapter smuggle a value into a key position passed the whole suite. Closed
+  by `TestBinaryNeverLogsAParamValue`, which drives a real upload through the binary.
+- **`the flag wiring` survived.** Every test in `cmd/router` builds a `Config` struct directly, so
+  `configFrom` — the function turning flags into that struct — was executed by nothing. A mutant
+  that read `--rate-burst` and discarded it survived: the flag existed, `--help` advertised it, and
+  it did nothing. Closed by `TestConfigFromReadsEveryNewFlag`, which runs the real command.
+
+⚠ **One row's `covers:` is mislabelled and cannot be corrected.** The `InState: 0` mutant is
+recorded as `covers:the flag wiring`; it is about `InState`, not flags. The Mutation Log is
+append-only and tool-written, so the wrong binding stays and this note is the correction. The
+mechanism it should have named is not in `Rests-on` at all — the durable lesson is to pick the
+`--covers` name before running, since nothing downstream re-reads the `--why` text that makes the
+mismatch obvious.
 
 ## Invariants
 
@@ -150,3 +191,13 @@ validate, and lowering one turns a limit into a product decision about what cust
   repository does not know the deployment).
 
 ## Verification Log
+- 2026-09-15 · a8fb0be* · exit 0 · `set -o pipefail …` · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · ms:6910
+- 2026-09-15 · a8fb0be* · exit 0 · `set -o pipefail …` · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · ms:5826
+- 2026-09-15 · a8fb0be* · exit 0 · `set -o pipefail …` · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · ms:5832
+- 2026-09-15 · a8fb0be* · exit 0 · `set -o pipefail …` · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · ms:5925
+- 2026-09-15 · a8fb0be* · exit 0 · `set -o pipefail …` · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · ms:6265
+- 2026-09-15 · a8fb0be* · exit 0 · `set -o pipefail …` · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · ms:5824
+- 2026-09-15 · a8fb0be* · exit 0 · `set -o pipefail …` · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · ms:6426
+- 2026-09-15 · a8fb0be* · exit 0 · `set -o pipefail …` · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · ms:5739
+- 2026-09-15 · a8fb0be* · exit 0 · `set -o pipefail …` · acceptance-sha256:b75fdcaa599d7ac9a46118379d1f11c7d41ac056266ed78065eaed3ce14417a2 · ms:5608
+- 2026-09-15 · human-observed · README (S9): flag names in the Flags block checked against `router --help`; the request and transition JSON examples checked against real lines captured by TestBinaryLogsRequestsAndTransitions

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -12,7 +13,9 @@ import (
 	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
 	"github.com/atvirokodosprendimai/ocr-router/internal/httpapi"
 	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-router/internal/logging"
 	"github.com/atvirokodosprendimai/ocr-router/internal/monitor"
+	"github.com/atvirokodosprendimai/ocr-router/internal/ratelimit"
 	"github.com/atvirokodosprendimai/ocr-router/internal/results"
 	"github.com/atvirokodosprendimai/ocr-router/internal/router"
 	"github.com/atvirokodosprendimai/ocr-router/internal/store"
@@ -43,6 +46,22 @@ type Config struct {
 	MetricsAddr string
 	// Version is reported by /healthz.
 	Version string
+
+	// Rate limits per role, in requests per second per TOKEN. Zero disables
+	// limiting for that role, which is ADR-0002's operational rollback.
+	RateClient float64
+	RateWorker float64
+	RateAdmin  float64
+	// RateBurst is how many requests may arrive at once before the rate applies.
+	RateBurst int
+	// RateIdle is how long a silent token's bucket is kept. It bounds the
+	// limiter's memory, which is otherwise one entry per token forever.
+	RateIdle time.Duration
+
+	// LogLevel and LogFormat configure the structured logger. An unrecognised
+	// value fails the boot rather than falling back silently.
+	LogLevel  string
+	LogFormat string
 }
 
 // App is a fully constructed router: its handler, its collaborators, and the
@@ -56,7 +75,34 @@ type App struct {
 	Results *results.Store
 	Blobs   *blob.Store
 	Monitor *monitor.Monitor
+	Limiter *ratelimit.Limiter
+	Logger  *slog.Logger
 	Close   func() error
+}
+
+// routerLogger adapts router.TransitionEvent to the logging package.
+//
+// ⚠ IT IS THE ONLY PLACE the two meet, and it is why router depends on nothing
+// above it. The param map crosses here and is handed to LogTransition, which
+// emits keys only — so the redaction guarantee is enforced on the real path, not
+// merely in a type nobody is obliged to use.
+type routerLogger struct{ log *slog.Logger }
+
+func (r routerLogger) Transition(e router.TransitionEvent) {
+	logging.LogTransition(r.log, logging.Transition{
+		JobID:    e.JobID,
+		UserID:   e.UserID,
+		Label:    e.Label,
+		From:     string(e.From),
+		To:       string(e.To),
+		Attempt:  e.Attempt,
+		WorkerID: e.WorkerID,
+		Actor:    e.Actor,
+		Stage:    e.Stage,
+		Params:   e.Params,
+		Reason:   e.Reason,
+		InState:  e.InState,
+	})
 }
 
 // buildApp constructs the whole dependency graph.
@@ -68,6 +114,14 @@ type App struct {
 // where the write handle belongs. That class of defect is invisible to every
 // test in T2–T7, and this is the seam that makes it visible.
 func buildApp(cfg Config) (*App, error) {
+	// The logger is built FIRST and its failure is fatal: a misconfigured
+	// --log-level must stop the boot rather than start a process whose logging
+	// silently differs from what was asked for.
+	log, err := logging.New(logging.Options{Level: cfg.LogLevel, Format: cfg.LogFormat})
+	if err != nil {
+		return nil, err
+	}
+
 	db, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
@@ -99,6 +153,17 @@ func buildApp(cfg Config) (*App, error) {
 		return nil, fmt.Errorf("boot recovery: %w", err)
 	}
 
+	// The metrics registry is attached to the single writer, so the counters are
+	// incremented at the same place the state actually changes. A counter nobody
+	// increments is always zero, and always-zero reads exactly like healthy.
+	reg := monitor.NewRegistry()
+	rt.SetCounter(reg)
+	// The same reasoning for the logger: a transition that is counted but not
+	// logged leaves an operator with a number and no way to act on it.
+	rt.SetLogger(routerLogger{log: log})
+
+	limiter := ratelimit.New(time.Now, cfg.RateIdle)
+
 	api := httpapi.New(httpapi.Deps{
 		Identity:     ident,
 		Router:       rt,
@@ -108,18 +173,20 @@ func buildApp(cfg Config) (*App, error) {
 		MaxUpload:    cfg.MaxUpload,
 		PingInterval: cfg.PingInterval,
 		Now:          time.Now,
+		Limiter:      limiter,
+		Limits: httpapi.RoleLimits{
+			Client: ratelimit.Limit{RPS: cfg.RateClient, Burst: cfg.RateBurst},
+			Worker: ratelimit.Limit{RPS: cfg.RateWorker, Burst: cfg.RateBurst},
+			Admin:  ratelimit.Limit{RPS: cfg.RateAdmin, Burst: cfg.RateBurst},
+		},
+		Logger:  log,
+		Counter: reg,
 	})
 
 	dash := web.New(web.Deps{
 		Identity: ident, Router: rt, Repo: repo, Bus: b, Results: res,
 		PingInterval: cfg.PingInterval, Now: time.Now,
 	})
-	// The metrics registry is attached to the single writer, so the counters are
-	// incremented at the same place the state actually changes. A counter nobody
-	// increments is always zero, and always-zero reads exactly like healthy.
-	reg := monitor.NewRegistry()
-	rt.SetCounter(reg)
-
 	mon := monitor.New(reg, monitor.Deps{
 		Version: cfg.Version,
 		BlobDir: cfg.BlobDir,
@@ -167,6 +234,8 @@ func buildApp(cfg Config) (*App, error) {
 		Results: res,
 		Blobs:   blobs,
 		Monitor: mon,
+		Limiter: limiter,
+		Logger:  log,
 		Close:   db.Close,
 	}, nil
 }
@@ -190,6 +259,12 @@ func (a *App) StartReaper(ctx context.Context, every time.Duration) {
 				// and the alternative is a router that silently stops reaping
 				// after one transient database error.
 				_, _ = a.Router.Reap(ctx, time.Now())
+				// ⚠ Limiter eviction rides THIS tick rather than a timer of its
+				// own. The tick already exists, and a second timer is a second
+				// goroutine to leak. Without this line the limiter's map grows
+				// one entry per token forever, and no test inside
+				// internal/ratelimit can see it missing.
+				a.Limiter.EvictIdle()
 			}
 		}
 	}()

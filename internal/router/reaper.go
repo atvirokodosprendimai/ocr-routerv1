@@ -45,7 +45,7 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		if job.Attempts+1 >= s.cfg.MaxAttempts {
 			rep.JobsAbandoned++
 		}
-		if err := s.failJob(ctx, job, "lease expired", now); err != nil {
+		if err := s.failJob(ctx, job, "reaper", "lease expired", now); err != nil {
 			return rep, err
 		}
 	}
@@ -61,6 +61,8 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		rep.JobsExpired++
 		s.counter.Inc(metricReaperActions, map[string]string{"action": "deadline-expired"})
 		s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobExpired)})
+		s.logTransition(job, core.JobQueued, core.JobExpired, job.QueuedAt,
+			"reaper", "", "deadline passed", now)
 		_ = s.blobs.Delete(job.ID)
 		s.results.Drop(job.ID)
 		s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
@@ -86,6 +88,8 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		if err := s.repo.RequeueJob(ctx, jobID, "result expired before collection", now); err != nil {
 			return rep, err
 		}
+		s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,
+			"reaper", "", "result expired before collection", now)
 		s.publishWork(job.Label)
 	}
 

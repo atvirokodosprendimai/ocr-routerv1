@@ -17,6 +17,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Options configure the logger.
@@ -108,4 +109,51 @@ func Job(id, userID, label string, params map[string]string) slog.Attr {
 		slog.String("label", label),
 		slog.Any("params", keys),
 	)
+}
+
+// Transition is the shape of one job state change, without its param values.
+//
+// It mirrors router.TransitionEvent rather than importing it, because importing
+// upward would invert the dependency — router owns the event, this package owns
+// how it is rendered. The composition root adapts one to the other.
+type Transition struct {
+	JobID    string
+	UserID   string
+	Label    string
+	From     string
+	To       string
+	Attempt  int
+	WorkerID string
+	Actor    string
+	Stage    int
+	Params   map[string]string
+	Reason   string
+	InState  time.Duration
+}
+
+// LogTransition writes one transition line.
+//
+// ⚠ The params reach this function and are handed straight to Job(), which emits
+// keys only. This is the single place in the process where a param map is turned
+// into text, and it is why the redaction guarantee holds at the call site rather
+// than only in the type.
+func LogTransition(log *slog.Logger, t Transition) {
+	attrs := []any{
+		Job(t.JobID, t.UserID, t.Label, t.Params),
+		slog.String("from", t.From),
+		slog.String("to", t.To),
+		slog.String("actor", t.Actor),
+		slog.Int("attempt", t.Attempt),
+		slog.Int("stage", t.Stage),
+		// ★ The field that turns "the job died" into "it sat queued for forty
+		// minutes and then failed in two seconds".
+		slog.Duration("in_state", t.InState),
+	}
+	if t.WorkerID != "" {
+		attrs = append(attrs, slog.String("worker_id", t.WorkerID))
+	}
+	if t.Reason != "" {
+		attrs = append(attrs, slog.String("reason", t.Reason))
+	}
+	log.Info("transition", attrs...)
 }
