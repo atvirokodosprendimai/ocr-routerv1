@@ -94,6 +94,10 @@ because nothing else consumes it yet — there is no regression surface to add.
 
 ## Mutation Log
 
+- 2026-09-15 · ef675f2* · mutant killed · exit 1 · `internal/ratelimit/ratelimit.go` · the decision is made from the wall clock instead of the injected instant, which makes every caller of this package untestable without sleeping · acceptance-sha256:c78eb62c0e0ebae98bb117d78ece3f937e536aa6d947b11490c416ca0d87fe6e · covers:the injected clock
+- 2026-09-15 · ef675f2* · mutant killed · exit 1 · `internal/ratelimit/ratelimit.go` · nothing is ever evicted, so the map grows one entry per token forever — the memory leak this type exists to avoid · acceptance-sha256:c78eb62c0e0ebae98bb117d78ece3f937e536aa6d947b11490c416ca0d87fe6e · covers:the idle eviction
+- 2026-09-15 · ef675f2* · mutant killed · exit 1 · `internal/ratelimit/ratelimit.go` · a zero rate limit no longer disables limiting, so the documented operational rollback silently becomes a total outage instead · acceptance-sha256:c78eb62c0e0ebae98bb117d78ece3f937e536aa6d947b11490c416ca0d87fe6e · covers:the zero-limit escape hatch
+
 ## Invariants
 
 - A decision is never made from the wall clock; the caller's instant decides.
@@ -130,3 +134,8 @@ rather than adjusting it.
   process; citation: file `docs/adr/0001-ocr-router-architecture.md:521`).
 
 ## Verification Log
+- 2026-09-15 · ef675f2* · exit 0 · `set -o pipefail …` · acceptance-sha256:c78eb62c0e0ebae98bb117d78ece3f937e536aa6d947b11490c416ca0d87fe6e · ms:3525
+- 2026-09-15 · ef675f2* · exit 0 · `set -o pipefail …` · acceptance-sha256:c78eb62c0e0ebae98bb117d78ece3f937e536aa6d947b11490c416ca0d87fe6e · ms:2198
+- 2026-09-15 · ef675f2* · exit 0 · `set -o pipefail …` · acceptance-sha256:c78eb62c0e0ebae98bb117d78ece3f937e536aa6d947b11490c416ca0d87fe6e · ms:2187
+- 2026-09-15 · ef675f2* · exit 0 · `set -o pipefail …` · acceptance-sha256:c78eb62c0e0ebae98bb117d78ece3f937e536aa6d947b11490c416ca0d87fe6e · ms:2152
+- 2026-09-15 · ef675f2* · exit 0 · `set -o pipefail …` · acceptance-sha256:c78eb62c0e0ebae98bb117d78ece3f937e536aa6d947b11490c416ca0d87fe6e · ms:3260

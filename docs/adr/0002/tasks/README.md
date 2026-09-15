@@ -4,7 +4,7 @@ Derived index — the task files are the source of truth. Execute in the order b
 
 | Task | Goal | Status | Depends-on | Acceptance (first command) |
 |------|------|--------|------------|----------------------------|
-| T1 | A per-token bucket limiter with an injected clock and idle eviction | pending | none | `go test ./internal/ratelimit/... -race` |
+| T1 | A per-token bucket limiter with an injected clock and idle eviction | done | none | `go test ./internal/ratelimit/... -race` |
 | T2 | A slog logger whose signature makes logging a param value impossible | pending | none | `go test ./internal/logging/...` |
 | T3 | Enforce the rate limit and log every request, inside the authenticated group | pending | T1, T2 | `go test ./internal/httpapi/... -race` |
 | T4 | Wire both into the binary and make a job's whole path readable | pending | T1, T2, T3 | `go test ./internal/router/... -race` |
