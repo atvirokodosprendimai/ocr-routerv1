@@ -167,11 +167,20 @@ templ Users(d Dashboard) {
 // it the blunt instrument, and the button carries that in its title attribute —
 // a control whose consequence is invisible is one that gets clicked by mistake.
 //
-// ⚠ BINDINGS ARE KEBAB-CASE: `data-bind:buffer-limit` binds `bufferLimit`. HTML
-// lower-cases attribute names, so `data-bind:bufferLimit` binds `bufferlimit` —
-// a different signal, and the field silently never saves.
+// ⚠ EVERY ROW'S INPUTS ARE NAMESPACED PER CUSTOMER — see rowsignals.go. These
+// were once plain `data-bind:credit-delta`, which made all rows share ONE box:
+// datastar signals are global and flattened page-wide, so typing a credit
+// adjustment for one customer typed it for every customer, and each row showed
+// whatever value rendered last rather than its own.
+//
+// ⚠ THE FLAT SIGNALS BELOW ARE SUBMIT SCRATCH SPACE, declared here so a handler
+// never reads a missing field. A row's Save copies its own values into them and
+// posts; the per-row namespace is `_`-prefixed and never leaves the browser.
 templ UserTable(d Dashboard) {
-	<section id="user-table">
+	<section
+		id="user-table"
+		data-signals="{bufferLimit: 0, priority: 0, jobTtl: 0, creditDelta: 0, creditReason: ''}"
+	>
 		<h2>Customers</h2>
 		if len(d.Users) == 0 {
 			<p class="empty">No customers yet.</p>
@@ -201,7 +210,7 @@ templ UserTable(d Dashboard) {
 									min="1"
 									aria-label={ "Buffer limit for " + u.Email }
 									value={ fmt.Sprint(u.BufferLimit) }
-									data-bind:buffer-limit
+									data-bind={ rowBind(u.ID, "bufferLimit") }
 								/>
 							</td>
 							<td class="num">
@@ -209,7 +218,7 @@ templ UserTable(d Dashboard) {
 									type="number"
 									aria-label={ "Priority for " + u.Email }
 									value={ fmt.Sprint(u.Priority) }
-									data-bind:priority
+									data-bind={ rowBind(u.ID, "priority") }
 								/>
 							</td>
 							<td class="num">
@@ -218,7 +227,7 @@ templ UserTable(d Dashboard) {
 									min="0"
 									aria-label={ "Job TTL in seconds for " + u.Email }
 									value={ fmt.Sprint(u.JobTTLSecs) }
-									data-bind:job-ttl
+									data-bind={ rowBind(u.ID, "jobTtl") }
 								/>
 							</td>
 							<td>
@@ -230,7 +239,7 @@ templ UserTable(d Dashboard) {
 							</td>
 							<td class="row-actions">
 								<button
-									data-on:click={ fmt.Sprintf("@post('/admin/users/%s/settings')", u.ID) }
+									data-on:click={ rowSubmit(u.ID, fmt.Sprintf("/admin/users/%s/settings", u.ID), "bufferLimit", "priority", "jobTtl") }
 								>Save</button>
 								<button
 									class="secondary"
@@ -261,17 +270,17 @@ templ UserTable(d Dashboard) {
 										type="number"
 										aria-label={ "Credit adjustment for " + u.Email }
 										placeholder="+50 or -20"
-										data-bind:credit-delta
+										data-bind={ rowBind(u.ID, "creditDelta") }
 									/>
 									<input
 										type="text"
 										aria-label={ "Reason for the credit adjustment to " + u.Email }
 										placeholder="reason (required)"
-										data-bind:credit-reason
+										data-bind={ rowBind(u.ID, "creditReason") }
 									/>
 									<button
 										class="secondary"
-										data-on:click={ fmt.Sprintf("@post('/admin/users/%s/credits')", u.ID) }
+										data-on:click={ rowSubmit(u.ID, fmt.Sprintf("/admin/users/%s/credits", u.ID), "creditDelta", "creditReason") }
 									>Adjust</button>
 								</div>
 							</td>
