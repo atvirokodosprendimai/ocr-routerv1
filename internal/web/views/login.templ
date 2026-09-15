@@ -1,0 +1,116 @@
+package views
+
+// Login is the dashboard's sign-in page.
+//
+// ⚠ IT USES A PLAIN <form method="post">, NOT DATASTAR, and that is a decision
+// rather than an oversight. Every other view in this package binds inputs to
+// datastar signals, and two things make that wrong here:
+//
+//   - Datastar signals are GLOBAL and every unprefixed one is sent to the
+//     backend on every action. A password in a signal is a password sitting in
+//     the page's reactive state for as long as the tab is open.
+//   - A native form POST works with no JavaScript at all. The one page a locked-
+//     out operator needs is the one that should depend on the least.
+//
+// It also deliberately does not use Layout: that shell renders navigation to
+// authenticated pages, and offering links that 401 to someone who has not logged
+// in yet is a worse first impression than a page with nothing on it.
+templ Login(errMsg string, requireTLS bool) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>Sign in — ocr-router</title>
+			<style type="text/css">
+				{ css }
+				{ loginCSS }
+			</style>
+		</head>
+		<body>
+			<main id="main" class="login-wrap">
+				<div class="login-card">
+					<h1>ocr-router</h1>
+					<p class="muted">Administrator sign-in</p>
+					if requireTLS {
+						<p class="login-error" role="alert">
+							This page is being served over plain HTTP. The session cookie is
+							marked Secure, so a browser would discard it and the sign-in would
+							appear to succeed and then fail. Put TLS in front of the router
+							before signing in.
+						</p>
+					} else {
+						if errMsg != "" {
+							<p class="login-error" role="alert">{ errMsg }</p>
+						}
+						<form method="post" action="/admin/login">
+							<div class="field">
+								<label for="email">Email</label>
+								<input
+									id="email"
+									name="email"
+									type="email"
+									autocomplete="username"
+									required
+									autofocus
+								/>
+							</div>
+							<div class="field">
+								<label for="password">Password</label>
+								<input
+									id="password"
+									name="password"
+									type="password"
+									autocomplete="current-password"
+									required
+								/>
+							</div>
+							<button type="submit">Sign in</button>
+						</form>
+					}
+					<p class="muted login-hint">
+						Sessions last 12 hours and are not extended by use. Signing out ends
+						the session everywhere, including other tabs.
+					</p>
+				</div>
+			</main>
+		</body>
+	</html>
+}
+
+// loginCSS is scoped to this page. It is separate from the dashboard's stylesheet
+// because the login page is the one view with no navigation, no tables and no
+// live region — sharing a layout with them would mean styling around three
+// things that are not there.
+const loginCSS = `
+.login-wrap {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+.login-card {
+  width: 100%;
+  max-width: 24rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 2rem;
+}
+.login-card h1 { font-size: 1.25rem; margin: 0; }
+.login-card > .muted { margin: .25rem 0 1.5rem; }
+.login-card .field { margin-bottom: 1rem; }
+.login-card label { display: block; margin-bottom: .35rem; font-size: .85rem; }
+.login-card input { width: 100%; }
+.login-card button { width: 100%; margin-top: .5rem; }
+.login-error {
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  border: 1px solid var(--bad);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: .75rem;
+  margin: 0 0 1rem;
+  font-size: .9rem;
+}
+.login-hint { font-size: .8rem; margin: 1.5rem 0 0; }
+`

@@ -8,10 +8,12 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/urfave/cli/v3"
 
 	"github.com/atvirokodosprendimai/ocr-router/internal/monitor"
@@ -53,39 +55,132 @@ func TestHealthzIsUnauthenticatedInTheBinary(t *testing.T) {
 	}
 }
 
-// TestHealthzIsTheOnlyUnauthenticatedRoute pins the exception so it stays one.
+// TestOnlyLoginAndHealthzAreUnauthenticated walks the binary's REAL route table.
 //
-// /healthz being outside the authenticator is a deliberate hole. The risk is not
-// that hole but the next one added beside it, so the rule is asserted rather than
-// commented.
-func TestHealthzIsTheOnlyUnauthenticatedRoute(t *testing.T) {
-	_, srv := startApp(t, testConfig(t))
+// ⚠ THIS REPLACED TestHealthzIsTheOnlyUnauthenticatedRoute, which probed a
+// hand-written list of six paths. That list was the problem: ADR-0003 added
+// `GET /admin/login` and `POST /admin/login` and the old test went on passing,
+// because the new routes were not in the list anyone remembered to update. A
+// list kept beside the truth is a thing somebody has to maintain, and the route
+// it misses is exactly the one added in a hurry.
+//
+// ⚠ IT WAS REWRITTEN, NOT DELETED. It is the only guard on how many
+// unauthenticated routes exist, and it was being changed at the moment that
+// count stopped being one — which is precisely when deleting it would have been
+// easiest to justify. ADR-0003 names it in its `Enforced-by:` header.
+//
+// The allow-list is explicit and exact: a fourth unauthenticated route fails
+// this, whoever adds it and for whatever reason.
+func TestOnlyLoginAndHealthzAreUnauthenticated(t *testing.T) {
+	app, srv := startApp(t, testConfig(t))
 
-	// The method matters: chi answers 405 before any middleware runs, so probing
-	// every route with GET would pass vacuously on the POST-only ones.
-	routes := []struct{ method, path string }{
-		{"POST", "/upload"},
-		{"POST", "/claim"},
-		{"GET", "/sse"},
-		{"GET", "/admin"},
-		{"GET", "/admin/users"},
-		{"GET", "/files/x"},
+	// Routes that may answer without a credential, and why each is permitted.
+	allowed := map[string]string{
+		"GET /healthz":      "a load balancer and an orchestrator probe cannot hold a bearer token",
+		"GET /admin/login":  "the sign-in page, which by definition precedes having a credential",
+		"POST /admin/login": "the sign-in submission itself",
 	}
-	for _, r := range routes {
-		req, err := http.NewRequest(r.method, srv.URL+r.path, nil)
+
+	var checked int
+	for _, rt := range routesOf(t, app.Handler) {
+		key := rt.method + " " + rt.path
+		if _, ok := allowed[key]; ok {
+			continue
+		}
+		// The method matters: chi answers 405 before any middleware runs, so
+		// probing a POST-only route with GET would pass vacuously.
+		req, err := http.NewRequest(rt.method, srv.URL+rt.path, nil)
 		if err != nil {
-			t.Fatalf("NewRequest: %v", err)
+			t.Fatalf("NewRequest %s: %v", key, err)
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			t.Fatalf("%s %s: %v", r.method, r.path, err)
+			t.Fatalf("%s: %v", key, err)
 		}
 		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("%s %s with no credential = %d, want 401 — only /healthz may answer "+
-				"unauthenticated", r.method, r.path, resp.StatusCode)
+		checked++
+
+		// ⚠ The property is "SERVES something", not "returns exactly 401".
+		//
+		// 401, 403, 404 and 405 are all safe: nothing was served. Insisting on
+		// 401 specifically would make this test fail on chi's own mount
+		// wildcards — `mux.Mount("/", api)` registers `/*` for every method, and
+		// those 404 — and the natural repair for that noise is to loosen the
+		// walk until it stops seeing real routes too. A 2xx is the thing that
+		// cannot be explained away: it means an unauthenticated caller got a
+		// response body.
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			t.Errorf("%s served %d to a caller with NO credential. Only these may answer "+
+				"unauthenticated: %v", key, resp.StatusCode, keysOf(allowed))
 		}
 	}
+
+	if checked == 0 {
+		t.Fatal("no routes were probed at all, so this assertion proved nothing — the walk " +
+			"found nothing, or everything was allow-listed")
+	}
+	// And every allow-listed route must actually EXIST. An allow-list entry for a
+	// route nobody mounts is a hole waiting for someone to mount it.
+	mounted := map[string]bool{}
+	for _, rt := range routesOf(t, app.Handler) {
+		mounted[rt.method+" "+rt.path] = true
+	}
+	for key := range allowed {
+		if !mounted[key] {
+			t.Errorf("%q is allow-listed as unauthenticated but is not mounted — the exemption "+
+				"outlived the route, and the next thing mounted there inherits it", key)
+		}
+	}
+}
+
+// route is one mounted method+path pair.
+type route struct{ method, path string }
+
+// routesOf walks a chi router, substituting a value for every path parameter so
+// the result is a requestable URL.
+func routesOf(t *testing.T, h http.Handler) []route {
+	t.Helper()
+	r, ok := h.(chi.Routes)
+	if !ok {
+		t.Fatalf("the binary's handler is not a chi router (%T), so the route table cannot be "+
+			"walked and this test cannot do its job", h)
+	}
+	var out []route
+	err := chi.Walk(r, func(method, pattern string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		p := pattern
+		// `/files/{id}` → `/files/x`. Without this the request 404s before
+		// reaching any middleware and every route looks unauthenticated.
+		for {
+			open := strings.Index(p, "{")
+			if open < 0 {
+				break
+			}
+			close := strings.Index(p[open:], "}")
+			if close < 0 {
+				break
+			}
+			p = p[:open] + "x" + p[open+close+1:]
+		}
+		p = strings.TrimSuffix(p, "/*")
+		if p == "" {
+			p = "/"
+		}
+		out = append(out, route{method: method, path: p})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking routes: %v", err)
+	}
+	return out
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // TestMetricsIsNotOnThePublicListener is the half of the exposure decision that

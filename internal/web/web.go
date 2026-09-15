@@ -23,6 +23,7 @@ import (
 	"github.com/atvirokodosprendimai/ocr-router/internal/core"
 	"github.com/atvirokodosprendimai/ocr-router/internal/httpapi"
 	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-router/internal/ratelimit"
 	"github.com/atvirokodosprendimai/ocr-router/internal/results"
 	"github.com/atvirokodosprendimai/ocr-router/internal/router"
 	"github.com/atvirokodosprendimai/ocr-router/internal/store"
@@ -39,6 +40,15 @@ type Deps struct {
 
 	PingInterval time.Duration
 	Now          func() time.Time
+
+	// Limiter throttles login attempts. Nil means no throttling, which keeps
+	// every test written before ADR-0003 working — and is why the login handler
+	// checks it rather than relying on a nop.
+	//
+	// ⚠ It is keyed on the EMAIL here, not on the token: a login has no
+	// credential yet, so there is nothing else bounded to key on. Not the IP —
+	// ADR-0001 puts callers behind NATs.
+	Limiter *ratelimit.Limiter
 }
 
 // Web serves /admin.
@@ -64,16 +74,34 @@ func New(deps Deps) *Web {
 // correct, and the second one is always the one that rots.
 func (wb *Web) Mount(r chi.Router, authenticate func(http.Handler) http.Handler) {
 	r.Route("/admin", func(r chi.Router) {
-		r.Use(authenticate)
-		r.Use(wb.requireAdmin)
+		// ⚠ OUTSIDE the authenticated group, and they are the only routes here
+		// that are. A login page you must already be logged in to see is the
+		// mistake this ordering prevents, and it is invisible in a diff — the
+		// handler exists, the route exists, and the page 401s.
+		//
+		// They are also the second and third unauthenticated routes in the whole
+		// process, after /healthz. cmd/router asserts that the list is exactly
+		// these three.
+		r.Get("/login", wb.showLogin)
+		r.Post("/login", wb.doLogin)
 
-		r.Get("/", wb.overview)
-		r.Get("/users", wb.users)
-		r.Get("/services", wb.services)
-		r.Get("/stream", wb.stream)
-		r.Post("/users", wb.createUser)
-		r.Post("/users/{id}/tokens", wb.mintToken)
-		r.Post("/rates", wb.setRate)
+		r.Group(func(r chi.Router) {
+			r.Use(authenticate)
+			r.Use(wb.requireAdmin)
+			// The CSRF guard sits inside authentication because it only applies
+			// to cookie-authenticated requests, and whether a request used a
+			// cookie is not known before authenticate runs.
+			r.Use(wb.requireSameOrigin)
+
+			r.Post("/logout", wb.doLogout)
+			r.Get("/", wb.overview)
+			r.Get("/users", wb.users)
+			r.Get("/services", wb.services)
+			r.Get("/stream", wb.stream)
+			r.Post("/users", wb.createUser)
+			r.Post("/users/{id}/tokens", wb.mintToken)
+			r.Post("/rates", wb.setRate)
+		})
 	})
 }
 

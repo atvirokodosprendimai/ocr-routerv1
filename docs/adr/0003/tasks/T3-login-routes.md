@@ -19,12 +19,12 @@ CSRF guard that refuses a request carrying no `Origin` rather than waving it thr
 
 | File | Change | Why |
 |------|--------|-----|
-| `internal/web/views/views.templ` | edit | the login page — form, error state, and the TLS-required message |
-| `internal/web/web.go` | edit | **`r.Get("/login")`, `r.Post("/login")`, `r.Post("/logout")` mounted OUTSIDE the authenticated group**, and the `Origin` guard on the rest |
-| `internal/httpapi/middleware.go` | edit | the cookie fallback inside `authenticate`, and the `/admin`-only scope |
-| `internal/httpapi/api.go` | edit | `Deps.Sessions` |
-| `internal/web/login_test.go` | add | the login, cookie and CSRF tests |
-| `internal/httpapi/middleware_test.go` | edit | cookie-fallback precedence and scope tests |
+| `internal/web/views/login.templ` | add | the login page — form, error state, and the TLS-required message. A file of its own rather than an addition to `views.templ`: it is the one view that renders a whole document and shares no layout with the dashboard |
+| `internal/web/login.go` | add | the three handlers, the cookie, the `Origin` guard, and the login rate limit |
+| `internal/web/web.go` | edit | **`r.Get("/login")` and `r.Post("/login")` mounted OUTSIDE the authenticated group**, `r.Post("/logout")` inside it, the `Origin` guard on the rest, and `Deps.Limiter` |
+| `internal/httpapi/middleware.go` | edit | `resolveCaller` — the cookie fallback inside `authenticate`, and the `/admin`-only scope |
+| `internal/web/login_test.go` | add | the login, cookie and CSRF tests, over a **TLS** test server |
+| `internal/httpapi/session_test.go` | add | cookie-fallback precedence and scope tests. A new file rather than an edit to `middleware_test.go`, because it needs a chi router with an `/admin` subtree that `middleware_test.go`'s fixture does not build |
 | `cmd/router/monitoring_test.go` | edit | **rewrite** `TestHealthzIsTheOnlyUnauthenticatedRoute` → `TestOnlyLoginAndHealthzAreUnauthenticated` |
 
 `web.go`'s three route lines are the selecting lines: a login handler that exists and is mounted
@@ -91,9 +91,9 @@ the rewritten invariant. Red at authoring: the route does not exist, so the new 
 | `TestLoginOverPlainHTTPExplainsItself` | `internal/web/login_test.go` | a login POST without TLS returns a body naming TLS and sets no cookie — red if it silently sets a cookie the browser will drop | — | S4 |
 | `TestLogoutRevokesServerSide` | `internal/web/login_test.go` | after logout the OLD cookie value is refused even when replayed directly — asserts revocation, not merely that a clearing header was sent | — | S5 |
 | `TestLogoutClearsTheCookie` | `internal/web/login_test.go` | the response carries `ocrr_session=` with `Max-Age=-1` | — | S5 |
-| `TestCookieAuthenticatesTheDashboard` | `internal/httpapi/middleware_test.go` | a request to `/admin` with only the session cookie resolves to the admin principal | — | S6 |
-| `TestHeaderWinsOverCookie` | `internal/httpapi/middleware_test.go` | a request carrying BOTH a client bearer token and an admin session cookie is authenticated as the **client** — red if the cookie is consulted first, which would silently escalate every API call from a browser | — | S6 |
-| `TestCookieIsRefusedOutsideAdmin` | `internal/httpapi/middleware_test.go` | the same cookie on `POST /upload` and `POST /claim` is rejected with 401 — **the property that keeps CSRF out of the API**, and no test in `internal/web` can see it | — | S6 |
+| `TestCookieAuthenticatesTheDashboard` | `internal/httpapi/session_test.go` | a request to `/admin` with only the session cookie resolves to the admin principal | — | S6 |
+| `TestHeaderWinsOverCookie` | `internal/httpapi/session_test.go` | a request carrying BOTH a client bearer token and an admin session cookie is authenticated as the **client** — red if the cookie is consulted first, which would silently escalate every API call from a browser | — | S6 |
+| `TestCookieIsRefusedOutsideAdmin` | `internal/httpapi/session_test.go` | the same cookie on `POST /upload` and `POST /claim` is rejected with 401 — **the property that keeps CSRF out of the API**, and no test in `internal/web` can see it | — | S6 |
 | `TestStateChangingRequestWithNoOriginIsRefused` | `internal/web/login_test.go` | `POST /admin/users` authenticated by cookie with NO `Origin` and NO `Referer` returns 403 — **the single most likely bug in this record**, and the check that distinguishes a closed guard from an open one | — | S7 |
 | `TestStateChangingRequestWithForeignOriginIsRefused` | `internal/web/login_test.go` | `Origin: https://evil.example` returns 403 | — | S7 |
 | `TestStateChangingRequestWithMatchingOriginSucceeds` | `internal/web/login_test.go` | the dashboard's own `Origin` is accepted — without this the two tests above are satisfied by a guard that refuses everything | — | S7 |
@@ -102,7 +102,7 @@ the rewritten invariant. Red at authoring: the route does not exist, so the new 
 | `TestLoginIsRateLimitedPerEmail` | `internal/web/login_test.go` | repeated failures for one email are throttled while a DIFFERENT email still gets through — both halves, since a global limit would pass the first alone and lock out every admin | — | S8 |
 | `TestLoginRateLimitIsNotALockout` | `internal/web/login_test.go` | after the limiter refills, the correct password still works — an attacker must not be able to lock out the real administrator by guessing | — | S8 |
 | `TestOnlyLoginAndHealthzAreUnauthenticated` | `cmd/router/monitoring_test.go` | walks the binary's real route table; every route 401s except `/healthz` and the two login routes — the standing guard named in the record's `Enforced-by:` | — | S9 |
-| `TestRequestLogNeverContainsTheSessionCookie` | `internal/httpapi/middleware_test.go` | a request carrying a session cookie produces a log line containing neither the cookie value nor a `Cookie` field — "already true" is not "will stay true" | — | S6 |
+| `TestRequestLogNeverContainsTheSessionCookie` | `internal/httpapi/session_test.go` | a request carrying a session cookie produces a log line containing neither the cookie value nor a `Cookie` field — "already true" is not "will stay true" | — | S6 |
 
 ## Reachability
 
@@ -114,6 +114,12 @@ the rewritten invariant. Red at authoring: the route does not exist, so the new 
 | 4 — it is used | human sign-off in T4: a real browser, a real login, a real logout |
 
 ## Mutation Log
+
+- 2026-09-15 · 7fe24bf* · mutant killed · exit 1 · `internal/web/login.go` · the origin check fails OPEN, permitting every request that omits both headers — which is every cross-site request an attacker writes by hand · acceptance-sha256:610e687ed4eade47637b1d8a5d6285489334db18dc6d85d78fea76591cb7c960 · covers:the closed-by-default origin check
+- 2026-09-15 · 7fe24bf* · mutant killed · exit 1 · `internal/httpapi/middleware.go` · the cookie is consulted before the header, so every API call made from a logged-in administrator browser silently runs with admin rights whatever token it presented · acceptance-sha256:610e687ed4eade47637b1d8a5d6285489334db18dc6d85d78fea76591cb7c960 · covers:the header-first precedence
+- 2026-09-15 · 7fe24bf* · mutant killed · exit 1 · `internal/httpapi/middleware.go` · the session cookie is honoured on every API route, so POST /upload and POST /claim become reachable by CSRF from a logged-in administrator browser · acceptance-sha256:610e687ed4eade47637b1d8a5d6285489334db18dc6d85d78fea76591cb7c960 · covers:the admin-only cookie scope
+- 2026-09-15 · 7fe24bf* · mutant killed · exit 1 · `internal/web/login.go` · the session cookie loses SameSite=Strict, so a cross-site POST carries it and the primary CSRF defence is gone · acceptance-sha256:610e687ed4eade47637b1d8a5d6285489334db18dc6d85d78fea76591cb7c960 · covers:the cookie attributes
+- 2026-09-15 · 7fe24bf* · mutant killed · exit 1 · `internal/web/login.go` · login is unthrottled, so an attacker can spend 64MB and tens of milliseconds of the router per guess with no credential at all · acceptance-sha256:610e687ed4eade47637b1d8a5d6285489334db18dc6d85d78fea76591cb7c960 · covers:the login rate limit
 
 ## Invariants
 
@@ -161,3 +167,9 @@ cannot check.
 - Self-service password change in the UI (deferred: `docs/adr/BACKLOG.md`).
 
 ## Verification Log
+- 2026-09-15 · 7fe24bf* · exit 0 · `set -o pipefail …` · acceptance-sha256:610e687ed4eade47637b1d8a5d6285489334db18dc6d85d78fea76591cb7c960 · ms:46263
+- 2026-09-15 · 7fe24bf* · exit 0 · `set -o pipefail …` · acceptance-sha256:610e687ed4eade47637b1d8a5d6285489334db18dc6d85d78fea76591cb7c960 · ms:46215
+- 2026-09-15 · 7fe24bf* · exit 0 · `set -o pipefail …` · acceptance-sha256:610e687ed4eade47637b1d8a5d6285489334db18dc6d85d78fea76591cb7c960 · ms:41578
+- 2026-09-15 · 7fe24bf* · exit 0 · `set -o pipefail …` · acceptance-sha256:610e687ed4eade47637b1d8a5d6285489334db18dc6d85d78fea76591cb7c960 · ms:41346
+- 2026-09-15 · 7fe24bf* · exit 0 · `set -o pipefail …` · acceptance-sha256:610e687ed4eade47637b1d8a5d6285489334db18dc6d85d78fea76591cb7c960 · ms:40507
+- 2026-09-15 · 7fe24bf* · exit 0 · `set -o pipefail …` · acceptance-sha256:610e687ed4eade47637b1d8a5d6285489334db18dc6d85d78fea76591cb7c960 · ms:41813

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -40,7 +41,7 @@ const (
 // route cannot accidentally add an unauthenticated one.
 func (a *API) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, err := a.deps.Identity.Authenticate(r.Context(), r.Header.Get("Authorization"), a.deps.Now())
+		p, err := a.resolveCaller(r)
 		if err != nil {
 			// The challenge header is what tells a well-behaved client HOW to
 			// authenticate rather than merely that it failed.
@@ -71,6 +72,45 @@ func (a *API) requireRole(role core.Role) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// SessionCookie is the cookie name the dashboard's session is carried in.
+//
+// Declared here rather than imported from web because web imports httpapi, not
+// the other way round. It is the same constant web exports, and a test pins the
+// two together — two packages each spelling it out would compile, never match,
+// and hand every request an empty session.
+const SessionCookie = "ocrr_session"
+
+// adminPrefix is the only path a session cookie is honoured under.
+const adminPrefix = "/admin"
+
+// resolveCaller turns a request into a principal, header first.
+//
+// ⚠ THE HEADER ALWAYS WINS. A client that presents a bearer token must be
+// authenticated as that token whatever cookie its browser also carries —
+// otherwise an API call made from a logged-in admin's browser would silently
+// execute with admin rights.
+//
+// ⚠ AND THE COOKIE IS HONOURED ONLY UNDER /admin. A cookie is attached by the
+// browser automatically and a bearer token is not; that difference is the entire
+// CSRF threat model. Confining the cookie to the subtree that has CSRF defences
+// is what keeps POST /upload and POST /claim out of it, and keeps ADR-0001's
+// statement that the API's credential is the bearer token literally true.
+func (a *API) resolveCaller(r *http.Request) (core.Principal, error) {
+	if h := r.Header.Get("Authorization"); h != "" {
+		return a.deps.Identity.Authenticate(r.Context(), h, a.deps.Now())
+	}
+
+	if !strings.HasPrefix(r.URL.Path, adminPrefix) {
+		// No header, and not the dashboard. Nothing else is a credential here.
+		return core.Principal{}, core.ErrUnauthorized
+	}
+	c, err := r.Cookie(SessionCookie)
+	if err != nil || c.Value == "" {
+		return core.Principal{}, core.ErrUnauthorized
+	}
+	return a.deps.Identity.ResolveSession(r.Context(), c.Value, a.deps.Now())
 }
 
 // rateLimit refuses a caller that has exceeded its TOKEN's request rate.
