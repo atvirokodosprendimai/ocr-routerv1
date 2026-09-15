@@ -421,6 +421,39 @@ func TestFlagDefaultsBuildAServer(t *testing.T) {
 	}
 }
 
+// TestAdminSubtreeIsMounted is the composition-root check for the dashboard.
+//
+// Every test in internal/web mounts the subtree itself, so all of them pass with
+// the `dash.Mount` line deleted from buildApp. This one resolves /admin through
+// the binary's own graph, which is the only place that line exists.
+func TestAdminSubtreeIsMounted(t *testing.T) {
+	app, srv := startApp(t, testConfig(t))
+	_, adminTok, err := app.Ident.Bootstrap(context.Background(), "a@example.com", time.Now())
+	if err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	req, _ := http.NewRequest("GET", srv.URL+"/admin", nil)
+	req.Header.Set("Authorization", "Bearer "+adminTok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /admin: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		t.Fatal("/admin is not mounted in the binary's own handler — the dashboard is finished, " +
+			"tested, and unreachable from the product")
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /admin as admin = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "ocr-router") {
+		t.Error("/admin resolved but did not render the dashboard layout")
+	}
+}
+
 func TestCLIExposesEveryFlag(t *testing.T) {
 	// Rung 3: the caller can discover the configuration. A flag that exists in
 	// Config but is not on the command line is unreachable by an operator.

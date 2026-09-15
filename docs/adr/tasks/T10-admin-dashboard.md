@@ -20,15 +20,15 @@ a refresh.
 
 | File | Change | Why |
 |------|--------|-----|
-| `internal/web/mount.go` | add | **the `/admin` route table** — what makes every view reachable |
-| `internal/web/handlers.go` | add | page loads, actions, the dashboard SSE stream |
-| `internal/web/views/layout.templ` | add | shell, layout-level signals only |
-| `internal/web/views/users.templ` | add | user list, create form, per-user settings |
-| `internal/web/views/jobs.templ` | add | live job table, queue depth per label |
-| `internal/web/views/workers.templ` | add | connected workers and the labels they serve |
-| `internal/web/views/services.templ` | add | live labels and their admin-owned rates |
-| `internal/web/*_test.go` | add | render, role-gate and round-trip tests |
-| `cmd/router/wire.go` | edit | **mount the `/admin` subtree** — the line that selects all of it |
+| `internal/web/web.go` | add | the `/admin` route table, page loads, actions and the dashboard SSE stream |
+| `internal/web/views/layout.templ` | add | shell, layout-level signals only, and the datastar rules that bind every view |
+| `internal/web/views/views.templ` | add | overview, jobs, workers, users and services — pages and live fragments |
+| `internal/web/views/model.go` | add | `Dashboard`, the read model every view is a pure function of |
+| `internal/web/views/css.go` | add | the stylesheet as a Go constant, because templ forbids a variable inside `<style>` at COMPILE time |
+| `internal/web/handlers_test.go` | add | role-gate, action and stream tests |
+| `internal/web/views/views_test.go` | add | the markup rules, beside the views they govern |
+| `cmd/router/wire.go` | edit | **mount the `/admin` subtree behind the API's own authenticator** — the line that selects all of it |
+| `cmd/router/main_test.go` | edit | `TestAdminSubtreeIsMounted` |
 | `README.md` | edit | dashboard URL and first-login instructions |
 
 ## Ordered Steps
@@ -94,24 +94,28 @@ does not exist.
 
 | Test name | File | Verifies | Covers | Steps |
 |-----------|------|----------|--------|-------|
-| `TestAdminRoutesRejectNonAdmin` | `internal/web/handlers_test.go` | client and worker tokens get 403 on every mounted `/admin` path, driven from the route table | — | S2 |
-| `TestAdminSubtreeIsMounted` | `cmd/router/main_test.go` | `/admin` resolves through the binary's own `buildHandler` — goes red if the `web.Mount` line is deleted | — | S2 |
-| `TestCreateUserRoundTrip` | `internal/web/handlers_test.go` | posting the create action creates the user and returns a fragment listing them | — | S7 |
-| `TestCreateUserDuplicateShowsInlineError` | `internal/web/handlers_test.go` | a duplicate email returns **200** with an error fragment, not a 4xx | — | S7 |
-| `TestMintTokenShowsPlaintextOnce` | `internal/web/handlers_test.go` | the mint fragment contains the token and a later page load does not | — | S8 |
-| `TestNoFormTags` | `internal/web/views_test.go` | no rendered admin view contains a `<form>` element | — | S4 |
-| `TestBindingsAreKebabCase` | `internal/web/views_test.go` | every `data-bind:` / `data-signals:` suffix matches `^[a-z0-9-]+$` — catches the casing trap that binds a different signal with no error anywhere | — | S4 |
-| `TestUsesDataInitNotOnLoad` | `internal/web/views_test.go` | no view contains `data-on-load`, and the stream is opened with `data-init` | — | S4 |
-| `TestDomEventsUseColon` | `internal/web/views_test.go` | no `data-on-click`-style hyphenated DOM event appears; the six legitimate hyphenated attributes are allow-listed by name | — | S4 |
-| `TestStoredTextIsNotInCompiledAttributes` | `internal/web/views_test.go` | rendering a user whose email is `a@b(c).com` and a job whose error is `@fail(x)` puts that text in a **text node** and in no `data-*` attribute value — the silent-breakage guard | — | S5 |
-| `TestJobsFragmentHasStableID` | `internal/web/views_test.go` | each live fragment root carries the id the SSE patch targets | — | S6 |
-| `TestAdminStreamClearsWriteDeadline` | `internal/web/handlers_test.go` | against a server with a 100ms `WriteTimeout`, the admin stream still delivers after 300ms | — | S6 |
-| `TestAdminStreamRerendersOnEvent` | `internal/web/handlers_test.go` | a job state change publishes to the `admin` topic and the stream emits a patched jobs fragment | — | S6 |
-| `TestRateEditPersists` | `internal/web/handlers_test.go` | editing a rate writes `service_rates` and a later delivery charges at the new rate | — | S9 |
-| `TestServicesShowsLabelWithoutExplicitRate` | `internal/web/handlers_test.go` | a live label with no `service_rates` row is listed as charging the default 1, rather than omitted | — | S9 |
-| `TestEveryInputHasALabel` | `internal/web/views_test.go` | every rendered `<input>` has an associated `<label>` — the one accessibility property that is cheap to assert mechanically | — | S10 |
-| `TestLoadingAndEmptyStatesExist` | `internal/web/views_test.go` | the jobs view with zero jobs renders an empty state, and the action markup carries `data-indicator` | — | S10 |
-
+| `TestAdminRoutesRejectNonAdmin` | `internal/web/handlers_test.go` | client and worker tokens get 403, and no token gets 401, on every `/admin` path | — | S2 |
+| `TestAdminPagesRenderForAdmin` | `internal/web/handlers_test.go` | all three pages render the layout for an admin | — | S2 |
+| `TestPrincipalReachesTheDashboard` | `internal/web/handlers_test.go` | an ADMIN token is not forbidden — the guard for using ONE context key across two packages, whose failure mode is "the admin is always forbidden" with nothing naming the cause | — | S2 |
+| `TestAdminSubtreeIsMounted` | `cmd/router/main_test.go` | `/admin` resolves through the binary's own `buildApp` — every test in `internal/web` mounts the subtree itself and would survive deleting the mount line | — | S2 |
+| `TestCreateUserRoundTrip` | `internal/web/handlers_test.go` | the create action creates the user and patches the user table back | — | S7 |
+| `TestCreateUserDuplicateShowsInlineError` | `internal/web/handlers_test.go` | a duplicate email is **200** with an explanatory fragment — a 4xx carries nothing for datastar to morph, so the page would silently show nothing | — | S7 |
+| `TestMintTokenShowsPlaintextOnce` | `internal/web/handlers_test.go` | the mint fragment carries the token and a later page load does not | — | S8 |
+| `TestRateEditPersistsAndChangesTheCharge` | `internal/web/handlers_test.go` | setting a rate of 4 then delivering a 2-unit job charges 8 — the edit must reach the MONEY, not just the row | — | S9 |
+| `TestRateRejectsBadInput` | `internal/web/handlers_test.go` | empty label, negative and non-numeric rates each answer 200 with a visible error | — | S7, S9 |
+| `TestAdminStreamPushesOnEvent` | `internal/web/handlers_test.go` | the stream pushes on connect and again when the admin topic fires | — | S6 |
+| `TestAdminStreamClearsWriteDeadline` | `internal/web/handlers_test.go` | against a server with a **150ms `WriteTimeout`**, the stream still delivers 400ms later — run against a server that HAS a WriteTimeout so it cannot pass vacuously | — | S6 |
+| `TestNoFormTags` | `internal/web/views/views_test.go` | no rendered view contains a `<form>` | — | S4 |
+| `TestUsesDataInitNotOnLoad` | `internal/web/views/views_test.go` | no view uses `data-on-load` (which does not exist in v1 and fails silently), and the stream opens with `data-init` | — | S4 |
+| `TestDomEventsUseColon` | `internal/web/views/views_test.go` | no hyphenated DOM-event binding appears; the six legitimate `data-on-*` attributes are allow-listed by name | — | S4 |
+| `TestBindingsAreKebabCase` | `internal/web/views/views_test.go` | every signal-path attribute suffix is lower-case — the casing trap binds a DIFFERENT signal with nothing reporting it | — | S4 |
+| `TestStoredTextIsNotInCompiledAttributes` | `internal/web/views/views_test.go` | a job error of `Call @Anna(invoices)` and an email of `a@b(c).com` render as TEXT NODES and appear in no `data-*` attribute value — and the test first asserts the text rendered at all, so the negative cannot pass vacuously | — | S5 |
+| `TestLiveFragmentsHaveStableIDs` | `internal/web/views/views_test.go` | each live fragment carries its morph id AND that id exists in the first paint — a fragment cannot be patched into existence | — | S6 |
+| `TestEveryInputHasALabel` | `internal/web/views/views_test.go` | every input and select has an associated `<label for>` | — | S10 |
+| `TestEmptyStatesExist` | `internal/web/views/views_test.go` | the jobs, workers and user tables each render an empty state — a blank table is indistinguishable from a broken page | — | S10 |
+| `TestLoadingStateExists` | `internal/web/views/views_test.go` | the create action has a `data-indicator` and something consumes it with `data-show` | — | S10 |
+| `TestWorkersViewSurfacesQueueWithNoWorker` | `internal/web/views/views_test.go` | a label with 5 queued jobs and zero workers is called out by name and count — precisely the silent failure an operator needs to see | — | S9 |
+| `TestTokenIsPresentedAsShownOnce` | `internal/web/views/views_test.go` | the mint fragment tells the operator the token is shown once, or they navigate away and lose it | — | S8 |
 ## Reachability
 
 | Rung | How this task shows it |
@@ -122,6 +126,9 @@ does not exist.
 | 4 — it is used | human sign-off below — browser verification with two tabs open |
 
 ## Mutation Log
+
+- 2026-09-15 · a5bff80* · mutant killed · exit 1 · `internal/web/views/views.templ` · data-on-load does not exist in datastar v1: the page never subscribes, with no console error and nothing in the network tab. · acceptance-sha256:f3ae36b8997cb342abe5343000e09095eee051e1839c44e9438a817e57db0edb · covers:the rendered markup
+- 2026-09-15 · a5bff80* · mutant killed · exit 1 · `internal/web/web.go` · Without the gate any authenticated client could create users, mint tokens and change pricing. · acceptance-sha256:f3ae36b8997cb342abe5343000e09095eee051e1839c44e9438a817e57db0edb · covers:the admin role gate
 
 ## Invariants
 
@@ -167,3 +174,25 @@ showing them would make the admin a second reader of data the design says is tra
 <!-- Human sign-off required for S10, recorded via `adr-verify --human`: the dashboard
      opened in a browser with two tabs, a job driven through its states in one tab and
      observed updating live in the other, at both mobile and desktop widths. -->
+- 2026-09-15 · a5bff80* · exit 1 · `set -o pipefail …` · acceptance-sha256:f3ae36b8997cb342abe5343000e09095eee051e1839c44e9438a817e57db0edb · ms:5087
+  ```
+  --- last 2 line(s) of stdout
+  ok  	github.com/atvirokodosprendimai/ocr-router/internal/web	2.525s
+  ?   	github.com/atvirokodosprendimai/ocr-router/internal/web/views	[no test files]
+  --- last 2 line(s) of stderr
+  (✓) Post-generation event received, processing... [ updates=0 needsRestart=true needsBrowserReload=true ]
+  (✓) Complete [ updates=0 duration=16.490875ms ]
+  ```
+- 2026-09-15 · a5bff80* · exit 1 · `set -o pipefail …` · acceptance-sha256:f3ae36b8997cb342abe5343000e09095eee051e1839c44e9438a817e57db0edb · ms:3904
+  ```
+  --- last 2 line(s) of stdout
+  ok  	github.com/atvirokodosprendimai/ocr-router/internal/web	2.503s
+  ?   	github.com/atvirokodosprendimai/ocr-router/internal/web/views	[no test files]
+  --- last 2 line(s) of stderr
+  (✓) Post-generation event received, processing... [ updates=0 needsRestart=true needsBrowserReload=true ]
+  (✓) Complete [ updates=0 duration=15.57725ms ]
+  ```
+- 2026-09-15 · a5bff80* · exit 0 · `set -o pipefail …` · acceptance-sha256:f3ae36b8997cb342abe5343000e09095eee051e1839c44e9438a817e57db0edb · ms:6236
+- 2026-09-15 · a5bff80* · exit 0 · `set -o pipefail …` · acceptance-sha256:f3ae36b8997cb342abe5343000e09095eee051e1839c44e9438a817e57db0edb · ms:5269
+- 2026-09-15 · a5bff80* · exit 0 · `set -o pipefail …` · acceptance-sha256:f3ae36b8997cb342abe5343000e09095eee051e1839c44e9438a817e57db0edb · ms:5376
+- 2026-09-15 · a5bff80* · exit 0 · `set -o pipefail …` · acceptance-sha256:f3ae36b8997cb342abe5343000e09095eee051e1839c44e9438a817e57db0edb · ms:6772

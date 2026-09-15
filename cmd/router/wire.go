@@ -15,6 +15,7 @@ import (
 	"github.com/atvirokodosprendimai/ocr-router/internal/results"
 	"github.com/atvirokodosprendimai/ocr-router/internal/router"
 	"github.com/atvirokodosprendimai/ocr-router/internal/store"
+	"github.com/atvirokodosprendimai/ocr-router/internal/web"
 )
 
 // Config is everything the binary needs to build itself.
@@ -101,7 +102,15 @@ func buildApp(cfg Config) (*App, error) {
 		Now:          time.Now,
 	})
 
+	dash := web.New(web.Deps{
+		Identity: ident, Router: rt, Repo: repo, Bus: b, Results: res,
+		PingInterval: cfg.PingInterval, Now: time.Now,
+	})
+
 	mux := chi.NewRouter()
+	// The dashboard is mounted FIRST, behind the API's own authenticator, so
+	// there is one authentication path in the process rather than two.
+	dash.Mount(mux, api.Authenticator())
 	mux.Mount("/", api)
 
 	return &App{

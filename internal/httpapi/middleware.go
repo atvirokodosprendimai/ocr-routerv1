@@ -57,3 +57,17 @@ func principal(r *http.Request) core.Principal {
 	p, _ := r.Context().Value(principalKey).(core.Principal)
 	return p
 }
+
+// PrincipalFrom returns the authenticated caller for handlers mounted OUTSIDE
+// this package but behind its middleware — the admin dashboard.
+//
+// It exists so there is exactly ONE context key for the principal. Two packages
+// each defining their own unexported key would compile, never match, and hand
+// every dashboard handler a zero Principal — which fails closed, so the symptom
+// would be "the dashboard always says forbidden" rather than anything pointing
+// at the cause.
+func PrincipalFrom(r *http.Request) core.Principal { return principal(r) }
+
+// Authenticator exposes the auth middleware so the dashboard can sit behind the
+// same one rather than growing a second login.
+func (a *API) Authenticator() func(http.Handler) http.Handler { return a.authenticate }

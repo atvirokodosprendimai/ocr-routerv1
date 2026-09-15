@@ -1,0 +1,259 @@
+package views
+
+import "fmt"
+import "github.com/atvirokodosprendimai/ocr-router/internal/core"
+
+// Overview is the landing page: live counters, the job table and the worker
+// table, all patched in over one SSE stream.
+templ Overview(d Dashboard) {
+	@Layout("Overview", `{}`) {
+		<div data-init="@get('/admin/stream')"></div>
+		@Stats(d)
+		@Jobs(d)
+		@Workers(d)
+	}
+}
+
+// Stats is a live fragment. Its root id is the morph target, so it must be
+// stable and must exist in the first paint — a fragment cannot be patched into
+// existence, only over something already in the document.
+templ Stats(d Dashboard) {
+	<section id="stats">
+		<h2>Now</h2>
+		<div class="cards">
+			@stat("queued", d.Counts[core.JobQueued])
+			@stat("processing", d.Counts[core.JobProcessing])
+			@stat("done", d.Counts[core.JobDone])
+			@stat("delivered", d.Counts[core.JobDelivered])
+			@stat("dead", d.Counts[core.JobDead])
+			@stat("expired", d.Counts[core.JobExpired])
+			<div class="card">
+				<div class="n">{ fmt.Sprint(d.ResultsInMemory) }</div>
+				<div class="k">results held</div>
+			</div>
+		</div>
+	</section>
+}
+
+templ stat(name string, n int) {
+	<div class="card">
+		<div class="n">{ fmt.Sprint(n) }</div>
+		<div class="k">{ name }</div>
+	</div>
+}
+
+// Jobs lists recent work.
+templ Jobs(d Dashboard) {
+	<section id="jobs">
+		<h2>Recent jobs</h2>
+		if len(d.Jobs) == 0 {
+			<p class="empty">No jobs yet. Upload one with a client token to see it here.</p>
+		} else {
+			<table>
+				<thead>
+					<tr>
+						<th>Job</th><th>Customer</th><th>Service</th><th>Stage</th>
+						<th>State</th><th class="num">Units</th><th class="num">Cost</th><th>Detail</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, j := range d.Jobs {
+						<tr>
+							<td class="muted">{ shortID(j.Job.ID) }</td>
+							<td>{ d.Emails[j.Job.UserID] }</td>
+							<td>{ j.Job.Label }</td>
+							<td class="num">{ j.StageLabel }</td>
+							<td><span class={ "tag", string(j.Job.State) }>{ string(j.Job.State) }</span></td>
+							<td class="num">{ fmt.Sprint(j.Job.Units) }</td>
+							<td class="num">{ fmt.Sprint(j.Job.AccruedCredits) }</td>
+							// Stored text — a worker's stderr — as a TEXT NODE. It must
+							// never reach a data-* attribute: `@word(` inside a compiled
+							// expression throws and silently disables the element.
+							<td class="muted">{ j.Job.LastError }</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+	</section>
+}
+
+// Workers shows which services currently have someone serving them.
+//
+// This is the view of the silent failure: a label with a queue and no worker.
+templ Workers(d Dashboard) {
+	<section id="workers">
+		<h2>Services</h2>
+		if len(d.Services) == 0 {
+			<p class="empty">
+				No workers are connected. Uploads will be refused until one starts.
+			</p>
+		} else {
+			<table>
+				<thead>
+					<tr><th>Label</th><th class="num">Workers</th><th class="num">Queued</th><th class="num">Rate</th><th>Health</th></tr>
+				</thead>
+				<tbody>
+					for _, s := range d.Services {
+						<tr>
+							<td>{ s.Label }</td>
+							<td class="num">{ fmt.Sprint(s.Workers) }</td>
+							<td class="num">{ fmt.Sprint(s.Queued) }</td>
+							<td class="num">{ fmt.Sprint(s.Rate) }</td>
+							if s.Workers == 0 && s.Queued > 0 {
+								<td><span class="tag dead">no worker, { fmt.Sprint(s.Queued) } waiting</span></td>
+							} else if s.Workers == 0 {
+								<td><span class="tag expired">no worker</span></td>
+							} else {
+								<td><span class="tag done">serving</span></td>
+							}
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+	</section>
+}
+
+// Users is the customer administration page.
+templ Users(d Dashboard) {
+	@Layout("Customers", `{"newEmail":"","newRole":"client"}`) {
+		<section>
+			<h2>Create a customer</h2>
+			// ⚠ NO <form>. Each input is bound individually, and the suffixes are
+			// KEBAB-CASE: `data-bind:new-email` binds the signal `newEmail`.
+			// Writing `data-bind:newEmail` would bind `newemail` instead — a
+			// different signal, with nothing reporting the mistake.
+			<div class="row">
+				<div>
+					<label for="new-email">Email address</label>
+					<input id="new-email" type="email" data-bind:new-email placeholder="customer@example.com"/>
+				</div>
+				<div>
+					<label for="new-role">Role</label>
+					<select id="new-role" data-bind:new-role>
+						<option value="client">client</option>
+						<option value="worker">worker</option>
+						<option value="admin">admin</option>
+					</select>
+				</div>
+				<button data-on:click="@post('/admin/users')" data-indicator:creating>Create</button>
+				<span class="spin" data-show="$creating">Creating…</span>
+			</div>
+			<div id="create-result"></div>
+		</section>
+		@UserTable(d)
+	}
+}
+
+// UserTable is patched in by id after any change.
+templ UserTable(d Dashboard) {
+	<section id="user-table">
+		<h2>Customers</h2>
+		if len(d.Users) == 0 {
+			<p class="empty">No customers yet.</p>
+		} else {
+			<table>
+				<thead>
+					<tr>
+						<th>Email</th><th>Role</th><th class="num">Credits</th>
+						<th class="num">Buffer</th><th class="num">Priority</th>
+						<th class="num">Job TTL</th><th>Active</th><th>Tokens</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, u := range d.Users {
+						<tr>
+							<td>{ u.Email }</td>
+							<td>{ string(u.Role) }</td>
+							<td class="num">{ fmt.Sprint(u.Credits) }</td>
+							<td class="num">{ fmt.Sprint(u.BufferLimit) }</td>
+							<td class="num">{ fmt.Sprint(u.Priority) }</td>
+							<td class="num">
+								if u.JobTTLSecs == 0 {
+									<span class="muted">none</span>
+								} else {
+									{ fmt.Sprintf("%ds", u.JobTTLSecs) }
+								}
+							</td>
+							<td>
+								if u.Active {
+									<span class="tag done">active</span>
+								} else {
+									<span class="tag dead">disabled</span>
+								}
+							</td>
+							<td>
+								<button
+									class="secondary"
+									data-on:click={ fmt.Sprintf("@post('/admin/users/%s/tokens')", u.ID) }
+								>Mint token</button>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+	</section>
+}
+
+// TokenOnce shows a freshly minted token.
+//
+// The plaintext exists only in this response: the router keeps a hash and cannot
+// produce it again. Saying so here is the difference between an operator saving
+// it and an operator losing access.
+templ TokenOnce(token string) {
+	<div id="create-result">
+		<p class="muted">Copy this now — it is shown once and is stored only as a hash.</p>
+		<p class="token">{ token }</p>
+	</div>
+}
+
+// CreateError re-renders the form's error inline, with a 200.
+templ CreateError(msg string) {
+	<div id="create-result">
+		<p class="error">{ msg }</p>
+	</div>
+}
+
+// Services is the rate administration page.
+templ Services(d Dashboard) {
+	@Layout("Services", `{"rateLabel":"","rateValue":"1"}`) {
+		<section>
+			<h2>Set a price</h2>
+			<p class="muted">
+				A service with no explicit rate costs 1 credit per output unit. Rates are
+				administered here and are never taken from a worker: a worker runs on a host
+				you do not control and must not be able to set what customers are charged.
+			</p>
+			<div class="row">
+				<div>
+					<label for="rate-label">Service label</label>
+					<input id="rate-label" data-bind:rate-label placeholder="ocr"/>
+				</div>
+				<div>
+					<label for="rate-value">Credits per unit</label>
+					<input id="rate-value" type="number" min="0" data-bind:rate-value/>
+				</div>
+				<button data-on:click="@post('/admin/rates')" data-indicator:saving>Save</button>
+				<span class="spin" data-show="$saving">Saving…</span>
+			</div>
+			<div id="rate-result"></div>
+		</section>
+		@Workers(d)
+	}
+}
+
+// RateSaved confirms a rate change.
+templ RateSaved(label string, rate int) {
+	<div id="rate-result">
+		<p class="muted">{ fmt.Sprintf("%s now costs %d credit(s) per unit.", label, rate) }</p>
+	</div>
+}
+
+func shortID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
+}
