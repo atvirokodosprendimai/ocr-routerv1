@@ -31,9 +31,18 @@ const SessionCookie = "ocrr_session"
 // denial of service against them.
 var loginLimit = ratelimit.Limit{RPS: 0.2, Burst: 5}
 
+// cookieOK reports whether a session cookie set now would actually be kept.
+//
+// Over plain HTTP a Secure cookie is silently discarded, so "can we sign in" and
+// "is this connection TLS" are the same question — unless the operator has
+// explicitly turned Secure off for local development.
+func (wb *Web) cookieOK(r *http.Request) bool {
+	return wb.deps.InsecureCookies || isSecure(r)
+}
+
 // showLogin renders the sign-in page.
 func (wb *Web) showLogin(w http.ResponseWriter, r *http.Request) {
-	renderPage(w, r, views.Login("", !isSecure(r)))
+	renderPage(w, r, views.Login("", !wb.cookieOK(r)))
 }
 
 // doLogin verifies a password and starts a session.
@@ -42,7 +51,7 @@ func (wb *Web) doLogin(w http.ResponseWriter, r *http.Request) {
 	// cookie the browser will silently discard. Without this the operator sees a
 	// sign-in that appears to succeed and lands back on the form forever, with
 	// nothing anywhere saying why.
-	if !isSecure(r) {
+	if !wb.cookieOK(r) {
 		w.WriteHeader(http.StatusBadRequest)
 		renderPage(w, r, views.Login("", true))
 		return
@@ -83,7 +92,10 @@ func (wb *Web) doLogin(w http.ResponseWriter, r *http.Request) {
 		// HttpOnly keeps it out of reach of any script on the page.
 		HttpOnly: true,
 		// Secure means TLS only — which is why plain HTTP is refused above.
-		Secure: true,
+		// ⚠ Secure unless explicitly disabled for local development. Dropping it
+		// is what lets the cookie survive plain HTTP, and it is also what lets
+		// the cookie travel in clear text — hence the boot warning.
+		Secure: !wb.deps.InsecureCookies,
 		// SameSite=Strict is the primary CSRF defence: a cross-site POST does
 		// not carry this cookie at all.
 		SameSite: http.SameSiteStrictMode,
@@ -115,7 +127,11 @@ func (wb *Web) doLogout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/admin",
 		HttpOnly: true,
-		Secure:   true,
+		// The clearing cookie must match the attributes of the one it replaces,
+		// or the browser treats it as a different cookie and the original
+		// survives. Getting this wrong makes logout appear to work and leave the
+		// session in place.
+		Secure:   !wb.deps.InsecureCookies,
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})

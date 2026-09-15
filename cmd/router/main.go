@@ -36,12 +36,34 @@ func newCLI() *cli.Command {
 					{
 						Name:  "bootstrap",
 						Usage: "create the first administrator and print its token",
-						Flags: append(configFlags(), &cli.StringFlag{
-							Name:     "email",
-							Usage:    "the administrator's email address",
-							Required: true,
-						}),
+						Flags: append(configFlags(),
+							&cli.StringFlag{
+								Name:     "email",
+								Usage:    "the administrator's email address",
+								Required: true,
+							},
+							&cli.StringFlag{
+								Name: "password",
+								Usage: "dashboard password; omit to be prompted. " +
+									"⚠ a password given here is in your shell history and in ps",
+							}),
 						Action: runBootstrap,
+					},
+					{
+						Name:  "set-password",
+						Usage: "set or change an administrator's dashboard password",
+						Flags: append(configFlags(),
+							&cli.StringFlag{
+								Name:     "email",
+								Usage:    "the administrator's email address",
+								Required: true,
+							},
+							&cli.StringFlag{
+								Name: "password",
+								Usage: "the new password; omit to be prompted. " +
+									"⚠ a password given here is in your shell history and in ps",
+							}),
+						Action: runSetPassword,
 					},
 				},
 			},
@@ -93,31 +115,37 @@ func configFlags() []cli.Flag {
 			Usage: "debug, info, warn or error"},
 		&cli.StringFlag{Name: "log-format", Value: "json",
 			Usage: "json or text"},
+
+		&cli.BoolFlag{Name: "insecure-cookies", Value: false,
+			Usage: "DEVELOPMENT ONLY: drop Secure from the session cookie so you can sign in " +
+				"over plain http://localhost. The cookie then travels in clear text — never " +
+				"set this on anything reachable from a network"},
 	}
 }
 
 func configFrom(c *cli.Command) Config {
 	return Config{
-		Addr:         c.String("addr"),
-		DBPath:       c.String("db"),
-		BlobDir:      c.String("blobs"),
-		ResultTTL:    c.Duration("result-ttl"),
-		Lease:        c.Duration("lease"),
-		MaxAttempts:  c.Int("max-attempts"),
-		AgingStep:    c.Duration("aging-step"),
-		LabelGrace:   c.Duration("label-grace"),
-		ReapInterval: c.Duration("reap-interval"),
-		MaxUpload:    int64(c.Int("max-upload")),
-		DefaultLabel: c.String("default-label"),
-		MetricsAddr:  c.String("metrics-addr"),
-		Version:      version,
-		RateClient:   c.Float("rate-client"),
-		RateWorker:   c.Float("rate-worker"),
-		RateAdmin:    c.Float("rate-admin"),
-		RateBurst:    c.Int("rate-burst"),
-		RateIdle:     c.Duration("rate-idle"),
-		LogLevel:     c.String("log-level"),
-		LogFormat:    c.String("log-format"),
+		Addr:            c.String("addr"),
+		DBPath:          c.String("db"),
+		BlobDir:         c.String("blobs"),
+		ResultTTL:       c.Duration("result-ttl"),
+		Lease:           c.Duration("lease"),
+		MaxAttempts:     c.Int("max-attempts"),
+		AgingStep:       c.Duration("aging-step"),
+		LabelGrace:      c.Duration("label-grace"),
+		ReapInterval:    c.Duration("reap-interval"),
+		MaxUpload:       int64(c.Int("max-upload")),
+		DefaultLabel:    c.String("default-label"),
+		MetricsAddr:     c.String("metrics-addr"),
+		Version:         version,
+		RateClient:      c.Float("rate-client"),
+		RateWorker:      c.Float("rate-worker"),
+		RateAdmin:       c.Float("rate-admin"),
+		RateBurst:       c.Int("rate-burst"),
+		RateIdle:        c.Duration("rate-idle"),
+		LogLevel:        c.String("log-level"),
+		LogFormat:       c.String("log-format"),
+		InsecureCookies: c.Bool("insecure-cookies"),
 	}
 }
 
@@ -150,6 +178,15 @@ func runServe(ctx context.Context, c *cli.Command) error {
 	// The RESOLVED address, not the flag: an operator reading ":9090" from the log
 	// cannot tell what it actually bound to.
 	fmt.Printf("metrics on http://%s/metrics (private)\n", metricsAddr)
+
+	// ⚠ Loud, on stdout, on every boot. A dangerous flag whose danger is only
+	// documented in --help is a flag somebody sets once for local work and never
+	// notices again — so the running process says it out loud instead.
+	if cfg.InsecureCookies {
+		fmt.Println("⚠ --insecure-cookies is SET: the session cookie has no Secure attribute " +
+			"and travels in clear text. Development only — never on anything reachable from a " +
+			"network.")
+	}
 
 	srv := &http.Server{
 		Addr:    cfg.Addr,
@@ -196,6 +233,31 @@ func runBootstrap(ctx context.Context, c *cli.Command) error {
 	user, token, err := app.Ident.Bootstrap(ctx, c.String("email"), time.Now())
 	if err != nil {
 		return err
+	}
+
+	// ⚠ The password is set AFTER the account exists, so a failure here has to be
+	// reported WITH the token: an administrator with a token and no password is a
+	// working account that cannot reach the dashboard, and the operator needs to
+	// know which half succeeded rather than being told only that something broke.
+	//
+	// ErrNoPasswordSource is the one outcome that is not a failure. It means
+	// nobody supplied a password and there was no terminal to ask at, which
+	// leaves the account token-only — exactly how every account behaved before
+	// ADR-0003.
+	password, perr := resolvePassword(c, "Dashboard password for "+user.Email)
+	switch {
+	case errors.Is(perr, ErrNoPasswordSource):
+		// Token-only. Nothing to do.
+	case perr != nil:
+		fmt.Printf("administrator created: %s (%s)\n", user.Email, user.ID)
+		fmt.Printf("token: %s\n", token)
+		return fmt.Errorf("the account exists and its token is above, but no password was set: %w", perr)
+	default:
+		if err := app.Ident.SetPassword(ctx, user.Email, password, time.Now()); err != nil {
+			fmt.Printf("administrator created: %s (%s)\n", user.Email, user.ID)
+			fmt.Printf("token: %s\n", token)
+			return fmt.Errorf("the account exists and its token is above, but the password was refused: %w", err)
+		}
 	}
 
 	// Printed exactly once, and recoverable from nowhere afterwards.

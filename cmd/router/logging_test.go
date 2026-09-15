@@ -430,7 +430,14 @@ func TestCLIExposesTheNewFlags(t *testing.T) {
 // pass this test without ever throttling.
 func TestWorkerKeepsPollingThroughA429(t *testing.T) {
 	cfg := testConfig(t)
-	cfg.RateWorker = 1000 // refills fast, so the stall would have to be the worker's own doing
+	// ⚠ 4 rps, not 1000. The original fixture used 1000 so the bucket would
+	// refill quickly for the recovery half — and at 1000 rps a token returns
+	// every millisecond, which is less than one claim round trip once `-race`
+	// slows everything down. The loop below then never saw a 429 and the test
+	// failed on its own vacuity guard, intermittently, months after it was
+	// written. A rate slow enough to outlast a request is what makes the
+	// throttle reachable; 250ms is still fast enough for the recovery half.
+	cfg.RateWorker = 4
 	cfg.RateBurst = 1
 	cfg.RateIdle = time.Hour
 
@@ -467,7 +474,7 @@ func TestWorkerKeepsPollingThroughA429(t *testing.T) {
 			return // recovered
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the worker is still throttled three seconds after a 429 at 1000 rps — a " +
+			t.Fatal("the worker is still throttled three seconds after a 429 at 4 rps — a " +
 				"poller facing this would stall permanently")
 		}
 		time.Sleep(50 * time.Millisecond)

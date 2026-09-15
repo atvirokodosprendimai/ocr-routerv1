@@ -18,6 +18,7 @@ import (
 	"github.com/atvirokodosprendimai/ocr-router/internal/ratelimit"
 	"github.com/atvirokodosprendimai/ocr-router/internal/results"
 	"github.com/atvirokodosprendimai/ocr-router/internal/router"
+	"github.com/atvirokodosprendimai/ocr-router/internal/session"
 	"github.com/atvirokodosprendimai/ocr-router/internal/store"
 	"github.com/atvirokodosprendimai/ocr-router/internal/web"
 )
@@ -62,22 +63,29 @@ type Config struct {
 	// value fails the boot rather than falling back silently.
 	LogLevel  string
 	LogFormat string
+
+	// InsecureCookies drops Secure from the session cookie so the dashboard can
+	// be used over http://localhost. ⚠ DEVELOPMENT ONLY — the boot prints a
+	// warning when it is on, because a flag whose danger is only in --help is a
+	// flag somebody leaves set.
+	InsecureCookies bool
 }
 
 // App is a fully constructed router: its handler, its collaborators, and the
 // cleanup that releases them.
 type App struct {
-	Handler http.Handler
-	Router  *router.Service
-	Ident   *identity.Service
-	Repo    *store.Repo
-	Bus     *bus.Bus
-	Results *results.Store
-	Blobs   *blob.Store
-	Monitor *monitor.Monitor
-	Limiter *ratelimit.Limiter
-	Logger  *slog.Logger
-	Close   func() error
+	Handler  http.Handler
+	Router   *router.Service
+	Ident    *identity.Service
+	Repo     *store.Repo
+	Bus      *bus.Bus
+	Results  *results.Store
+	Blobs    *blob.Store
+	Monitor  *monitor.Monitor
+	Limiter  *ratelimit.Limiter
+	Logger   *slog.Logger
+	Sessions *session.Store
+	Close    func() error
 }
 
 // routerLogger adapts router.TransitionEvent to the logging package.
@@ -137,6 +145,11 @@ func buildApp(cfg Config) (*App, error) {
 	res := results.New(cfg.ResultTTL)
 	b := bus.New()
 	ident := identity.New(repo)
+	// Sessions are attached to identity, not held separately: identity stays the
+	// only package that decides who a caller is, whether the credential is a
+	// bearer token or a browser session.
+	sessions := session.New(db)
+	ident.SetSessions(sessions)
 	rt := router.New(repo, blobs, res, b, router.Config{
 		Lease:        cfg.Lease,
 		MaxAttempts:  cfg.MaxAttempts,
@@ -186,6 +199,11 @@ func buildApp(cfg Config) (*App, error) {
 	dash := web.New(web.Deps{
 		Identity: ident, Router: rt, Repo: repo, Bus: b, Results: res,
 		PingInterval: cfg.PingInterval, Now: time.Now,
+		// The SAME limiter the API uses. Login keys on "login:<email>" rather
+		// than a token id, so the two key spaces cannot collide, and sharing one
+		// limiter means one map to evict rather than two.
+		Limiter:         limiter,
+		InsecureCookies: cfg.InsecureCookies,
 	})
 	mon := monitor.New(reg, monitor.Deps{
 		Version: cfg.Version,
@@ -222,21 +240,22 @@ func buildApp(cfg Config) (*App, error) {
 	mux.Get("/healthz", mon.HealthHandler)
 	// The dashboard is mounted behind the API's own authenticator, so there is
 	// one authentication path in the process rather than two.
-	dash.Mount(mux, api.Authenticator())
+	dash.Mount(mux, api.Authenticator(), api.RequestLogger())
 	mux.Mount("/", api)
 
 	return &App{
-		Handler: mux,
-		Router:  rt,
-		Ident:   ident,
-		Repo:    repo,
-		Bus:     b,
-		Results: res,
-		Blobs:   blobs,
-		Monitor: mon,
-		Limiter: limiter,
-		Logger:  log,
-		Close:   db.Close,
+		Handler:  mux,
+		Router:   rt,
+		Ident:    ident,
+		Repo:     repo,
+		Bus:      b,
+		Results:  res,
+		Blobs:    blobs,
+		Monitor:  mon,
+		Limiter:  limiter,
+		Logger:   log,
+		Sessions: sessions,
+		Close:    db.Close,
 	}, nil
 }
 
@@ -265,6 +284,9 @@ func (a *App) StartReaper(ctx context.Context, every time.Duration) {
 				// one entry per token forever, and no test inside
 				// internal/ratelimit can see it missing.
 				a.Limiter.EvictIdle()
+				// Same tick, same reasoning: expired and revoked sessions
+				// accumulate forever otherwise, one row per login.
+				_, _ = a.Sessions.SweepExpired(ctx, time.Now())
 			}
 		}
 	}()

@@ -47,8 +47,24 @@ type tlsEnv struct {
 	now      time.Time
 }
 
+// webOptions vary the server the dashboard is served from.
+type webOptions struct {
+	// insecureCookies sets web.Deps.InsecureCookies.
+	insecureCookies bool
+	// plain serves over HTTP instead of TLS — the shape an operator running on a
+	// laptop actually has.
+	plain   bool
+	limiter *ratelimit.Limiter
+}
+
 func newTLSEnv(t *testing.T, limits *ratelimit.Limiter) *tlsEnv {
 	t.Helper()
+	return newEnvWith(t, webOptions{limiter: limits})
+}
+
+func newEnvWith(t *testing.T, opts webOptions) *tlsEnv {
+	t.Helper()
+	limits := opts.limiter
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "w.db"))
 	if err != nil {
@@ -88,13 +104,19 @@ func newTLSEnv(t *testing.T, limits *ratelimit.Limiter) *tlsEnv {
 	dash := web.New(web.Deps{
 		Identity: ident, Router: rt, Repo: repo, Bus: b, Results: res,
 		PingInterval: 50 * time.Millisecond, Now: now, Limiter: limits,
+		InsecureCookies: opts.insecureCookies,
 	})
 
 	mux := chi.NewRouter()
 	dash.Mount(mux, api.Authenticator())
 	mux.Mount("/", api)
 
-	srv := httptest.NewTLSServer(mux)
+	srv := httptest.NewUnstartedServer(mux)
+	if opts.plain {
+		srv.Start()
+	} else {
+		srv.StartTLS()
+	}
 	t.Cleanup(srv.Close)
 
 	client := srv.Client()
@@ -108,6 +130,14 @@ func newTLSEnv(t *testing.T, limits *ratelimit.Limiter) *tlsEnv {
 		srv: srv, client: client, ident: ident, repo: repo, sessions: sessions,
 		adminID: admin.ID, adminTok: adminTok, limiter: limits, now: base,
 	}
+}
+
+// newInsecureEnv is a PLAIN-HTTP dashboard with --insecure-cookies set, which is
+// how an operator runs this on a laptop.
+func newInsecureEnv(t *testing.T) *tlsEnv {
+	t.Helper()
+	e := newEnvWith(t, webOptions{insecureCookies: true, plain: true})
+	return e
 }
 
 // post submits a form the way a browser would.
@@ -588,6 +618,69 @@ func TestRetryAfterOnThrottledLoginIsAnInteger(t *testing.T) {
 		}
 	}
 	t.Fatal("never throttled, so there was no header to check")
+}
+
+// TestInsecureCookiesAllowsPlainHTTPLogin covers the local-development escape
+// hatch.
+//
+// ⚠ Without it there is NO way to use the dashboard on http://localhost: the
+// login page can only tell the operator to go and get TLS, which made the very
+// first run of this feature impossible. That gap was found by an operator
+// hitting the page, not by any test here.
+func TestInsecureCookiesAllowsPlainHTTPLogin(t *testing.T) {
+	e := newInsecureEnv(t)
+
+	// ⚠ e.post, not http.PostForm. DefaultClient FOLLOWS the 303 and has no
+	// cookie jar, so the followed GET /admin arrives with no session and 401s —
+	// and the test then reports a 401 for a login that actually succeeded. That
+	// cost a debugging round; e.client has CheckRedirect disabled.
+	resp := e.post(t, "/admin/login", url.Values{
+		"email": {"admin@example.com"}, "password": {adminPassword},
+	}, e.srv.URL)
+
+	if resp.StatusCode != http.StatusSeeOther {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("login over plain HTTP with --insecure-cookies = %d, want 303: %s",
+			resp.StatusCode, body)
+	}
+	var c *http.Cookie
+	for _, got := range resp.Cookies() {
+		if got.Name == web.SessionCookie {
+			c = got
+		}
+	}
+	if c == nil {
+		t.Fatal("no session cookie was set")
+	}
+	if c.Secure {
+		t.Error("the cookie is still Secure, so the browser will discard it over plain HTTP — " +
+			"which is the whole thing this flag exists to avoid")
+	}
+	// The other protections are NOT relaxed: this flag is about the transport,
+	// not about the cookie's reach or its CSRF properties.
+	if !c.HttpOnly {
+		t.Error("--insecure-cookies also dropped HttpOnly, which it has no business touching")
+	}
+	if c.SameSite != http.SameSiteStrictMode {
+		t.Error("--insecure-cookies also dropped SameSite=Strict, which it has no business " +
+			"touching — the CSRF defence is unrelated to the transport")
+	}
+	if c.Path != "/admin" {
+		t.Errorf("--insecure-cookies widened the cookie path to %q", c.Path)
+	}
+}
+
+// TestSecureIsTheDefault is the companion that keeps the flag honest.
+//
+// The test above would pass against a build that simply never set Secure. This
+// one asserts the safe behaviour is what you get by not asking for anything.
+func TestSecureIsTheDefault(t *testing.T) {
+	e := newTLSEnv(t, nil) // InsecureCookies deliberately unset
+	c := e.login(t, "admin@example.com", adminPassword)
+	if !c.Secure {
+		t.Error("the session cookie is not Secure by default — the dangerous behaviour is what " +
+			"an operator gets without asking for it")
+	}
 }
 
 // TestSessionCookieNameMatchesHttpapi pins the two constants together.

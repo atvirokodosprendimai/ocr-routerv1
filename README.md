@@ -10,6 +10,55 @@ the command's stdout back. `ocr` is simply the label it serves by default.
 The design and its reasoning are in
 [`docs/adr/0001-ocr-router-architecture.md`](docs/adr/0001-ocr-router-architecture.md).
 
+## First run
+
+```bash
+# 1. Create the first administrator. Omit --password to be prompted instead;
+#    a password on the command line is in your shell history and in `ps`.
+router admin bootstrap --email you@example.com --password '<12+ characters>'
+#    → prints a bearer token, once. Save it: the API needs it, and it is not
+#      recoverable afterwards.
+
+# 2. Run the router behind TLS.
+router --addr :8080
+
+# 3. Open https://your-host/admin and sign in with the email and password.
+```
+
+⚠ **TLS is required to sign in.** The session cookie is `Secure`, so a browser
+discards it over plain `http://` — the login would appear to succeed and then
+loop back to the form forever. The login page refuses plain HTTP outright and
+says so, rather than letting that happen silently. If TLS terminates in a proxy,
+that proxy must set `X-Forwarded-Proto: https`.
+
+**For local development without TLS**, add `--insecure-cookies`:
+
+```bash
+router --addr 127.0.0.1:8080 --insecure-cookies
+# → ⚠ --insecure-cookies is SET: the session cookie has no Secure attribute …
+```
+
+It drops `Secure` and nothing else — `HttpOnly`, `SameSite=Strict` and the
+`/admin` path scope are unchanged, because the transport is a separate question
+from the cookie's reach. The router prints a warning on every boot while it is
+set, since a dangerous flag documented only in `--help` is one somebody turns on
+for an afternoon and leaves on. **Never set it on anything reachable from a
+network**: the session cookie then travels in clear text, and anyone who sees it
+is an administrator.
+
+Change a password later with `router admin set-password --email you@example.com`.
+There is no reset-by-email flow: this system has no email channel, and an
+operator with shell access has this command.
+
+## Signing in
+
+| | |
+|---|---|
+| **Who can** | Administrators only. Clients and workers have no password and no UI — the API's credential is the bearer token |
+| **Session length** | 12 hours, absolute. It is **not** extended by use, so a tab left open still ends on time |
+| **Signing out** | Revokes server-side, so it ends the session in **every** tab. That is deliberate, not a bug |
+| **Wrong password** | One generic message, whatever the cause. The router will not tell a caller which emails are registered |
+
 ## Running it
 
 ```sh
@@ -37,6 +86,7 @@ label for judging a leak, and carries no authority.
 | `POST` | `/claim` | — | `?label=<l>` → `200 {job_id,…}` or `204` when idle |
 | `GET` | `/services` | the labels currently available | — |
 | `GET` | `/healthz` | **no token** — `200 {"ok":true,…}` or `503` naming what broke | same |
+| `GET`/`POST` | `/admin/login` | **no token** — the dashboard's sign-in page | — |
 
 ### Uploading
 

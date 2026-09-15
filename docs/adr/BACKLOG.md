@@ -11,6 +11,10 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   (`docs/adr/0002/0002-rate-limiting-and-structured-logging.md`, §Decision 1).
 - **Structured request and transition logging (`log/slog` JSON).**
   Deferred by ADR-0001 task T11; **taken up by ADR-0002** (§Decision 2).
+- **A way into the admin dashboard from a browser.**
+  Not previously deferred — it was a gap nobody had recorded, found on 2026-09-15 when the
+  dashboard turned out to be reachable only by `curl`. **Taken up by ADR-0003**
+  (`docs/adr/0003/0003-admin-password-login.md`).
 
 ## Open
 
@@ -51,6 +55,51 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   Deferred by ADR-0002 task T4 (§Out of Scope).
   ADR-0002 covers the router. The worker still writes nothing structured, so the subprocess's
   stderr — the single most useful artefact when a job fails — is not captured anywhere.
+
+- **`./cmd/client` — a CLI client that submits one file and waits.** (requested by M, 2026-09-15;
+  wants its own ADR)
+  Today a customer integrates by hand: `POST /upload`, hold `GET /sse` open, watch for `ready`, then
+  `GET /files/{id}`. That is four moving parts and an SSE reader, which is a lot to ask of someone
+  who wants one PDF OCR'd.
+  **Shape asked for:** `client --router <url> --token <tok> -i input.pdf -o results.dat`. It BLOCKS
+  until the job finishes and reports progress on the terminal — `uploading… / waiting… / got
+  results → results.dat`.
+  **What the ADR has to decide**, because none of it follows from the request: whether it waits on
+  SSE or polls `GET /files/{id}` (SSE is what the router is built for, polling is far simpler and
+  survives a proxy that buffers); what progress looks like when stdout is not a TTY, since the
+  obvious spinner becomes noise in a CI log and in a pipe; what happens on `--label`, pipelines and
+  query params, which the API supports and this flag set does not mention; the exit code for a job
+  that goes `dead` or `expired`, because a client that exits 0 on a failed job is worse than one
+  that hangs; and whether `-o -` writes to stdout, which is the shape that makes it composable.
+
+- **Self-service password change in the dashboard UI.**
+  Deferred by ADR-0003 (§Out of Scope) and task T2.
+  An administrator changes their own password by asking someone with shell access to run
+  `router admin set-password`. That is workable for one operator and absurd for five. It needs the
+  current password re-verified in the form and every OTHER session of that user revoked on success,
+  neither of which is implied by the CLI path.
+
+- **Two-factor authentication for administrators.**
+  Deferred by ADR-0003 (§Out of Scope).
+  A password is one factor. TOTP is the obvious second and needs enrolment, recovery codes, and a
+  decision about what happens when the only administrator loses their phone — which is the part
+  that makes it a real piece of work rather than a library call.
+
+- **Session listing and bulk revocation in the dashboard.**
+  Deferred by ADR-0003 task T2 (§Out of Scope).
+  `session.Store` already supports `RevokeAllForUser`, so the primitive exists and nothing surfaces
+  it. "Sign out everywhere" is the feature; the UI decision is where it lives.
+
+- **Remembering the requested URL across a login redirect.**
+  Deferred by ADR-0003 task T3 (§Out of Scope).
+  Signing in always lands on `/admin`, so a bookmarked `/admin/services` costs a second click. The
+  reason it is not free: the stored destination is attacker-influenced input and has to be
+  validated as a same-origin relative path, or the login page becomes an open redirect.
+
+- **Audit logging of logins as a separate tamper-evident stream.**
+  Deferred by ADR-0003 (§Out of Scope).
+  ADR-0002's request log records that a login happened. It is not tamper-evident and not separable
+  from operational noise, which is what an audit trail has to be.
 
 - **Charts and historical analytics on the admin dashboard.**
   Deferred by ADR-0001 task T10 (§Out of Scope).

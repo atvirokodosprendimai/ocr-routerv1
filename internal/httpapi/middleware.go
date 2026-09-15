@@ -255,3 +255,17 @@ func PrincipalFrom(r *http.Request) core.Principal { return principal(r) }
 // Authenticator exposes the auth middleware so the dashboard can sit behind the
 // same one rather than growing a second login.
 func (a *API) Authenticator() func(http.Handler) http.Handler { return a.authenticate }
+
+// RequestLogger exposes the request-logging middleware for subtrees mounted
+// OUTSIDE this package's router.
+//
+// ⚠ IT EXISTS BECAUSE THE DASHBOARD WAS NOT BEING LOGGED. `logRequests` is
+// applied inside New's router, and the composition root mounts /admin on the
+// PARENT mux — so dashboard requests never passed through it. Verified against a
+// running binary on 2026-09-15: a full sign-in, dashboard load, CSRF refusal and
+// logout produced two request lines, both for API routes.
+//
+// That is not cosmetic. ADR-0002 put the logger outermost specifically so it
+// would capture the 401s, and the most security-relevant unauthenticated
+// requests in the system — failed logins — were the ones going unrecorded.
+func (a *API) RequestLogger() func(http.Handler) http.Handler { return a.logRequests }

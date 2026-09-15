@@ -49,6 +49,16 @@ type Deps struct {
 	// credential yet, so there is nothing else bounded to key on. Not the IP —
 	// ADR-0001 puts callers behind NATs.
 	Limiter *ratelimit.Limiter
+
+	// InsecureCookies drops the Secure attribute and allows sign-in over plain
+	// HTTP. ⚠ FOR LOCAL DEVELOPMENT ONLY.
+	//
+	// It exists because without it there is NO way to use the dashboard on
+	// http://localhost, which made the first run of the feature impossible —
+	// the login page could only tell the operator to go and get TLS. Default
+	// false, so the safe behaviour is what you get by not thinking about it, and
+	// the binary warns loudly on every boot when it is on.
+	InsecureCookies bool
 }
 
 // Web serves /admin.
@@ -72,8 +82,17 @@ func New(deps Deps) *Web {
 // ⚠ It uses the SAME authentication as the API and then requires the admin role.
 // A dashboard with its own login is a second authentication system to keep
 // correct, and the second one is always the one that rots.
-func (wb *Web) Mount(r chi.Router, authenticate func(http.Handler) http.Handler) {
+func (wb *Web) Mount(r chi.Router, authenticate func(http.Handler) http.Handler, middleware ...func(http.Handler) http.Handler) {
 	r.Route("/admin", func(r chi.Router) {
+		// ⚠ Applied to the WHOLE subtree including the login routes, and
+		// outermost, so failed sign-ins are logged. This subtree is mounted on
+		// the parent mux rather than inside httpapi's router, so it does not
+		// inherit that router's middleware — which is how the dashboard came to
+		// produce no request log lines at all.
+		for _, mw := range middleware {
+			r.Use(mw)
+		}
+
 		// ⚠ OUTSIDE the authenticated group, and they are the only routes here
 		// that are. A login page you must already be logged in to see is the
 		// mistake this ordering prevents, and it is invisible in a diff — the
