@@ -138,13 +138,20 @@ func TestDatastarBundleIsNotEmpty(t *testing.T) {
 	}
 }
 
-// TestEditableRowUsesKebabCaseBindings catches a failure with no symptom.
+// TestEditableRowBindsEveryFieldInTheValueForm catches a failure with no symptom.
 //
-// ⚠ HTML LOWER-CASES ATTRIBUTE NAMES. `data-bind:bufferLimit` binds the signal
-// `bufferlimit`, which is a different signal from `bufferLimit` — so the field
-// never saves, and nothing anywhere reports it: no console error, no failed
-// request, no server-side clue. Only a check over the rendered markup finds it.
-func TestEditableRowUsesKebabCaseBindings(t *testing.T) {
+// ⚠ THE COLON-KEY FORM IS BANNED IN THIS TABLE, and the reason changed. It used
+// to be the casing trap alone: HTML lower-cases attribute names, so
+// `data-bind:bufferLimit` binds `bufferlimit` — a different signal, with no
+// console error, no failed request and no server-side clue. The row paths are
+// now per-customer (`_row.<key>.bufferLimit`), and a colon key would case-fold
+// those segments too. The attribute VALUE is taken raw, so it is the only form
+// that binds what it says.
+//
+// The earlier version of this test pinned the literal `data-bind:credit-delta`
+// on every row — which is precisely the markup that made all the rows share one
+// set of boxes. A test can pin a defect as firmly as it pins a requirement.
+func TestEditableRowBindsEveryFieldInTheValueForm(t *testing.T) {
 	out := render(t, views.UserTable(views.Dashboard{
 		Users: []core.User{{
 			ID: "u1", Email: "c@example.com", Role: core.RoleClient,
@@ -152,27 +159,16 @@ func TestEditableRowUsesKebabCaseBindings(t *testing.T) {
 		}},
 	}))
 
-	for _, want := range []string{
-		"data-bind:buffer-limit",
-		"data-bind:priority",
-		"data-bind:job-ttl",
-		"data-bind:credit-delta",
-		"data-bind:credit-reason",
+	for _, field := range []string{
+		"bufferLimit", "priority", "jobTtl", "creditDelta", "creditReason",
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("the editable row is missing %q", want)
+		if !strings.Contains(out, "."+field+`"`) {
+			t.Errorf("the editable row binds nothing for %q", field)
 		}
 	}
-	// The camel spellings must appear nowhere: each one silently binds a
-	// different, never-read signal.
-	for _, bad := range []string{
-		"data-bind:bufferLimit", "data-bind:jobTtl",
-		"data-bind:creditDelta", "data-bind:creditReason",
-	} {
-		if strings.Contains(out, bad) {
-			t.Errorf("%q binds a lower-cased signal name that nothing reads, so the field "+
-				"silently never saves", bad)
-		}
+	if strings.Contains(out, "data-bind:") {
+		t.Error("the customer table uses a colon-key data-bind; a key is case-folded, which " +
+			"rewrites the per-row signal path so the field silently never saves")
 	}
 }
 

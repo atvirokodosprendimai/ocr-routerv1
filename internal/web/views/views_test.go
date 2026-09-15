@@ -264,3 +264,116 @@ func TestTokenIsPresentedAsShownOnce(t *testing.T) {
 			"navigate away and lose it")
 	}
 }
+
+// twoCustomers renders the customer table with more than one row.
+//
+// everyView deliberately renders ONE user, which is exactly the fixture under
+// which the shared-signal bug below is invisible: with a single row there is
+// nothing for it to collide with.
+func twoCustomers(t *testing.T) string {
+	t.Helper()
+	return render(t, views.UserTable(views.Dashboard{Users: []core.User{
+		{ID: "0192f8aa-1111-7000-8000-000000000001", Email: "a@example.com",
+			Role: core.RoleClient, Credits: 10, BufferLimit: 4, Priority: 1, JobTTLSecs: 60, Active: true},
+		{ID: "0192f8aa-2222-7000-8000-000000000002", Email: "b@example.com",
+			Role: core.RoleClient, Credits: 20, BufferLimit: 9, Priority: 2, JobTTLSecs: 90, Active: true},
+	}}))
+}
+
+// TestEachRowBindsItsOwnSignals is the regression guard for a bug a user found
+// by using the product.
+//
+// Every row once carried the same `data-bind:credit-delta`, and datastar signals
+// are GLOBAL and flattened page-wide — so all the rows were one set of boxes.
+// Typing a credit adjustment for one customer typed it for every customer, and
+// each row displayed whichever value rendered last rather than its own.
+func TestEachRowBindsItsOwnSignals(t *testing.T) {
+	html := twoCustomers(t)
+
+	binds := regexp.MustCompile(`data-bind="([^"]+)"`).FindAllStringSubmatch(html, -1)
+	if len(binds) == 0 {
+		t.Fatal("the customer table binds nothing; this test is checking markup that moved")
+	}
+
+	seen := map[string]int{}
+	for _, m := range binds {
+		seen[m[1]]++
+	}
+	for path, n := range seen {
+		if n > 1 {
+			t.Errorf("%d inputs share the signal %q — datastar signals are global, so those "+
+				"rows are one control and editing either edits both", n, path)
+		}
+	}
+}
+
+// TestRowSignalsNeverReachTheServer locks the property that keeps the wire flat.
+//
+// datastar's fetch actions exclude `/(^|\.)_/` from the request payload. Drop
+// the underscore and every field of every row ships on EVERY action on the page
+// — a payload that grows with the customer count, for data no handler reads.
+func TestRowSignalsNeverReachTheServer(t *testing.T) {
+	html := twoCustomers(t)
+	for _, m := range regexp.MustCompile(`data-bind="([^"]+)"`).FindAllStringSubmatch(html, -1) {
+		if !strings.HasPrefix(m[1], "_") {
+			t.Errorf("row signal %q is not underscore-prefixed, so it is posted to the backend "+
+				"on every action on this page", m[1])
+		}
+	}
+}
+
+// TestRowSignalPathsAreUnambiguous guards the key format.
+//
+// datastar parses a signal reference with `/\$([a-zA-Z_\d]\w*(?:[.-]\w+)*)/` —
+// `-` and `.` are BOTH path separators there. A raw uuidv7 in a signal path
+// would therefore read as several nested levels instead of one row name.
+func TestRowSignalPathsAreUnambiguous(t *testing.T) {
+	html := twoCustomers(t)
+	segment := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	for _, m := range regexp.MustCompile(`data-bind="([^"]+)"`).FindAllStringSubmatch(html, -1) {
+		for _, part := range strings.Split(m[1], ".") {
+			if !segment.MatchString(part) {
+				t.Errorf("signal path %q has the segment %q; a hyphen or leading digit is read "+
+					"as a path step, so this names a different signal than it appears to",
+					m[1], part)
+			}
+		}
+	}
+}
+
+// TestRowButtonsSubmitTheirOwnRow checks the copy that hands one row to a
+// handler whose signal struct knows nothing about rows.
+func TestRowButtonsSubmitTheirOwnRow(t *testing.T) {
+	html := twoCustomers(t)
+
+	clicks := regexp.MustCompile(`data-on:click="([^"]*)"`).FindAllStringSubmatch(html, -1)
+	checked := 0
+	for _, m := range clicks {
+		expr := strings.ReplaceAll(m[1], "&#39;", "'")
+		if !strings.Contains(expr, " = $_row.") {
+			continue // Tokens/Mint/Disable submit no row fields
+		}
+		checked++
+
+		// The row the values are READ from must be the row the action POSTS to.
+		// ⚠ MATCH ANY SEGMENT, not `u[a-z0-9]+`. Keyed to the expected prefix, this
+		// regex found nothing when the key format was mutated — and a loop over no
+		// matches reports no failure, so the test passed on a broken key.
+		from := regexp.MustCompile(`\$_row\.([^.]+)\.`).FindAllStringSubmatch(expr, -1)
+		to := regexp.MustCompile(`/admin/users/([0-9a-f-]+)/`).FindStringSubmatch(expr)
+		if to == nil {
+			t.Errorf("expression posts nowhere recognisable: %s", expr)
+			continue
+		}
+		want := "u" + strings.ReplaceAll(to[1], "-", "")
+		for _, f := range from {
+			if f[1] != want {
+				t.Errorf("a button posting to user %s reads its values from %s — it would save "+
+					"one customer's numbers onto another", to[1], f[1])
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no row button copies row values; the submit wiring moved and this test is blind")
+	}
+}
