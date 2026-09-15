@@ -109,6 +109,11 @@ name middlewares that do not exist, so the package does not compile and `^FAIL` 
 
 ## Mutation Log
 
+- 2026-09-15 · 0dc1656* · mutant killed · exit 1 · `internal/httpapi/api.go` · the limiter is built and configured but never applied to any route, so every limit reads as generous rather than as absent · acceptance-sha256:71e7fc057e0f19127fb59fbf258939c020247f90e64bf40ac521c4aad1adefd6 · covers:the middleware order
+- 2026-09-15 · 0dc1656* · mutant killed · exit 1 · `internal/httpapi/middleware.go` · the limit becomes per user rather than per token, so a leaked credential consumes the legitimate one allowance — the exact threat the backlog named · acceptance-sha256:71e7fc057e0f19127fb59fbf258939c020247f90e64bf40ac521c4aad1adefd6 · covers:the per-token key
+- 2026-09-15 · 0dc1656* · mutant killed · exit 1 · `internal/httpapi/middleware.go` · a 429 carries no Retry-After, so a client has to guess when to come back and typically retries immediately into another refusal · acceptance-sha256:71e7fc057e0f19127fb59fbf258939c020247f90e64bf40ac521c4aad1adefd6 · covers:the Retry-After header
+- 2026-09-15 · 0dc1656* · mutant killed · exit 1 · `internal/monitor/registry.go` · the throttle counter panics at its first refusal, taking down the request it was meant to observe · acceptance-sha256:71e7fc057e0f19127fb59fbf258939c020247f90e64bf40ac521c4aad1adefd6 · covers:the widened label allow-list
+
 ## Invariants
 
 - The limiter keys on the token id, never the user id and never the remote address.
@@ -149,3 +154,8 @@ operator's call, not this task's.
 - Per-route limits as opposed to per-role (deferred: `docs/adr/BACKLOG.md`).
 
 ## Verification Log
+- 2026-09-15 · 0dc1656* · exit 0 · `set -o pipefail …` · acceptance-sha256:71e7fc057e0f19127fb59fbf258939c020247f90e64bf40ac521c4aad1adefd6 · ms:8018
+- 2026-09-15 · 0dc1656* · exit 0 · `set -o pipefail …` · acceptance-sha256:71e7fc057e0f19127fb59fbf258939c020247f90e64bf40ac521c4aad1adefd6 · ms:5881
+- 2026-09-15 · 0dc1656* · exit 0 · `set -o pipefail …` · acceptance-sha256:71e7fc057e0f19127fb59fbf258939c020247f90e64bf40ac521c4aad1adefd6 · ms:5637
+- 2026-09-15 · 0dc1656* · exit 0 · `set -o pipefail …` · acceptance-sha256:71e7fc057e0f19127fb59fbf258939c020247f90e64bf40ac521c4aad1adefd6 · ms:5583
+- 2026-09-15 · 0dc1656* · exit 0 · `set -o pipefail …` · acceptance-sha256:71e7fc057e0f19127fb59fbf258939c020247f90e64bf40ac521c4aad1adefd6 · ms:5538

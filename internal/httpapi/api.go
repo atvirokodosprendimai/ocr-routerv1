@@ -3,6 +3,7 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -10,7 +11,10 @@ import (
 
 	"github.com/atvirokodosprendimai/ocr-router/internal/blob"
 	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-router/internal/core"
 	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-router/internal/logging"
+	"github.com/atvirokodosprendimai/ocr-router/internal/ratelimit"
 	"github.com/atvirokodosprendimai/ocr-router/internal/router"
 	"github.com/atvirokodosprendimai/ocr-router/internal/store"
 )
@@ -34,6 +38,56 @@ type Deps struct {
 	PingInterval time.Duration
 	// Now is the clock, injectable for tests.
 	Now func() time.Time
+
+	// Limiter bounds requests per bearer token. Nil means no limiting, which is
+	// what keeps every test written before ADR-0002 unchanged.
+	Limiter *ratelimit.Limiter
+	// Limits is the per-role allowance the limiter applies.
+	Limits RoleLimits
+	// Logger receives one line per request. Nil becomes logging.Nop().
+	Logger *slog.Logger
+	// Counter records throttle refusals. Nil becomes a no-op.
+	Counter Counter
+}
+
+// Counter is the slice of the metrics registry this package needs.
+//
+// An interface at the CONSUMER, matching what router does, so httpapi does not
+// depend on how — or whether — anything is being observed.
+type Counter interface {
+	Inc(name string, labels map[string]string)
+	Add(name string, labels map[string]string, n int64)
+}
+
+type nopCounter struct{}
+
+func (nopCounter) Inc(string, map[string]string)        {}
+func (nopCounter) Add(string, map[string]string, int64) {}
+
+// RoleLimits is the allowance for each role.
+//
+// Three roles rather than one limit because their traffic genuinely differs in
+// shape: a client uploads occasionally in bursts, a worker polls steadily, an
+// admin clicks. A single limit would be loose for one and tight for another.
+type RoleLimits struct {
+	Client ratelimit.Limit
+	Worker ratelimit.Limit
+	Admin  ratelimit.Limit
+}
+
+// For returns the allowance for a role.
+//
+// An unrecognised role gets the CLIENT limit rather than no limit: failing open
+// on an unknown role would make adding a role a silent hole.
+func (l RoleLimits) For(r core.Role) ratelimit.Limit {
+	switch r {
+	case core.RoleWorker:
+		return l.Worker
+	case core.RoleAdmin:
+		return l.Admin
+	default:
+		return l.Client
+	}
 }
 
 // API holds the dependencies and the routes.
@@ -60,15 +114,40 @@ func New(deps Deps) *API {
 	if deps.MaxUpload == 0 {
 		deps.MaxUpload = 64 << 20
 	}
+	// Defaults set ONCE, so no call site below needs a nil check — thirty guarded
+	// uses is thirty chances to forget one.
+	if deps.Limiter == nil {
+		// No limiter means no limiting: an unlimited Limit allows everything and
+		// stores nothing, so this is a real limiter that never refuses rather
+		// than a branch around the middleware.
+		deps.Limiter = ratelimit.New(deps.Now, time.Hour)
+		deps.Limits = RoleLimits{}
+	}
+	if deps.Logger == nil {
+		deps.Logger = logging.Nop()
+	}
+	if deps.Counter == nil {
+		deps.Counter = nopCounter{}
+	}
 
 	a := &API{deps: deps}
 	r := chi.NewRouter()
+
+	// ⚠ OUTERMOST, before authenticate: the request log must capture the 401s and
+	// the 429s, which are exactly the lines an operator needs when something is
+	// hammering the door. Moving this inside the group below would lose them and
+	// leave the log looking perfectly healthy.
+	r.Use(a.logRequests)
 
 	// Every route below sits inside the auth middleware. There is no
 	// unauthenticated group here at all — /healthz is mounted by the monitoring
 	// task onto the parent mux, deliberately outside this subtree.
 	r.Group(func(r chi.Router) {
 		r.Use(a.authenticate)
+		// ⚠ INSIDE the group, after authenticate: the limiter keys on TokenID,
+		// which does not exist until the caller is known. Outside it, every
+		// caller would share one bucket.
+		r.Use(a.rateLimit)
 
 		r.Post("/upload", a.handleUpload)
 		r.Get("/sse", a.handleSSE)

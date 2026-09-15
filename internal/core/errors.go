@@ -44,4 +44,11 @@ var (
 	// ErrInvalidParam is a param key that failed ValidParamKey, or an unknown
 	// service label. Both are client input that must be refused at the edge.
 	ErrInvalidParam = errors.New("invalid parameter")
+
+	// ErrRateLimited refuses a caller that has exceeded its token's request
+	// rate. Distinct from ErrBufferFull, which is about how many jobs a CUSTOMER
+	// has in flight: this one is about how often a TOKEN asks, and the two limit
+	// different things for different reasons. Both map to 429, and the
+	// Retry-After header is what tells them apart to a client.
+	ErrRateLimited = errors.New("rate limited")
 )

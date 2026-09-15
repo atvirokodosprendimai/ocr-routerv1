@@ -261,10 +261,36 @@ func TestMetricLabelAllowListPanics(t *testing.T) {
 		})
 	}
 
-	// And the permitted three are accepted, so the guard is not simply refusing
+	// And the permitted names are accepted, so the guard is not simply refusing
 	// everything — a check that rejects all input passes every negative test.
-	for _, ok := range []string{"label", "state", "action"} {
+	for _, ok := range []string{"label", "state", "action", "role"} {
 		reg.Inc("ocrr_test", map[string]string{ok: "x"})
+	}
+}
+
+// TestRoleIsAnAllowedMetricLabel pins ADR-0002's widening to exactly one entry.
+//
+// The allow-list was frozen deliberately by T11, so widening it is precedent the
+// next field will cite. `role` qualifies on the same ground the original three
+// did — one of exactly three values fixed at compile time — and this test lives
+// beside the constant so the two cannot drift.
+func TestRoleIsAnAllowedMetricLabel(t *testing.T) {
+	reg := monitor.NewRegistry()
+	reg.Inc(monitor.MetricRequestsThrottled, map[string]string{"role": "client"})
+
+	if got := reg.Value(monitor.MetricRequestsThrottled, map[string]string{"role": "client"}); got != 1 {
+		t.Errorf("throttle counter = %d, want 1", got)
+	}
+	// The widening is one entry wide, not a general relaxation.
+	for _, bad := range []string{"user_id", "job_id", "email", "customer"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("adding `role` relaxed the guard for %q as well", bad)
+				}
+			}()
+			reg.Inc("ocrr_test", map[string]string{bad: "x"})
+		}()
 	}
 }
 

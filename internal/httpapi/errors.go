@@ -29,8 +29,11 @@ func statusFor(err error) int {
 		// 402 is the one status in this table that says something a retry cannot
 		// fix: the customer must buy credits.
 		return http.StatusPaymentRequired
-	case errors.Is(err, core.ErrBufferFull):
-		// 429, not 507: this is back-pressure and the client should retry later.
+	case errors.Is(err, core.ErrBufferFull), errors.Is(err, core.ErrRateLimited):
+		// 429, not 507: both are back-pressure and the client should retry later.
+		// They are different limits — jobs in flight per customer, requests per
+		// second per token — and Retry-After is what distinguishes them on the
+		// wire.
 		return http.StatusTooManyRequests
 	case errors.Is(err, core.ErrInvalidParam), errors.Is(err, core.ErrInvalidState):
 		return http.StatusBadRequest

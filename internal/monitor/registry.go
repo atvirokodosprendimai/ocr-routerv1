@@ -25,10 +25,15 @@ import (
 // A user id, job id or email would be UNBOUNDED, and unbounded label values are
 // how a metrics endpoint kills the scraper it feeds. Per-customer visibility
 // belongs on the dashboard, which is authenticated and paginated.
+// ADR-0002 widened this set by exactly one entry, `role`, on the same ground
+// the original three were argued: a role is one of three values fixed at compile
+// time. The guard test changed in the same commit as this constant, so the two
+// cannot drift.
 var allowedLabelNames = map[string]bool{
 	"label":  true,
 	"state":  true,
 	"action": true,
+	"role":   true,
 }
 
 // Registry holds the counters. Gauges are not stored: they are computed at
@@ -62,7 +67,7 @@ func key(name string, labels map[string]string) string {
 		if !allowedLabelNames[k] {
 			panic(fmt.Sprintf(
 				"monitor: metric label %q is not allow-listed; unbounded label values kill the "+
-					"scraper. Allowed: label, state, action", k))
+					"scraper. Allowed: label, state, action, role", k))
 		}
 		names = append(names, k)
 	}
@@ -170,4 +175,9 @@ const (
 	MetricQueueDepth = "ocrr_queue_depth"
 	// MetricResultsInMemory tracks the unbounded-growth risk in the result store.
 	MetricResultsInMemory = "ocrr_results_in_memory"
+
+	// MetricRequestsThrottled counts rate-limit refusals by role (ADR-0002). It
+	// is what makes throttling visible to the operator before a customer
+	// complains that their integration started failing.
+	MetricRequestsThrottled = "ocrr_requests_throttled_total"
 )
