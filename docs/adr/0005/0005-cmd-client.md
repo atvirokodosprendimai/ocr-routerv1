@@ -1,6 +1,6 @@
 # ADR-0005: Ship a CLI client that submits one file and blocks until the result lands
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-15
 **Owner:** M (operator) — authored by claude-code-aks
 **Spec:** None — no spec stage
