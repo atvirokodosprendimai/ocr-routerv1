@@ -366,6 +366,34 @@ const sqliteConstraintUnique = 2067
 // sqliteConstraintPrimaryKey is SQLITE_CONSTRAINT_PRIMARYKEY.
 const sqliteConstraintPrimaryKey = 1555
 
+// SetUserSettings writes the three operator-tunable columns and nothing else.
+//
+// ⚠ NOT UpdateUser, AND THE DIFFERENCE IS THE POINT. UpdateUser writes the whole
+// row, so a caller must read the user first and send every field back — and
+// `credits` moves underneath that read on every delivery. An admin editing a
+// buffer limit while a job completes would silently restore the pre-delivery
+// balance. Three named columns cannot clobber a fourth.
+//
+// It returns core.ErrNotFound when no row matched: silence would report success
+// for a user that does not exist, which is how a settings change appears to work
+// and does nothing.
+func (r *Repo) SetUserSettings(ctx context.Context, userID string, bufferLimit, priority, jobTTLSecs int) error {
+	res, err := r.write.ExecContext(ctx,
+		`UPDATE users SET buffer_limit = ?, priority = ?, job_ttl_secs = ? WHERE id = ?`,
+		bufferLimit, priority, jobTTLSecs, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return core.ErrNotFound
+	}
+	return nil
+}
+
 // SetPasswordHash stores a user's argon2id hash, or clears it with "".
 //
 // Clearing is a real operation, not an accident to guard against: an empty hash

@@ -99,6 +99,10 @@ does not exist, so the package does not compile and `^FAIL` matches.
 
 ## Mutation Log
 
+- 2026-09-15 · a5674be* · mutant killed · exit 1 · `internal/store/repo_write.go` · the settings write also touches credits, which is what a whole-row UpdateUser does from a stale read — every delivery landing while an admin form is open is silently undone · acceptance-sha256:f2b0b6948002ee91f1f1046c6a29c673bbb943ff54c839c26b59350ae08e82a7 · covers:the three-column write
+- 2026-09-15 · a5674be* · mutant killed · exit 1 · `internal/identity/settings.go` · the balance moves with no ledger entry, so credit_entries stops being an audit of every movement and nothing fails to say so · acceptance-sha256:f2b0b6948002ee91f1f1046c6a29c673bbb943ff54c839c26b59350ae08e82a7 · covers:the ledger entry
+- 2026-09-15 · a5674be* · mutant killed · exit 1 · `internal/identity/settings.go` · a buffer limit of zero is accepted, which silently rejects every upload that customer ever makes and reports it to them as ordinary back-pressure · acceptance-sha256:f2b0b6948002ee91f1f1046c6a29c673bbb943ff54c839c26b59350ae08e82a7 · covers:the buffer-limit floor
+
 ## Invariants
 
 - No exported method anywhere sets a credit balance; every movement goes through `AddCredits`.
@@ -138,3 +142,13 @@ legitimate, so this task allows it — but a floor is a policy decision and not 
 - Bulk edits across customers (deferred: `docs/adr/BACKLOG.md`).
 
 ## Verification Log
+- 2026-09-15 · a5674be* · exit 0 · `set -o pipefail …` · acceptance-sha256:f2b0b6948002ee91f1f1046c6a29c673bbb943ff54c839c26b59350ae08e82a7 · ms:56498
+- 2026-09-15 · a5674be* · exit 0 · `set -o pipefail …` · acceptance-sha256:f2b0b6948002ee91f1f1046c6a29c673bbb943ff54c839c26b59350ae08e82a7 · ms:45700
+- 2026-09-15 · a5674be* · exit 0 · `set -o pipefail …` · acceptance-sha256:f2b0b6948002ee91f1f1046c6a29c673bbb943ff54c839c26b59350ae08e82a7 · ms:49337
+- 2026-09-15 · a5674be* · exit 1 · `set -o pipefail …` · acceptance-sha256:f2b0b6948002ee91f1f1046c6a29c673bbb943ff54c839c26b59350ae08e82a7 · ms:216
+  ```
+  --- last 2 line(s) of stderr
+  internal/web/settings.go:12:2: no required module provides package github.com/atvirokodosprendimai/ocr-router/internal/views; to add it:
+  	go get github.com/atvirokodosprendimai/ocr-router/internal/views
+  ```
+- 2026-09-15 · a5674be* · exit 0 · `set -o pipefail …` · acceptance-sha256:f2b0b6948002ee91f1f1046c6a29c673bbb943ff54c839c26b59350ae08e82a7 · ms:64185

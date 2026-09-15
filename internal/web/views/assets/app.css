@@ -127,3 +127,18 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
 /* Two buttons in one cell should not wrap apart on a narrow screen. */
 .row-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+
+/* Inline customer editing (ADR-0004). */
+.credit-row td { border-top: 0; padding-top: 0; }
+.credit-adjust {
+  display: flex;
+  gap: .5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: .25rem 0 .75rem;
+}
+.credit-adjust input[type="number"] { width: 7rem; }
+.credit-adjust input[type="text"] { min-width: 12rem; flex: 1; }
+/* The number inputs in the table sit in narrow columns; without this they
+   default to a width that forces a horizontal scroll on every viewport. */
+td.num input[type="number"] { width: 5rem; text-align: right; }

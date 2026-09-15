@@ -131,6 +131,12 @@ func (wb *Web) Mount(r chi.Router, authenticate func(http.Handler) http.Handler,
 			r.Get("/users/{id}/tokens", wb.listTokens)
 			r.Post("/users/{id}/tokens", wb.mintToken)
 			r.Post("/tokens/{id}/revoke", wb.revokeToken)
+			// ADR-0004. Inside this group deliberately, so ADR-0003's Origin
+			// guard covers all three and the unauthenticated-route invariant
+			// fails if one escapes.
+			r.Post("/users/{id}/settings", wb.updateSettings)
+			r.Post("/users/{id}/credits", wb.adjustCredits)
+			r.Post("/users/{id}/active", wb.setActive)
 			r.Post("/rates", wb.setRate)
 		})
 	})
@@ -274,6 +280,19 @@ type signals struct {
 	NewRole   string `json:"newRole"`
 	RateLabel string `json:"rateLabel"`
 	RateValue string `json:"rateValue"`
+
+	// Per-customer editing signals (ADR-0004).
+	//
+	// ⚠ The JSON names are camelCase and the ATTRIBUTE spellings are kebab-case:
+	// `data-bind:buffer-limit` binds `bufferLimit`. HTML lower-cases attribute
+	// names, so `data-bind:bufferLimit` would bind `bufferlimit` — a different
+	// signal, with nothing anywhere reporting the mistake and the field simply
+	// never saving.
+	BufferLimit  string `json:"bufferLimit"`
+	Priority     string `json:"priority"`
+	JobTTL       string `json:"jobTtl"`
+	CreditDelta  string `json:"creditDelta"`
+	CreditReason string `json:"creditReason"`
 }
 
 func readSignals(r *http.Request) (signals, error) {
@@ -529,7 +548,18 @@ func friendly(err error) string {
 	case errors.Is(err, core.ErrConflict):
 		return "that email address is already registered"
 	case errors.Is(err, core.ErrInvalidParam):
-		return "that email address does not look valid"
+		// ⚠ The SERVICE'S OWN MESSAGE, not a guess. This used to return "that
+		// email address does not look valid" unconditionally, which was right
+		// when creating a user was the only thing that could produce
+		// ErrInvalidParam — and became actively misleading the moment ADR-0004
+		// added settings validation, because a rejected buffer limit reported a
+		// problem with an email nobody had touched.
+		//
+		// Every producer of this error wraps it with a specific message
+		// (`%w: buffer limit must be at least 1; use the active toggle…`), so
+		// showing that message is both more accurate and less work than
+		// maintaining a mapping that has to grow with every new caller.
+		return strings.TrimPrefix(err.Error(), core.ErrInvalidParam.Error()+": ")
 	case errors.Is(err, core.ErrForbidden):
 		return "only an administrator can do that"
 	default:

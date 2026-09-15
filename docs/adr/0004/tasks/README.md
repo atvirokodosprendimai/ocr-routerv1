@@ -4,8 +4,8 @@ Derived index — the task files are the source of truth. Execute in order.
 
 | Task | Goal | Status | Depends-on | Acceptance (first command) |
 |------|------|--------|------------|----------------------------|
-| T1 | An authorised settings writer that cannot touch credits | pending | none | `go test ./internal/identity/... -race` |
-| T2 | Edit a customer where you already read them | pending | T1 | `go test ./internal/web/... -race` |
+| T1 | An authorised settings writer that cannot touch credits | done | none | `go test ./internal/identity/... -race` |
+| T2 | Edit a customer where you already read them | done | T1 | `go test ./internal/web/... -race` |
 
 ## Order
 

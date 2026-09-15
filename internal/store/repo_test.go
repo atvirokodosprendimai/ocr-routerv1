@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -737,4 +738,42 @@ func ids(js []core.Job) []string {
 		out[i] = j.ID
 	}
 	return out
+}
+
+// TestSetUserSettingsOnUnknownUser — silence would report success for a user
+// that does not exist, which is how a settings change appears to work and does
+// nothing.
+func TestSetUserSettingsOnUnknownUser(t *testing.T) {
+	r := newRepo(t)
+
+	if err := r.SetUserSettings(context.Background(), core.NewID(), 4, 0, 0); !errors.Is(err, core.ErrNotFound) {
+		t.Errorf("err = %v, want core.ErrNotFound", err)
+	}
+}
+
+// TestSetUserSettingsWritesOnlyThreeColumns is the store-level half of the
+// clobbering guarantee ADR-0004 rests on.
+func TestSetUserSettingsWritesOnlyThreeColumns(t *testing.T) {
+	r := newRepo(t)
+	ctx := context.Background()
+	u := mkUser(t, r, "u1", 3, 250)
+
+	if err := r.SetUserSettings(ctx, u.ID, 9, 8, 77); err != nil {
+		t.Fatalf("SetUserSettings: %v", err)
+	}
+
+	got, err := r.UserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("UserByID: %v", err)
+	}
+	if got.BufferLimit != 9 || got.Priority != 8 || got.JobTTLSecs != 77 {
+		t.Errorf("settings did not apply: %+v", got)
+	}
+	// Everything else is untouched — credits above all.
+	if got.Credits != 250 {
+		t.Errorf("credits = %d, want 250 — a settings write moved the balance", got.Credits)
+	}
+	if got.Email != u.Email || got.Role != u.Role || !got.Active {
+		t.Errorf("a settings write changed identity fields: %+v", got)
+	}
 }

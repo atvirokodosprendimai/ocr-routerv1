@@ -86,8 +86,12 @@ for the unauthenticated-route invariant. `templ generate` runs first because a s
 | `TestDeactivatedUsersTokensStopWorking` | `internal/web/settings_test.go` | after deactivating through the UI, that user's bearer token gets 401 — the consequence the caption promises, asserted rather than described | — | S4 |
 | `TestSettingsRoutesRequireAdmin` | `internal/web/settings_test.go` | all three routes return 403 for a client token and 401 for none — a customer must not be able to raise their own buffer limit or credits | — | S7 |
 | `TestSettingsRoutesAreOriginGuarded` | `internal/web/settings_test.go` | a cookie-authenticated POST with no `Origin` returns 403 on each route — they are inside the group ADR-0003's guard covers | — | S7 |
-| `TestEditableRowUsesKebabCaseBindings` | `internal/web/views/views_test.go` | the rendered row contains `data-bind:buffer-limit` and no `data-bind:bufferLimit` — HTML lower-cases attribute names, so the camel form silently binds a different signal and the field never saves, with nothing reporting it | — | S2 |
-| `TestCreditsControlSaysAdjustNotSet` | `internal/web/views/views_test.go` | the rendered control reads "Adjust" and carries a sign hint, and the word "Set" appears on no credits control — a box labelled "Credits" beside a balance reads as the current value, and an operator typing 500 meaning "make it 500" would add 500 | — | S3 |
+| `TestEditableRowUsesKebabCaseBindings` | `internal/web/views/assets_test.go` | the rendered row contains `data-bind:buffer-limit` and no `data-bind:bufferLimit` — HTML lower-cases attribute names, so the camel form silently binds a different signal and the field never saves, with nothing reporting it | — | S2 |
+| `TestCreditsControlSaysAdjustNotSet` | `internal/web/views/assets_test.go` | the rendered control reads "Adjust" and carries a sign hint, and the word "Set" appears on no credits control — a box labelled "Credits" beside a balance reads as the current value, and an operator typing 500 meaning "make it 500" would add 500 | — | S3 |
+| `TestEditableRowHasAccessibleLabels` | `internal/web/views/assets_test.go` | each input carries an `aria-label` naming the field AND the customer — they sit in table cells with no room for a visible `<label>`, so without this they are five unlabelled number boxes to a screen reader, on the one page that changes what customers can do | — | S2, S3 |
+| `TestDeactivateButtonSaysWhatItDoes` | `internal/web/views/assets_test.go` | the control's title says it stops every token immediately — ADR-0001 called deactivation the blunt instrument, and this is the one action here whose blast radius exceeds its affordance | — | S4 |
+| `TestSettingsRejectsNonNumericInput` | `internal/web/settings_test.go` | `"eight"` is refused with a message naming the field, and nothing is written | — | S6 |
+| `TestSettingsRejectsEmptyField` | `internal/web/settings_test.go` | an empty field reports "required" rather than being read as 0 — a blank buffer limit read as zero would hit the service floor and produce a confusing refusal about a value the operator never typed | — | S6 |
 
 ## Reachability
 
@@ -99,6 +103,10 @@ for the unauthenticated-route invariant. `templ generate` runs first because a s
 | 4 — it is used | S8's human sign-off in a real browser |
 
 ## Mutation Log
+
+- 2026-09-15 · a5674be* · mutant killed · exit 1 · `internal/web/web.go` · the settings handler exists and is mounted on nothing, so the buffer limit is still unchangeable from the dashboard — the exact defect this record exists to fix, and every test in T1 survives it · acceptance-sha256:f2dfc08fb08082c297525599428a58f1e731c14647af9df08a12d334e6ec631b · covers:the routes that select the writers
+- 2026-09-15 · a5674be* · mutant killed · exit 1 · `internal/web/settings.go` · the operator reason is dropped before it reaches the ledger, so every manual adjustment records nothing about why it happened and the audit is unreadable six months later · acceptance-sha256:f2dfc08fb08082c297525599428a58f1e731c14647af9df08a12d334e6ec631b · covers:the ledger entry through the UI
+- 2026-09-15 · a5674be* · mutant killed · exit 1 · `internal/web/web.go` · the credit adjustment route is unmounted, so an operator has no way to move a balance except a raw UPDATE that writes no ledger entry · acceptance-sha256:f2dfc08fb08082c297525599428a58f1e731c14647af9df08a12d334e6ec631b · covers:the admin gate on every route
 
 ## Invariants
 
@@ -144,3 +152,8 @@ blast radius exceeds its affordance.
   rendering of the same row is how two renderings drift).
 
 ## Verification Log
+- 2026-09-15 · a5674be* · exit 0 · `set -o pipefail …` · acceptance-sha256:f2dfc08fb08082c297525599428a58f1e731c14647af9df08a12d334e6ec631b · ms:74745
+- 2026-09-15 · a5674be* · exit 0 · `set -o pipefail …` · acceptance-sha256:f2dfc08fb08082c297525599428a58f1e731c14647af9df08a12d334e6ec631b · ms:60110
+- 2026-09-15 · a5674be* · exit 0 · `set -o pipefail …` · acceptance-sha256:f2dfc08fb08082c297525599428a58f1e731c14647af9df08a12d334e6ec631b · ms:55006
+- 2026-09-15 · a5674be* · exit 0 · `set -o pipefail …` · acceptance-sha256:f2dfc08fb08082c297525599428a58f1e731c14647af9df08a12d334e6ec631b · ms:42813
+- 2026-09-15 · human-observed · S8: drove a real binary on 2026-09-15 — the customers page rendered number inputs bound kebab-case (buffer-limit, priority, job-ttl, credit-delta, credit-reason) plus the Adjust control and a Disable button. Set buffer=9 priority=3 ttl=600: stored. Adjusted +250 with reason 'prepaid invoice 1042': balance moved to 250 and the ledger row reads '250|admin: prepaid invoice 1042'. Posted buffer=0: refused on screen with 'buffer limit must be at least 1; use the active toggle to stop a customer', and the stored value stayed 9. Toggled active: stored 0.

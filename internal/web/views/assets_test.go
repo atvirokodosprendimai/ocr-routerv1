@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/atvirokodosprendimai/ocr-router/internal/core"
 	"github.com/atvirokodosprendimai/ocr-router/internal/web/views"
 )
 
@@ -134,5 +135,111 @@ func TestDatastarBundleIsNotEmpty(t *testing.T) {
 	}
 	if !strings.Contains(string(js[:min(200, len(js))]), "Datastar") {
 		t.Error("the embedded bundle does not look like datastar")
+	}
+}
+
+// TestEditableRowUsesKebabCaseBindings catches a failure with no symptom.
+//
+// ⚠ HTML LOWER-CASES ATTRIBUTE NAMES. `data-bind:bufferLimit` binds the signal
+// `bufferlimit`, which is a different signal from `bufferLimit` — so the field
+// never saves, and nothing anywhere reports it: no console error, no failed
+// request, no server-side clue. Only a check over the rendered markup finds it.
+func TestEditableRowUsesKebabCaseBindings(t *testing.T) {
+	out := render(t, views.UserTable(views.Dashboard{
+		Users: []core.User{{
+			ID: "u1", Email: "c@example.com", Role: core.RoleClient,
+			Credits: 100, BufferLimit: 4, Active: true,
+		}},
+	}))
+
+	for _, want := range []string{
+		"data-bind:buffer-limit",
+		"data-bind:priority",
+		"data-bind:job-ttl",
+		"data-bind:credit-delta",
+		"data-bind:credit-reason",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the editable row is missing %q", want)
+		}
+	}
+	// The camel spellings must appear nowhere: each one silently binds a
+	// different, never-read signal.
+	for _, bad := range []string{
+		"data-bind:bufferLimit", "data-bind:jobTtl",
+		"data-bind:creditDelta", "data-bind:creditReason",
+	} {
+		if strings.Contains(out, bad) {
+			t.Errorf("%q binds a lower-cased signal name that nothing reads, so the field "+
+				"silently never saves", bad)
+		}
+	}
+}
+
+// TestCreditsControlSaysAdjustNotSet — a box labelled Credits beside a balance
+// of 500 reads as the current value, and an operator typing 500 meaning "make it
+// 500" would add 500.
+func TestCreditsControlSaysAdjustNotSet(t *testing.T) {
+	out := render(t, views.UserTable(views.Dashboard{
+		Users: []core.User{{
+			ID: "u1", Email: "c@example.com", Role: core.RoleClient,
+			Credits: 500, BufferLimit: 4, Active: true,
+		}},
+	}))
+
+	if !strings.Contains(out, "Adjust credits") {
+		t.Error("the credit control is not labelled as an adjustment")
+	}
+	if !strings.Contains(out, "+50 or -20") {
+		t.Error("the credit input carries no sign hint, so it reads as an absolute value")
+	}
+	if !strings.Contains(out, "reason (required)") {
+		t.Error("the reason field does not say it is required")
+	}
+	// The balance is a ledger; nothing in this system sets it.
+	if strings.Contains(out, "Set credits") || strings.Contains(out, "Set balance") {
+		t.Error("a set-credits control exists — every movement must be an adjustment with a " +
+			"ledger entry")
+	}
+}
+
+// TestEditableRowHasAccessibleLabels — the inputs have no visible <label>,
+// because a table cell has no room for one. Without aria-label they are five
+// unlabelled number boxes to a screen reader.
+func TestEditableRowHasAccessibleLabels(t *testing.T) {
+	out := render(t, views.UserTable(views.Dashboard{
+		Users: []core.User{{
+			ID: "u1", Email: "c@example.com", Role: core.RoleClient,
+			Credits: 100, BufferLimit: 4, Active: true,
+		}},
+	}))
+
+	for _, want := range []string{
+		"Buffer limit for c@example.com",
+		"Priority for c@example.com",
+		"Job TTL in seconds for c@example.com",
+		"Credit adjustment for c@example.com",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no accessible label %q — the inputs sit in table cells with no room for a "+
+				"visible <label>, so aria-label is the only thing naming them", want)
+		}
+	}
+}
+
+// TestDeactivateButtonSaysWhatItDoes — the consequence exceeds the affordance:
+// one click in a table row stops every token the customer holds.
+func TestDeactivateButtonSaysWhatItDoes(t *testing.T) {
+	out := render(t, views.UserTable(views.Dashboard{
+		Users: []core.User{{
+			ID: "u1", Email: "c@example.com", Role: core.RoleClient,
+			Credits: 100, BufferLimit: 4, Active: true,
+		}},
+	}))
+
+	if !strings.Contains(out, "Stops every token") {
+		t.Error("the deactivate control does not say what it does. ADR-0001 called it the blunt " +
+			"instrument, and a control whose consequence is invisible is one that gets clicked " +
+			"by mistake")
 	}
 }

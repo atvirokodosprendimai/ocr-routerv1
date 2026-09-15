@@ -147,6 +147,29 @@ templ Users(d Dashboard) {
 }
 
 // UserTable is patched in by id after any change.
+//
+// Seven columns, matching the colspan on the credit row. Email and role share
+// one cell because neither is editable and splitting them wastes the width the
+// number inputs need.
+//
+// ⚠ EMAIL AND ROLE ARE READ-ONLY BY DECISION, not by omission (ADR-0004 §5). The
+// email is the login identity and the unique key; a token carries its OWN role
+// independent of its user's, so a role control would not demote that user's
+// tokens however much it looked like it did. Changing a role means revoking and
+// re-minting, which the token list supports.
+//
+// ⚠ THE CREDIT CONTROL SAYS "ADJUST", NEVER "SET". A box labelled Credits beside
+// a balance of 500 reads as the current value, and an operator typing 500
+// meaning "make it 500" would add 500. The balance is a ledger: every movement
+// needs an entry, so there is no set-to control anywhere in this system.
+//
+// ⚠ DEACTIVATION STOPS EVERY TOKEN the customer holds, at once. ADR-0001 called
+// it the blunt instrument, and the button carries that in its title attribute —
+// a control whose consequence is invisible is one that gets clicked by mistake.
+//
+// ⚠ BINDINGS ARE KEBAB-CASE: `data-bind:buffer-limit` binds `bufferLimit`. HTML
+// lower-cases attribute names, so `data-bind:bufferLimit` binds `bufferlimit` —
+// a different signal, and the field silently never saves.
 templ UserTable(d Dashboard) {
 	<section id="user-table">
 		<h2>Customers</h2>
@@ -156,25 +179,47 @@ templ UserTable(d Dashboard) {
 			<table>
 				<thead>
 					<tr>
-						<th>Email</th><th>Role</th><th class="num">Credits</th>
+						<th>Customer</th><th class="num">Credits</th>
 						<th class="num">Buffer</th><th class="num">Priority</th>
-						<th class="num">Job TTL</th><th>Active</th><th>Tokens</th>
+						<th class="num">TTL (s)</th><th>State</th><th>Actions</th>
 					</tr>
 				</thead>
 				<tbody>
 					for _, u := range d.Users {
 						<tr>
-							<td>{ u.Email }</td>
-							<td>{ string(u.Role) }</td>
-							<td class="num">{ fmt.Sprint(u.Credits) }</td>
-							<td class="num">{ fmt.Sprint(u.BufferLimit) }</td>
-							<td class="num">{ fmt.Sprint(u.Priority) }</td>
+							<td>
+								{ u.Email }
+								<br/>
+								<span class="muted">{ string(u.Role) }</span>
+							</td>
 							<td class="num">
-								if u.JobTTLSecs == 0 {
-									<span class="muted">none</span>
-								} else {
-									{ fmt.Sprintf("%ds", u.JobTTLSecs) }
-								}
+								{ fmt.Sprint(u.Credits) }
+							</td>
+							<td class="num">
+								<input
+									type="number"
+									min="1"
+									aria-label={ "Buffer limit for " + u.Email }
+									value={ fmt.Sprint(u.BufferLimit) }
+									data-bind:buffer-limit
+								/>
+							</td>
+							<td class="num">
+								<input
+									type="number"
+									aria-label={ "Priority for " + u.Email }
+									value={ fmt.Sprint(u.Priority) }
+									data-bind:priority
+								/>
+							</td>
+							<td class="num">
+								<input
+									type="number"
+									min="0"
+									aria-label={ "Job TTL in seconds for " + u.Email }
+									value={ fmt.Sprint(u.JobTTLSecs) }
+									data-bind:job-ttl
+								/>
 							</td>
 							<td>
 								if u.Active {
@@ -185,6 +230,9 @@ templ UserTable(d Dashboard) {
 							</td>
 							<td class="row-actions">
 								<button
+									data-on:click={ fmt.Sprintf("@post('/admin/users/%s/settings')", u.ID) }
+								>Save</button>
+								<button
 									class="secondary"
 									data-on:click={ fmt.Sprintf("@get('/admin/users/%s/tokens')", u.ID) }
 								>Tokens</button>
@@ -192,6 +240,40 @@ templ UserTable(d Dashboard) {
 									class="secondary"
 									data-on:click={ fmt.Sprintf("@post('/admin/users/%s/tokens')", u.ID) }
 								>Mint</button>
+								<button
+									class="secondary"
+									title="Stops every token this customer holds, immediately"
+									data-on:click={ fmt.Sprintf("@post('/admin/users/%s/active')", u.ID) }
+								>
+									if u.Active {
+										Disable
+									} else {
+										Enable
+									}
+								</button>
+							</td>
+						</tr>
+						<tr class="credit-row">
+							<td colspan="7">
+								<div class="credit-adjust">
+									<span class="muted">Adjust credits</span>
+									<input
+										type="number"
+										aria-label={ "Credit adjustment for " + u.Email }
+										placeholder="+50 or -20"
+										data-bind:credit-delta
+									/>
+									<input
+										type="text"
+										aria-label={ "Reason for the credit adjustment to " + u.Email }
+										placeholder="reason (required)"
+										data-bind:credit-reason
+									/>
+									<button
+										class="secondary"
+										data-on:click={ fmt.Sprintf("@post('/admin/users/%s/credits')", u.ID) }
+									>Adjust</button>
+								</div>
 							</td>
 						</tr>
 					}
