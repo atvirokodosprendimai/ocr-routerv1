@@ -87,6 +87,9 @@ grep makes the fence non-zero.
 
 ## Mutation Log
 
+- 2026-09-15 · 7422213* · mutant killed · exit 1 · `internal/logging/logging.go` · the whole param map is logged, so a crawler URL carrying a password reaches every log line and every aggregator downstream · acceptance-sha256:d64a89ce0e22ba3f673e7c5e34a3748beb806de1828f281029dee3e87211325f · covers:the key-only param encoding
+- 2026-09-15 · 7422213* · mutant killed · exit 1 · `internal/logging/logging.go` · an unrecognised level silently becomes info, so an operator who typed --log-level verbose has logging they cannot discover is wrong · acceptance-sha256:d64a89ce0e22ba3f673e7c5e34a3748beb806de1828f281029dee3e87211325f · covers:the level filter
+
 ## Invariants
 
 - No exported function in this package accepts a param value.
@@ -126,3 +129,6 @@ adjustment to this code.
   `docs/adr/BACKLOG.md`).
 
 ## Verification Log
+- 2026-09-15 · 7422213* · exit 0 · `set -o pipefail …` · acceptance-sha256:d64a89ce0e22ba3f673e7c5e34a3748beb806de1828f281029dee3e87211325f · ms:1582
+- 2026-09-15 · 7422213* · exit 0 · `set -o pipefail …` · acceptance-sha256:d64a89ce0e22ba3f673e7c5e34a3748beb806de1828f281029dee3e87211325f · ms:801
+- 2026-09-15 · 7422213* · exit 0 · `set -o pipefail …` · acceptance-sha256:d64a89ce0e22ba3f673e7c5e34a3748beb806de1828f281029dee3e87211325f · ms:805
