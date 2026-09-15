@@ -18,6 +18,36 @@ reported by `adr-debt` and missing here is a pointer to nothing.
 
 ## Open
 
+- **Unmetered customers — "`-1` credits means infinite".** (requested by M, 2026-09-15; not yet
+  deferred by any ADR, so this entry is the only record of it)
+  Admission is `u.Credits <= 0` (`internal/router/service.go:111`) and every completed stage debits
+  `len(out) * rate` (`:244`, charged at `:375`). A customer who should never be refused has to be
+  topped up by hand for ever.
+  **What an ADR has to decide**, because the request and the existing design conflict: credits are
+  an APPEND-ONLY LEDGER and the only control is *adjust*, never *set* — ADR-0004 made that explicit
+  and `TestCreditsAreNeverSetDirectly` pins it. `-1` is a SENTINEL, not a balance, and adjusting a
+  sentinel is meaningless: `-1 + 50` is `49`, not "infinite plus fifty". So the record must choose
+  between a sentinel in the balance column (cheap, and it puts a non-balance in a ledger) and a
+  separate `unmetered` flag on the user (honest, and it is a schema change plus its own control),
+  with `-1` kept only as the display and wire spelling. It must also say whether an unmetered job
+  still accrues a cost for reporting, since "we cannot bill it" and "we cannot see what it cost"
+  are different claims, and the metrics counter at `:385` currently conflates them.
+
+- **`?raw=1` — stdio passthrough billed at a flat 1 credit per request.** (requested by M,
+  2026-09-15)
+  **Shape asked for:** the request body goes to the worker subprocess on stdin unchanged, whatever
+  the worker writes on stdout comes back unchanged, and the request costs exactly 1 credit however
+  much comes out.
+  **What an ADR has to decide:** today a result is a list of UNITS — `joinUnits` renders them for
+  the next stage (`internal/router/service.go:289`) and `len(out) * rate` prices them (`:244`). Raw
+  mode has no units, so it needs a job-level mode that both the pricing and the unit-splitting
+  respect, not a special case in one of them. Also: whether raw composes with pipelines at all
+  (stage 2's input is `joinUnits` of stage 1, which raw has no answer for); whether the flat credit
+  is charged on admission or on delivery, which decides who pays for a job that dies; what
+  `GET /files/{id}` returns for a raw job, since the client currently expects units; and whether a
+  worker opts into raw or is handed it, because a worker that ignores the mode silently returns
+  unit-split output at a flat price.
+
 - **OpenTelemetry / OTLP export for the router.**
   Deferred by ADR-0001 (§Alternatives), by task T11 (§Out of Scope), and **re-deferred by ADR-0002**
   (§Decision 3) on 2026-09-15.
