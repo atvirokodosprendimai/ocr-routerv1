@@ -332,3 +332,96 @@ func TestSettingsRoutesAreOriginGuarded(t *testing.T) {
 		t.Error("the dashboard's own settings POST was refused as cross-origin")
 	}
 }
+
+// TestCreateCustomerSurvivesTheNumberSignals is the regression for a bug the
+// operator found in a browser and every test here missed.
+//
+// ⚠ DATASTAR SIGNALS ARE GLOBAL: every unprefixed one is posted on EVERY action.
+// So clicking "Create customer" also sends bufferLimit, priority, jobTtl and
+// creditDelta — and `data-bind` on an `<input type="number">` sends them as JSON
+// NUMBERS. The signal struct declared them as `string`, so ReadSignals failed,
+// and EVERY handler reported "could not read the form" — including create, which
+// has nothing to do with those fields.
+//
+// The tests in this file all passed, because each one hand-wrote
+// `{"bufferLimit":"9"}` with quotes. They invented the wire format instead of
+// observing it, so they agreed with the code and both were wrong together.
+func TestCreateCustomerSurvivesTheNumberSignals(t *testing.T) {
+	e := newEnv(t)
+
+	// Exactly what the browser posts once the customer table is on screen.
+	resp := e.postSignals(t, "/admin/users", e.adminTok,
+		`{"newEmail":"brand-new@example.com","newRole":"client",`+
+			`"bufferLimit":4,"priority":0,"jobTtl":0,"creditDelta":null,"creditReason":""}`)
+	body, _ := io.ReadAll(resp.Body)
+	out := string(body)
+
+	if strings.Contains(out, "could not read the form") {
+		t.Fatalf("creating a customer failed to read the form. The number signals the customer "+
+			"table binds are posted on EVERY action, and the signal struct cannot decode "+
+			"them:\n%s", out)
+	}
+
+	u, err := e.repo.UserByEmail(context.Background(), "brand-new@example.com")
+	if err != nil {
+		t.Fatalf("the customer was not created: %v", err)
+	}
+	if u.Email != "brand-new@example.com" {
+		t.Errorf("created %q", u.Email)
+	}
+}
+
+// TestSettingsAcceptTheBrowsersNumericSignals — the same wire format, on the
+// handler the numbers actually belong to.
+func TestSettingsAcceptTheBrowsersNumericSignals(t *testing.T) {
+	e := newEnv(t)
+
+	// JSON numbers, not quoted strings. This is what `<input type="number">`
+	// produces; the quoted form the other tests use is what a Go author guesses.
+	resp := e.postSignals(t, "/admin/users/"+e.clientID+"/settings", e.adminTok,
+		`{"bufferLimit":11,"priority":2,"jobTtl":300}`)
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "could not read the form") {
+		t.Fatalf("the settings handler cannot decode the browser's own payload:\n%s", body)
+	}
+
+	buffer, priority, ttl, _, _ := e.reloadCustomer(t)
+	if buffer != 11 || priority != 2 || ttl != 300 {
+		t.Errorf("numeric signals did not apply: buffer=%d priority=%d ttl=%d", buffer, priority, ttl)
+	}
+}
+
+// TestCreditAdjustmentAcceptsANumericDelta — same shape, on the credits path.
+func TestCreditAdjustmentAcceptsANumericDelta(t *testing.T) {
+	e := newEnv(t)
+	_, _, _, before, _ := e.reloadCustomer(t)
+
+	resp := e.postSignals(t, "/admin/users/"+e.clientID+"/credits", e.adminTok,
+		`{"creditDelta":-15,"creditReason":"numeric signal"}`)
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "could not read the form") {
+		t.Fatalf("the credits handler cannot decode a numeric delta:\n%s", body)
+	}
+
+	_, _, _, after, _ := e.reloadCustomer(t)
+	if after != before-15 {
+		t.Errorf("balance %d -> %d, want -15", before, after)
+	}
+}
+
+// TestEmptyNumberSignalIsReportedAsMissing — an untouched number input sends
+// null or "", and neither may become a silent zero.
+func TestEmptyNumberSignalIsReportedAsMissing(t *testing.T) {
+	e := newEnv(t)
+
+	for _, payload := range []string{
+		`{"bufferLimit":null,"priority":0,"jobTtl":0}`,
+		`{"bufferLimit":"","priority":0,"jobTtl":0}`,
+	} {
+		resp := e.postSignals(t, "/admin/users/"+e.clientID+"/settings", e.adminTok, payload)
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), "required") {
+			t.Errorf("payload %s did not report the missing field:\n%s", payload, body)
+		}
+	}
+}

@@ -7,6 +7,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -288,12 +289,50 @@ type signals struct {
 	// names, so `data-bind:bufferLimit` would bind `bufferlimit` — a different
 	// signal, with nothing anywhere reporting the mistake and the field simply
 	// never saving.
-	BufferLimit  string `json:"bufferLimit"`
-	Priority     string `json:"priority"`
-	JobTTL       string `json:"jobTtl"`
-	CreditDelta  string `json:"creditDelta"`
-	CreditReason string `json:"creditReason"`
+	//
+	// ⚠ THESE ARE numText, NOT string, AND THAT IS NOT A STYLE CHOICE. Datastar
+	// binds an `<input type="number">` to a signal holding a JSON NUMBER, and
+	// signals are GLOBAL — every unprefixed one is posted on every action. So
+	// declaring these as `string` made `{"bufferLimit":4}` fail to unmarshal,
+	// and ReadSignals then failed for EVERY handler, including "create
+	// customer", which reported "could not read the form" and had nothing to do
+	// with these fields.
+	BufferLimit  numText `json:"bufferLimit"`
+	Priority     numText `json:"priority"`
+	JobTTL       numText `json:"jobTtl"`
+	CreditDelta  numText `json:"creditDelta"`
+	CreditReason string  `json:"creditReason"`
 }
+
+// numText is a string that also accepts a JSON number or null.
+//
+// ⚠ It exists because the wire format is not what a Go author would guess. An
+// `<input type="number">` yields a NUMBER signal, an empty one yields `""` or
+// null, and a `<select>` yields a string — so one field can legitimately arrive
+// in three shapes across the life of a page. Accepting all three here is much
+// safer than asking every handler to branch, and far safer than assuming one.
+type numText string
+
+func (n *numText) UnmarshalJSON(b []byte) error {
+	s := string(b)
+	switch {
+	case s == "null":
+		*n = ""
+	case len(s) >= 2 && s[0] == '"':
+		// A quoted value: unquote it properly so escapes survive.
+		var unquoted string
+		if err := json.Unmarshal(b, &unquoted); err != nil {
+			return err
+		}
+		*n = numText(unquoted)
+	default:
+		// A bare JSON number — the shape a number input actually sends.
+		*n = numText(s)
+	}
+	return nil
+}
+
+func (n numText) String() string { return string(n) }
 
 func readSignals(r *http.Request) (signals, error) {
 	var s signals

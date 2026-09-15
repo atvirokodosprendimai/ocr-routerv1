@@ -23,17 +23,17 @@ func (wb *Web) updateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := chi.URLParam(r, "id")
 
-	buffer, err := parseIntField(s.BufferLimit, "buffer limit")
+	buffer, err := parseIntField(s.BufferLimit.String(), "buffer limit")
 	if err != nil {
 		wb.patch(w, r, views.CreateError(err.Error()))
 		return
 	}
-	priority, err := parseIntField(s.Priority, "priority")
+	priority, err := parseIntField(s.Priority.String(), "priority")
 	if err != nil {
 		wb.patch(w, r, views.CreateError(err.Error()))
 		return
 	}
-	ttl, err := parseIntField(s.JobTTL, "job TTL")
+	ttl, err := parseIntField(s.JobTTL.String(), "job TTL")
 	if err != nil {
 		wb.patch(w, r, views.CreateError(err.Error()))
 		return
@@ -64,7 +64,7 @@ func (wb *Web) adjustCredits(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := chi.URLParam(r, "id")
 
-	delta, err := parseIntField(s.CreditDelta, "credit adjustment")
+	delta, err := parseIntField(s.CreditDelta.String(), "credit adjustment")
 	if err != nil {
 		wb.patch(w, r, views.CreateError(err.Error()))
 		return
