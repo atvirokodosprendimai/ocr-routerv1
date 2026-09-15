@@ -27,6 +27,11 @@ const defaultBufferLimit = 4
 // Service is the identity write and authentication API.
 type Service struct {
 	repo *store.Repo
+	// sessions issues and resolves browser logins (ADR-0003). Nil until
+	// SetSessions is called, and a nil store makes Login fail closed rather than
+	// panic — the dashboard becomes unreachable, which is visible, where a panic
+	// would take the whole process down.
+	sessions Sessions
 }
 
 // New returns a Service over the repository.

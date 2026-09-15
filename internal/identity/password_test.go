@@ -25,6 +25,10 @@ const goodPassword = "correct horse battery staple"
 type identityHarness struct {
 	svc  *identity.Service
 	repo *store.Repo
+	db   *store.DB
+	// adminToken is the bootstrapped admin's bearer token, kept so a test can
+	// authenticate as an administrator to call the admin-gated write methods.
+	adminToken string
 }
 
 func newIdentityHarness(t *testing.T) *identityHarness {
@@ -35,15 +39,16 @@ func newIdentityHarness(t *testing.T) *identityHarness {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	repo := store.NewRepo(db)
-	return &identityHarness{svc: identity.New(repo), repo: repo}
+	return &identityHarness{svc: identity.New(repo), repo: repo, db: db}
 }
 
 func (h *identityHarness) bootstrapAdmin(t *testing.T) core.User {
 	t.Helper()
-	u, _, err := h.svc.Bootstrap(context.Background(), "admin@example.com", base)
+	u, tok, err := h.svc.Bootstrap(context.Background(), "admin@example.com", base)
 	if err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
+	h.adminToken = tok
 	return u
 }
 

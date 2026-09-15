@@ -52,6 +52,27 @@ type Token struct {
 	LastSeenAt time.Time
 }
 
+// Session is a browser login: a token row with a deadline.
+//
+// ⚠ It carries NO secret and no hash. The plaintext exists only in the create
+// call's return value and in the browser's cookie; the hash is looked up by, not
+// returned. A resolved Session is a fact about who is calling, and handing a
+// caller anything they could replay would defeat the point of hashing it.
+//
+// ⚠ It also carries no Role. Role and active state are re-read from the user row
+// on EVERY resolution, because caching them here is how a deactivated
+// administrator keeps working until the session expires.
+type Session struct {
+	ID     string
+	UserID string
+	// CreatedAt and ExpiresAt are stamped once. ExpiresAt is absolute and is
+	// never extended by use — a sliding window ends for nobody who keeps a tab
+	// open.
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	Revoked   bool
+}
+
 // Principal is an authenticated caller, as every handler sees it.
 //
 // Authenticate returns this rather than the Token row so that no caller can

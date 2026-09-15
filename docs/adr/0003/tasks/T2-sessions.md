@@ -91,8 +91,14 @@ a command neither can satisfy alone. Red at authoring: `internal/session` does n
 | `TestSweepRemovesExpiredAndRevoked` | `internal/session/session_test.go` | sweep deletes expired and revoked rows, **leaves live ones**, and returns the count — asserts the table SHRANK and that a live session survives, because a sweep that deletes everything passes the first half alone | — | S8 |
 | `TestResolveUnknownSecret` | `internal/session/session_test.go` | a random string that was never issued is refused without error-shape difference | — | S4 |
 | `TestLoginSucceedsForAdmin` | `internal/identity/session_test.go` | correct email and password return a secret that `ResolveSession` turns into an admin principal | — | S5, S7 |
-| `TestLoginFailuresAreIndistinguishable` | `internal/identity/session_test.go` | unknown email, empty password hash, wrong password, inactive user and non-admin role all return exactly `core.ErrUnauthorized` — a table-driven test over all five, because a single negative case covers one path and this is an oracle risk | — | S5, S6 |
-| `TestLoginRefusesNonAdmin` | `internal/identity/session_test.go` | a client account with a valid password set directly in the database cannot log in | — | S6 |
+| `TestLoginFailuresAreIndistinguishable` | `internal/identity/session_test.go` | six subtests — unknown email, account with no password set, wrong password, deactivated user, **non-admin role** (a client row with a valid hash written straight into the database, the only way that shape can be reached) and malformed email — each returning exactly `core.ErrUnauthorized`. One table rather than six functions, because the point is that they are indistinguishable and a reader must see them side by side | — | S5, S6 |
+| `TestLoginSucceedsWhereTheFailureCasesDiffer` | `internal/identity/session_test.go` | the happy path works — without it every case above is satisfied by a Login that refuses everything | — | S5 |
+| `TestLogoutRevokesTheSession` | `internal/identity/session_test.go` | `Logout` makes the secret stop resolving | — | S8 |
+| `TestLoginWithNoSessionStoreFailsClosed` | `internal/identity/session_test.go` | a `Service` constructed without `SetSessions` refuses rather than panicking — the shape every test written before ADR-0003 uses, and an unreachable dashboard is visible where a panic takes the process down | — | S5, S7 |
+| `TestRevokeAllForUser` | `internal/session/session_test.go` | every session a user holds stops resolving after a bulk revoke | — | S8 |
+| `TestSetPasswordRefusesNonAdmin` | `internal/identity/session_test.go` | `SetPassword` on a client returns `core.ErrForbidden` — a password Login will never accept is a lie the operator discovers only by trying it | — | S6 |
+| `TestSetPasswordRejectsShortPassword` | `internal/identity/session_test.go` | a short password is refused **and no hash is written** — a partial state here is a password the operator believes they set | — | S5 |
+| `TestSetPasswordRefusesUnknownEmail` | `internal/identity/session_test.go` | an unknown email returns `core.ErrNotFound` | — | S5 |
 | `TestLoginNormalisesEmail` | `internal/identity/session_test.go` | `Admin@Example.COM ` with surrounding space logs in as `admin@example.com` — a form will not normalise and a human will not type carefully | — | S5 |
 | `TestSessionDiesWhenUserDeactivated` | `internal/identity/session_test.go` | a live session stops resolving the moment `SetActive(false)` runs, **without waiting for expiry** — red if the principal is cached on the session row | — | S7 |
 | `TestSessionDiesWhenUserDemoted` | `internal/identity/session_test.go` | an admin demoted to client stops resolving — the same caching bug, a different symptom | — | S7 |
@@ -109,6 +115,11 @@ a command neither can satisfy alone. Red at authoring: `internal/session` does n
 | 4 — it is used | nothing measures sessions; an admin staying logged in is the use |
 
 ## Mutation Log
+
+- 2026-09-15 · 5286a03* · mutant killed · exit 1 · `internal/session/session.go` · the session secret is stored in plaintext, so anyone who can read the database can impersonate every logged-in administrator · acceptance-sha256:3a8717515e5547bbd6d6bf45a6bf22e04599a4892d56d2b6cab3898e86b563f7 · covers:the hashed session secret
+- 2026-09-15 · 5286a03* · mutant killed · exit 1 · `internal/session/session.go` · a session never expires, so a browser left open on an unlocked laptop is a permanent administrative credential · acceptance-sha256:3a8717515e5547bbd6d6bf45a6bf22e04599a4892d56d2b6cab3898e86b563f7 · covers:the absolute expiry
+- 2026-09-15 · 5286a03* · mutant killed · exit 1 · `internal/identity/session.go` · the principal is taken from the session instead of re-read from the user row, so a deactivated or demoted administrator keeps full access for up to twelve hours after someone revoked it · acceptance-sha256:3a8717515e5547bbd6d6bf45a6bf22e04599a4892d56d2b6cab3898e86b563f7 · covers:the live user re-read
+- 2026-09-15 · 5286a03* · mutant killed · exit 1 · `internal/identity/session.go` · a non-admin account with a password can log in, and the failure reports a distinct error that tells a caller the account exists — both the role gate and the collapsed error are gone · acceptance-sha256:3a8717515e5547bbd6d6bf45a6bf22e04599a4892d56d2b6cab3898e86b563f7 · covers:the collapsed login error
 
 ## Invariants
 
@@ -152,3 +163,8 @@ either way.
   different name).
 
 ## Verification Log
+- 2026-09-15 · 5286a03* · exit 0 · `set -o pipefail …` · acceptance-sha256:3a8717515e5547bbd6d6bf45a6bf22e04599a4892d56d2b6cab3898e86b563f7 · ms:14192
+- 2026-09-15 · 5286a03* · exit 0 · `set -o pipefail …` · acceptance-sha256:3a8717515e5547bbd6d6bf45a6bf22e04599a4892d56d2b6cab3898e86b563f7 · ms:11873
+- 2026-09-15 · 5286a03* · exit 0 · `set -o pipefail …` · acceptance-sha256:3a8717515e5547bbd6d6bf45a6bf22e04599a4892d56d2b6cab3898e86b563f7 · ms:8212
+- 2026-09-15 · 5286a03* · exit 0 · `set -o pipefail …` · acceptance-sha256:3a8717515e5547bbd6d6bf45a6bf22e04599a4892d56d2b6cab3898e86b563f7 · ms:10169
+- 2026-09-15 · 5286a03* · exit 0 · `set -o pipefail …` · acceptance-sha256:3a8717515e5547bbd6d6bf45a6bf22e04599a4892d56d2b6cab3898e86b563f7 · ms:9639

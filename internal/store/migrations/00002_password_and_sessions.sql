@@ -32,11 +32,15 @@ CREATE TABLE sessions (
     revoked     INTEGER NOT NULL DEFAULT 0
 );
 
--- The only column ever queried by: every request under /admin resolves a cookie
--- through this index. Without it the lookup is a table scan on the request path.
-CREATE INDEX idx_sessions_token_hash ON sessions(token_hash);
+-- ⚠ THERE IS NO EXPLICIT INDEX ON token_hash, and that is not an oversight.
+-- UNIQUE above already creates one (sqlite_autoindex_sessions_2), which the
+-- query planner uses for the per-request resolve. A second index on the same
+-- column would be written on every insert and read by nothing. Verified with
+-- EXPLAIN QUERY PLAN in TestSessionsTableHasATokenHashIndex, which is what
+-- caught the redundant index this migration originally carried.
 
--- The sweep deletes by deadline, so it reads this rather than scanning.
+-- The sweep deletes by deadline, so it reads this rather than scanning. No
+-- UNIQUE here, so this one is doing real work.
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 
 -- +goose StatementEnd
@@ -44,7 +48,6 @@ CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 -- +goose Down
 -- +goose StatementBegin
 DROP INDEX IF EXISTS idx_sessions_expires_at;
-DROP INDEX IF EXISTS idx_sessions_token_hash;
 DROP TABLE IF EXISTS sessions;
 ALTER TABLE users DROP COLUMN password_hash;
 -- +goose StatementEnd
