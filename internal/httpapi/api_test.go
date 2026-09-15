@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -321,6 +322,119 @@ func TestUploadRejectsOversizeBody(t *testing.T) {
 	resp := e.do(t, "POST", "/upload", e.clientTok, body, ct)
 	if resp.StatusCode == http.StatusCreated {
 		t.Errorf("an oversize upload was accepted (%d)", resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("oversize upload = %d, want 400 — an over-cap body is the client's fault, not the server's", resp.StatusCode)
+	}
+}
+
+// countingBody counts the bytes read through it.
+type countingBody struct {
+	io.ReadCloser
+	n *int64
+}
+
+func (c *countingBody) Read(p []byte) (int, error) {
+	n, err := c.ReadCloser.Read(p)
+	atomic.AddInt64(c.n, int64(n))
+	return n, err
+}
+
+// TestUploadRefusesWithoutReadingTheBody is the streaming regression test.
+//
+// It inspects no internals: it puts a counting reader in front of the real API
+// and measures how much of a 1 MiB upload the HANDLER consumed before refusing
+// it. Streaming means the part is handed to Upload unread, so a job refused at
+// admission — no credits, at the buffer limit, or a label no worker serves —
+// never reaches blob.Put and is never written anywhere. r.FormFile parses the
+// WHOLE form before the handler can call Upload, buffering 32 MiB in memory and
+// spilling the rest to a temp file, so restoring it makes this read every byte.
+//
+// The count is taken when ServeHTTP RETURNS, not when the client gets its
+// response: net/http drains whatever the handler left unread so the connection
+// can be reused, and that drain would otherwise be counted as the handler's.
+// Those bytes still cross the wire — what the change removes is the buffering,
+// not the transfer.
+func TestUploadRefusesWithoutReadingTheBody(t *testing.T) {
+	e := newEnv(t)
+	e.liveWorker(t, "ocr")
+
+	var read int64
+	handlerDone := make(chan int64, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = &countingBody{ReadCloser: r.Body, n: &read}
+		e.api.ServeHTTP(w, r)
+		handlerDone <- atomic.LoadInt64(&read)
+	}))
+	t.Cleanup(srv.Close)
+
+	const size = 1 << 20
+	body, ct := multipartBody(t, "big.pdf", strings.Repeat("x", size))
+	req, err := http.NewRequest("POST", srv.URL+"/upload?label=nosuchservice", body)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+e.clientTok)
+	req.Header.Set("Content-Type", ct)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /upload: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode == http.StatusCreated {
+		t.Fatalf("upload to a dead label was accepted")
+	}
+
+	select {
+	case got := <-handlerDone:
+		// Generous: the multipart preamble and part headers are a few hundred
+		// bytes. The point is that it is nowhere near the whole file.
+		if got > size/8 {
+			t.Errorf("handler read %d of %d body bytes before refusing — the upload is being buffered, not streamed", got, size)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never returned")
+	}
+}
+
+// TestUploadStreamsTheWholeFileToTheBlob pins the other half of the change:
+// reading the part lazily must still deliver every byte to the blob.
+func TestUploadStreamsTheWholeFileToTheBlob(t *testing.T) {
+	e := newEnv(t)
+	e.liveWorker(t, "ocr")
+
+	const size = 512 << 10 // comfortably under the env's 1 MiB cap
+	content := strings.Repeat("abcdefgh", size/8)
+	body, ct := multipartBody(t, "doc.pdf", content)
+	resp := e.do(t, "POST", "/upload", e.clientTok, body, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload = %d, want 201", resp.StatusCode)
+	}
+	var got struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	job, err := e.repo.JobByID(context.Background(), got.JobID)
+	if err != nil {
+		t.Fatalf("JobByID: %v", err)
+	}
+	if job.SizeByte != int64(size) {
+		t.Errorf("blob size = %d, want %d", job.SizeByte, size)
+	}
+	blob, err := e.blobs.Open(got.JobID)
+	if err != nil {
+		t.Fatalf("Open blob: %v", err)
+	}
+	defer blob.Close()
+	stored, err := io.ReadAll(blob)
+	if err != nil {
+		t.Fatalf("reading blob: %v", err)
+	}
+	if string(stored) != content {
+		t.Errorf("stored blob differs from what was uploaded (%d bytes stored)", len(stored))
 	}
 }
 
