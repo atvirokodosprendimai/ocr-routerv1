@@ -128,7 +128,9 @@ func (wb *Web) Mount(r chi.Router, authenticate func(http.Handler) http.Handler,
 			r.Get("/services", wb.services)
 			r.Get("/stream", wb.stream)
 			r.Post("/users", wb.createUser)
+			r.Get("/users/{id}/tokens", wb.listTokens)
 			r.Post("/users/{id}/tokens", wb.mintToken)
+			r.Post("/tokens/{id}/revoke", wb.revokeToken)
 			r.Post("/rates", wb.setRate)
 		})
 	})
@@ -336,6 +338,99 @@ func (wb *Web) mintToken(w http.ResponseWriter, r *http.Request) {
 	}
 	// Shown once. The router keeps only a hash and cannot produce it again.
 	wb.patch(w, r, views.TokenOnce(token))
+}
+
+// listTokens renders one user's tokens.
+//
+// ⚠ It is the first caller identity.ListTokens has ever had. The method and its
+// repository query were written and tested in T3, and nothing reached them — so
+// the dashboard could mint credentials and never show which existed.
+func (wb *Web) listTokens(w http.ResponseWriter, r *http.Request) {
+	actor := principal(r)
+	userID := chi.URLParam(r, "id")
+
+	user, err := wb.deps.Repo.UserByID(r.Context(), userID)
+	if err != nil {
+		wb.patch(w, r, views.CreateError(friendly(err)))
+		return
+	}
+	toks, err := wb.deps.Identity.ListTokens(r.Context(), actor, userID)
+	if err != nil {
+		wb.patch(w, r, views.CreateError(friendly(err)))
+		return
+	}
+	wb.patch(w, r, views.Tokens(wb.tokenList(user, toks)))
+}
+
+// revokeToken ends one token and re-renders its user's list.
+//
+// Re-rendering rather than returning a bare confirmation is what makes the
+// result legible: the operator sees the row flip to `revoked` in place, which is
+// both the confirmation and the new state.
+func (wb *Web) revokeToken(w http.ResponseWriter, r *http.Request) {
+	actor := principal(r)
+	tokenID := chi.URLParam(r, "id")
+
+	// Read the token BEFORE revoking, because the response has to name the user
+	// whose list to re-render and the revoke call returns nothing.
+	tok, err := wb.deps.Repo.TokenByID(r.Context(), tokenID)
+	if err != nil {
+		wb.patch(w, r, views.CreateError(friendly(err)))
+		return
+	}
+	if err := wb.deps.Identity.RevokeToken(r.Context(), actor, tokenID); err != nil {
+		wb.patch(w, r, views.CreateError(friendly(err)))
+		return
+	}
+
+	user, err := wb.deps.Repo.UserByID(r.Context(), tok.UserID)
+	if err != nil {
+		wb.patch(w, r, views.CreateError(friendly(err)))
+		return
+	}
+	toks, err := wb.deps.Identity.ListTokens(r.Context(), actor, tok.UserID)
+	if err != nil {
+		wb.patch(w, r, views.CreateError(friendly(err)))
+		return
+	}
+	wb.patch(w, r, views.Tokens(wb.tokenList(user, toks)))
+}
+
+// tokenList precomputes the display-only fields so the template holds no logic.
+func (wb *Web) tokenList(user core.User, toks []core.Token) views.TokenList {
+	now := wb.deps.Now()
+	rows := make([]views.TokenRow, 0, len(toks))
+	for _, t := range toks {
+		rows = append(rows, views.TokenRow{
+			Token:    t,
+			Created:  relative(now, t.CreatedAt),
+			LastSeen: relative(now, t.LastSeenAt),
+		})
+	}
+	return views.TokenList{UserID: user.ID, Email: user.Email, Tokens: rows}
+}
+
+// relative renders a timestamp as an age, or "never" for the zero value.
+//
+// ⚠ "never" is a real answer and the most useful one on the token table: a token
+// that has never been used is either a credential nobody wired up or one minted
+// by mistake, and both are worth revoking. Rendering the zero time as a date
+// from 1970 would bury that.
+func relative(now, then time.Time) string {
+	if then.IsZero() {
+		return "never"
+	}
+	d := now.Sub(then)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }
 
 func (wb *Web) setRate(w http.ResponseWriter, r *http.Request) {

@@ -183,11 +183,15 @@ templ UserTable(d Dashboard) {
 									<span class="tag dead">disabled</span>
 								}
 							</td>
-							<td>
+							<td class="row-actions">
+								<button
+									class="secondary"
+									data-on:click={ fmt.Sprintf("@get('/admin/users/%s/tokens')", u.ID) }
+								>Tokens</button>
 								<button
 									class="secondary"
 									data-on:click={ fmt.Sprintf("@post('/admin/users/%s/tokens')", u.ID) }
-								>Mint token</button>
+								>Mint</button>
 							</td>
 						</tr>
 					}
@@ -206,6 +210,72 @@ templ TokenOnce(token string) {
 	<div id="create-result">
 		<p class="muted">Copy this now — it is shown once and is stored only as a hash.</p>
 		<p class="token">{ token }</p>
+	</div>
+}
+
+// Tokens lists one user's tokens, with a revoke control on each live one.
+//
+// ⚠ IT SHOWS NO SECRET AND CANNOT. The router keeps only a SHA-256 and the
+// plaintext is returned exactly once at minting — so this table identifies a
+// token by its id, its label and when it was last used, which is what an
+// operator actually needs to decide whether to revoke it.
+//
+// `Last used` is the column that earns the screen: it is how you tell a live
+// integration from a credential somebody minted for a laptop two jobs ago and
+// never cleaned up. "never" is a real and common answer.
+templ Tokens(l TokenList) {
+	<div id="create-result">
+		<section class="tokens">
+			<h3>Tokens for { l.Email }</h3>
+			if len(l.Tokens) == 0 {
+				<p class="empty">This customer holds no tokens.</p>
+			} else {
+				<table>
+					<thead>
+						<tr>
+							<th>ID</th><th>Label</th><th>Role</th>
+							<th>Created</th><th>Last used</th><th>State</th><th></th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, t := range l.Tokens {
+							<tr>
+								<td class="mono">{ shortID(t.Token.ID) }</td>
+								<td>
+									if t.Token.Label == "" {
+										<span class="muted">—</span>
+									} else {
+										{ t.Token.Label }
+									}
+								</td>
+								<td>{ string(t.Token.Role) }</td>
+								<td class="muted">{ t.Created }</td>
+								<td class="muted">{ t.LastSeen }</td>
+								<td>
+									if t.Token.Revoked {
+										<span class="tag dead">revoked</span>
+									} else {
+										<span class="tag done">active</span>
+									}
+								</td>
+								<td>
+									if !t.Token.Revoked {
+										<button
+											class="secondary"
+											data-on:click={ fmt.Sprintf("@post('/admin/tokens/%s/revoke')", t.Token.ID) }
+										>Revoke</button>
+									}
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+				<p class="muted">
+					Revoking is immediate and cannot be undone. The row is kept so an audit can
+					still see the token existed.
+				</p>
+			}
+		</section>
 	</div>
 }
 

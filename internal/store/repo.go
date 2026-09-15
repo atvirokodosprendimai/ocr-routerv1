@@ -135,6 +135,38 @@ func (r *Repo) TokenByHash(ctx context.Context, hash string) (core.Token, error)
 	return t, nil
 }
 
+// TokenByID loads a token by its primary key.
+//
+// Distinct from TokenByHash because it answers a different question and is used
+// on a different path: TokenByHash authenticates a caller presenting a secret,
+// this identifies a row an ADMINISTRATOR named in a URL. The id is not a
+// credential — it is already visible in the dashboard — so this one has none of
+// the enumeration concerns the hash lookup collapses errors for.
+func (r *Repo) TokenByID(ctx context.Context, id string) (core.Token, error) {
+	var (
+		t        core.Token
+		revoked  int
+		created  int64
+		lastSeen sql.NullInt64
+	)
+	err := r.read.QueryRowContext(ctx,
+		`SELECT id, user_id, role, hash, label, revoked, created_at, last_seen_at
+		 FROM tokens WHERE id = ?`, id).
+		Scan(&t.ID, &t.UserID, &t.Role, &t.Hash, &t.Label, &revoked, &created, &lastSeen)
+	if errors.Is(err, sql.ErrNoRows) {
+		return core.Token{}, core.ErrNotFound
+	}
+	if err != nil {
+		return core.Token{}, err
+	}
+	t.Revoked = revoked == 1
+	t.CreatedAt = time.Unix(created, 0).UTC()
+	if lastSeen.Valid {
+		t.LastSeenAt = time.Unix(lastSeen.Int64, 0).UTC()
+	}
+	return t, nil
+}
+
 // ListTokens returns a user's tokens. The hash is included because it is not a
 // secret — the plaintext is, and that is not stored anywhere.
 func (r *Repo) ListTokens(ctx context.Context, userID string) ([]core.Token, error) {

@@ -112,3 +112,18 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   font-size: .9rem;
 }
 .login-hint { font-size: .8rem; margin: 1.5rem 0 0; }
+
+/* Token list, opened from the customer table. */
+.tokens {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-top: 1rem;
+}
+.tokens h3 { font-size: .9rem; margin: 0 0 .75rem; }
+.tokens table { margin: 0; }
+.tokens p.muted { font-size: .78rem; margin: .75rem 0 0; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
+/* Two buttons in one cell should not wrap apart on a narrow screen. */
+.row-actions { display: flex; gap: .4rem; flex-wrap: wrap; }

@@ -25,6 +25,31 @@ type JobRow struct {
 	StageLabel string
 }
 
+// TokenList is one user's tokens, for the expandable row under the user table.
+//
+// ⚠ It exists because minting a token was the ONLY token operation the dashboard
+// had. `Repo.ListTokens` and `identity.RevokeToken` were written, tested, and
+// called by nothing — so an operator could create credentials and never see
+// which existed, which were revoked, or when each was last used, and could not
+// revoke one without opening the database.
+type TokenList struct {
+	UserID string
+	Email  string
+	Tokens []TokenRow
+}
+
+// TokenRow is one token, with the display-only bits precomputed so the template
+// holds no logic.
+type TokenRow struct {
+	Token core.Token
+	// LastSeen reads "3m ago", or "never" for a token that has never been used —
+	// which is the single most useful fact on this table, because it is how an
+	// operator tells a live integration from one nobody cleaned up.
+	LastSeen string
+	// Created is the same relative rendering for created_at.
+	Created string
+}
+
 // ServiceRow is one label's live state.
 type ServiceRow struct {
 	Label   string
