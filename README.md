@@ -72,6 +72,51 @@ go build -o router ./cmd/router
 ./router --db ocr.db --blobs ./blobs --addr :8080
 ```
 
+## The client
+
+`cmd/client` submits one document and blocks until the result lands, so a
+customer does not have to implement the four-step protocol below by hand.
+
+```bash
+export OCRR_TOKEN=ocr_c_…          # never --token in a shell you keep history for
+client --router https://ocr.example.com -i scan.pdf -o result.txt
+# uploading…
+# waiting for 0192f1a2…
+# done
+```
+
+| | |
+|---|---|
+| `-i FILE` | the document. Omit it for a params-only job — `--param url=…` — where the service fetches its own input |
+| `-o FILE` | where to write the result. `-` is **stdout**, so `client … -o - \| wc -l` composes |
+| `--label` / `--pipeline a,b,c` | which service, or an ordered chain. `--pipeline` wins |
+| `--param k=v` | repeatable; becomes a subprocess flag on the worker |
+| `--json` | the result envelope instead of newline-joined text |
+| `--quiet` | no progress; errors still print |
+| `--timeout` | give up after this long. **Zero — the default — waits forever**, because a queued job behind a busy pool is supposed to take a while |
+
+**Progress goes to stderr, always**, which is what makes `-o -` safe to pipe. It
+rewrites one line in place on a terminal and prints one plain line per step when
+it is not.
+
+### Exit codes say what to do next
+
+| | | |
+|---|---|---|
+| **0** | the result was written | carry on |
+| **1** | fix something — bad token, no credits, missing file, bad flag | do not retry |
+| **2** | try again later — rate limited, router down, timed out | retry with backoff |
+| **3** | the job ran and **failed** — dead or expired | investigate; the reason is on stderr |
+
+⚠ **A failed job never exits 0 and never writes an output file.** An empty file
+plus a success code turns a dead job into silent data loss in whatever pipeline
+called it.
+
+⚠ **This client needs SSE to arrive promptly.** It holds `GET /sse` open for the
+life of the job. Behind a reverse proxy that **buffers** responses it will hang
+rather than fail, which is the worst shape a failure can take — use `--timeout`
+if your proxy is unknown.
+
 ## The API
 
 Every request carries `Authorization: Bearer <token>`. The token's row decides
