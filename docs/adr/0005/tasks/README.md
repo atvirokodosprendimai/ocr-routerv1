@@ -4,8 +4,8 @@ Derived index — the task files are the source of truth. Execute in order.
 
 | Task | Goal | Status | Depends-on | Acceptance (first command) |
 |------|------|--------|------------|----------------------------|
-| T1 | The protocol — stream first, then upload, then wait | pending | none | `go test ./internal/client/... -race` |
-| T2 | The binary a person runs — flags, progress, exit codes | pending | T1 | `go test ./cmd/client/... -race` |
+| T1 | The protocol — stream first, then upload, then wait | done | none | `go test ./internal/client/... -race` |
+| T2 | The binary a person runs — flags, progress, exit codes | done | T1 | `go test ./cmd/client/... -race` |
 
 ## Order
 

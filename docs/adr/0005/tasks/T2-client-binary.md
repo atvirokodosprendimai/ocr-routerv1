@@ -81,7 +81,14 @@ exist.
 
 | Test name | File | Verifies | Covers | Steps |
 |-----------|------|----------|--------|-------|
-| `TestSubmitWritesResultAndExitsZero` | `cmd/client/main_test.go` | against a real router handler with a stub worker, the file contains the units and the exit code is 0 — the happy path every failure test below needs | — | S1, S6 |
+| `TestSubmitWritesResultAndExitsZero` | `cmd/client/main_test.go` | against a stub router, the file contains the units and the exit code is 0 — the happy path every failure test below needs. ⚠ A STUB rather than the real router: the properties here are the BINARY's — exit codes, stream separation, atomic writes — and making a real job succeed or die on demand would need a real worker. `internal/client` covers the protocol and `cmd/router` covers the router; this covers what neither can | — | S1, S6 |
+| `TestOutputToADirectoryIsRefused` | `cmd/client/main_test.go` | `-o` naming a directory exits 1 with a message saying so | — | S3 |
+| `TestBadParamFormatIsRejected` | `cmd/client/main_test.go` | `--param nokey` exits 1 with a message showing the `k=v` form | — | S2 |
+| `TestMissingTokenIsAUsageError` | `cmd/client/main_test.go` | no flag and no environment variable exits 1 naming `OCRR_TOKEN` | — | S2 |
+| `TestMissingInputFileExitsOne` | `cmd/client/main_test.go` | a nonexistent `-i` exits 1 | — | S4 |
+| `TestRouterUnreachableExitsTwo` | `cmd/client/main_test.go` | a dead router exits 2, not 1 — a caller cannot tell "worth retrying" from "fix something" otherwise | — | S7 |
+| `TestExistingOutputIsReplaced` | `cmd/client/main_test.go` | a previous run's content does not survive a successful write | — | S6 |
+| `TestCLIExposesEveryFlag` | `cmd/client/main_test.go` | every documented flag is on the real command tree — a flag in the code and not on the CLI is unreachable | — | S2 |
 | `TestFailedJobExitsThree` | `cmd/client/main_test.go` | a job driven to `dead` exits **3**, not 0 — the failure that would turn a dead job into silent data loss downstream | — | S7 |
 | `TestExpiredJobExitsThree` | `cmd/client/main_test.go` | an expired job also exits 3 | — | S7 |
 | `TestNoOutputFileOnFailure` | `cmd/client/main_test.go` | after a failed job the `-o` path does not exist — an empty file beside a non-zero exit invites a caller to use it | — | S8 |
@@ -110,6 +117,10 @@ exist.
 | 4 — it is used | S10's human sign-off — a real submission against a real router and worker |
 
 ## Mutation Log
+
+- 2026-09-15 · 71306ea* · mutant killed · exit 1 · `cmd/client/main.go` · a failed job exits 0, so a pipeline sees success for a job that died — the single worst outcome this binary can produce · acceptance-sha256:c7887d0b72968e4afcf57f99521a147447f144efef7fb2e89541cc33877326a6 · covers:the failed-job exit code
+- 2026-09-15 · 71306ea* · mutant killed · exit 1 · `cmd/client/progress.go` · progress is written to stdout, corrupting every pipe the -o - form is used in — the result and the status line interleave and nothing downstream can parse either · acceptance-sha256:c7887d0b72968e4afcf57f99521a147447f144efef7fb2e89541cc33877326a6 · covers:the stderr split
+- 2026-09-15 · 71306ea* · mutant killed · exit 1 · `cmd/client/main.go` · an unwritable destination is discovered only after the result is collected and CHARGED, so the customer pays for output that goes nowhere and cannot be fetched again · acceptance-sha256:c7887d0b72968e4afcf57f99521a147447f144efef7fb2e89541cc33877326a6 · covers:the destination probe
 
 ## Invariants
 
@@ -153,3 +164,9 @@ internal loop is a product choice, not an implementation detail.
   fabricated percentage is worse than an honest state name).
 
 ## Verification Log
+- 2026-09-15 · 71306ea* · exit 0 · `set -o pipefail …` · acceptance-sha256:c7887d0b72968e4afcf57f99521a147447f144efef7fb2e89541cc33877326a6 · ms:11157
+- 2026-09-15 · 71306ea* · exit 0 · `set -o pipefail …` · acceptance-sha256:c7887d0b72968e4afcf57f99521a147447f144efef7fb2e89541cc33877326a6 · ms:9357
+- 2026-09-15 · 71306ea* · exit 0 · `set -o pipefail …` · acceptance-sha256:c7887d0b72968e4afcf57f99521a147447f144efef7fb2e89541cc33877326a6 · ms:9779
+- 2026-09-15 · 71306ea* · exit 0 · `set -o pipefail …` · acceptance-sha256:c7887d0b72968e4afcf57f99521a147447f144efef7fb2e89541cc33877326a6 · ms:9110
+- 2026-09-15 · 71306ea* · exit 0 · `set -o pipefail …` · acceptance-sha256:c7887d0b72968e4afcf57f99521a147447f144efef7fb2e89541cc33877326a6 · ms:10294
+- 2026-09-15 · human-observed · S9+S10: ran the three binaries end to end on 2026-09-15 against a real router, a real worker and a fake OCR command emitting ADR-0001's JSON array. Happy path: 'uploading… / waiting for 01a0a462… / collecting… / done', exit 0, result.txt held three pages, and the customer was charged 3 credits (100→97). -o - piped to wc -l gave exactly 3 lines with no progress in the stream. --json produced a parseable envelope. Exit 3 verified on a real failed job (a worker whose stdout was not a JSON array) with the reason on stderr and NO result file created. Exit 1 verified against a drained balance ('no credits', Payment Required). Exit 2 verified against an unreachable router. -o /dev/null exits 0 and the device node survives as a character device.

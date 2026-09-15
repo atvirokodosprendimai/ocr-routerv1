@@ -98,6 +98,10 @@ makes the fence non-zero.
 
 ## Mutation Log
 
+- 2026-09-15 · 71306ea* · mutant killed · exit 1 · `internal/client/client.go` · the upload is posted BEFORE the stream is established, so a job that finishes in the gap fires ready into a stream nobody holds and the client waits forever for an event that already happened · acceptance-sha256:5f608a1cb00fd9271563967a4900c28167567f9fc181bde9635de3c31d82c673 · covers:the stream-before-upload ordering
+- 2026-09-15 · 71306ea* · mutant killed · exit 1 · `internal/client/client.go` · a ready event for ANY job is acted on, so a customer with two jobs in flight collects whichever finished first — someone elses result, charged to them · acceptance-sha256:5f608a1cb00fd9271563967a4900c28167567f9fc181bde9635de3c31d82c673 · covers:the job-id match
+- 2026-09-15 · 71306ea* · mutant killed · exit 1 · `internal/client/client.go` · a failed job returns empty units and no error, so the caller writes an empty file and reports success — a dead job becomes silent data loss downstream · acceptance-sha256:5f608a1cb00fd9271563967a4900c28167567f9fc181bde9635de3c31d82c673 · covers:the typed failure
+
 ## Invariants
 
 - The SSE stream is established, `hello` received, before the upload is posted.
@@ -137,3 +141,7 @@ and the deferred `--poll` mode becomes required rather than optional.
   to decide about it).
 
 ## Verification Log
+- 2026-09-15 · 71306ea* · exit 0 · `set -o pipefail …` · acceptance-sha256:5f608a1cb00fd9271563967a4900c28167567f9fc181bde9635de3c31d82c673 · ms:5800
+- 2026-09-15 · 71306ea* · exit 0 · `set -o pipefail …` · acceptance-sha256:5f608a1cb00fd9271563967a4900c28167567f9fc181bde9635de3c31d82c673 · ms:5220
+- 2026-09-15 · 71306ea* · exit 0 · `set -o pipefail …` · acceptance-sha256:5f608a1cb00fd9271563967a4900c28167567f9fc181bde9635de3c31d82c673 · ms:5038
+- 2026-09-15 · 71306ea* · exit 0 · `set -o pipefail …` · acceptance-sha256:5f608a1cb00fd9271563967a4900c28167567f9fc181bde9635de3c31d82c673 · ms:3766
