@@ -38,7 +38,7 @@ T1 ──┬── T2 ──┬── T3 ──┐
 | T6 | Router service: the single writer | done | — | `go test ./internal/router/... -race` |
 | T7 | HTTP boundary: upload, claim, files, SSE, services | done | — | `go test ./internal/httpapi/... -race` |
 | T8 | cmd/router binary and end-to-end proof | done | — | `go test ./cmd/router/... -race` |
-| T9 | Generic subprocess runner, worker agent, cmd/worker | pending | — | `go test ./internal/runner/... ./internal/agent/... -race` |
+| T9 | Generic subprocess runner, worker agent, cmd/worker | done | — | `go test ./internal/runner/... ./internal/agent/... -race` |
 | T10 | Admin dashboard over templ and datastar | pending | — | `go test ./internal/web/...` |
 | T11 | Liveness endpoint and Prometheus metrics | pending | — | `go test ./internal/monitor/... -race` |
 

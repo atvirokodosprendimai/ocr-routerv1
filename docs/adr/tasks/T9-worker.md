@@ -91,25 +91,36 @@ written into `t.TempDir()`, so nothing outside the checkout is required.
 
 | Test name | File | Verifies | Covers | Steps |
 |-----------|------|----------|--------|-------|
-| `TestArgvIncludesInputOnlyWithBlob` | `internal/runner/argv_test.go` | `-i <path>` is present for a blob job and **absent** for a params-only crawler job | — | S2 |
-| `TestArgvIsDeterministic` | `internal/runner/argv_test.go` | the same params yield the same argv regardless of map iteration order | — | S2 |
-| `TestArgvRejectsBadKeys` | `internal/runner/argv_test.go` | `UPPER`, `has space`, `--flag`, `a;b`, `` and a 33-char key are each rejected | — | S3 |
-| `TestArgvValueWithShellMetacharsIsOneLiteralArgument` | `internal/runner/argv_test.go` | a value of ``; rm -rf / `id` $(id) && echo pwned`` arrives at the child as **one** argv element, byte-identical, and the child observes no extra arguments — **the injection guard** | — | S3, S4 |
-| `TestRunExecutesWithoutShell` | `internal/runner/runner_test.go` | a param value of `$HOME` reaches the child unexpanded, proving no shell interpreted it | — | S4 |
-| `TestRunEnvironmentIsAllowListed` | `internal/runner/runner_test.go` | the child sees only the allow-listed variables, and no param appears in its environment | — | S4 |
-| `TestRunParsesJSONArray` | `internal/runner/runner_test.go` | a child printing `["a","b"]` yields two result units | — | S6 |
-| `TestRunRejectsNonArrayStdout` | `internal/runner/runner_test.go` | `{"a":1}`, `"str"`, `[1,2]` and `not json` are each a job failure, not a panic | — | S6 |
-| `TestRunNonZeroExitIsJobFailure` | `internal/runner/runner_test.go` | exit 1 yields an error carrying the stderr tail, and the worker survives | — | S6 |
-| `TestRunTimeoutKillsProcessGroup` | `internal/runner/runner_test.go` | a child that spawns a grandchild holding stdout is fully killed at the timeout and `Run` returns — **fails if only the direct child is signalled**, which is the shape that hangs a worker forever | — | S5 |
-| `TestRunDeletesTempFileOnEveryPath` | `internal/runner/runner_test.go` | success, non-zero exit, timeout and parse failure each leave the tmpdir empty | — | S8 |
-| `TestLoopClaimsUntilEmpty` | `internal/agent/agent_test.go` | on one `work` event the agent claims repeatedly until the fake router answers 204 | — | S7 |
-| `TestLoopClaimsOnPing` | `internal/agent/agent_test.go` | with the `work` event suppressed, a `ping` still drives a claim — the dropped-event safety net | — | S7 |
-| `TestLoopRespectsSlots` | `internal/agent/agent_test.go` | with `--slots 2` and 5 jobs queued, at most 2 subprocesses run concurrently and the 3rd is claimed only as one finishes | — | S9 |
-| `TestLoopReportsFailureAndContinues` | `internal/agent/agent_test.go` | a failing job is posted as an error and the agent goes on to claim the next | — | S6, S7 |
-| `TestLoopReconnectsWithBackoff` | `internal/agent/agent_test.go` | the stream dropping causes reconnects with growing, jittered delays rather than a tight loop | — | S10 |
-| `TestLoopSendsItsLabel` | `internal/agent/agent_test.go` | the SSE request carries `?label=<l>` and the agent is never handed a job of another label | — | S7, S11 |
-| `TestWorkerAgainstRealRouter` | `cmd/worker/main_test.go` | against a real `httpapi` handler: a queued job is claimed, the blob downloaded, `/bin/sh` forked as the "service", and the result posted — the whole loop end to end | — | S7, S8, S11 |
-| `TestCrawlerShapeNeedsNoBlob` | `cmd/worker/main_test.go` | a params-only job (`label=crawl`, `url=…`, no file) runs a command that reads `--url` and returns output — the generalisation working, not just permitted | — | S2, S8 |
+| `TestArgvIncludesInputOnlyWithBlob` | `internal/runner/runner_test.go` | `-i <path>` is present for a blob job and **absent** for a params-only crawler job | — | S2 |
+| `TestArgvIsDeterministic` | `internal/runner/runner_test.go` | the same params yield the same argv across 50 calls, regardless of map iteration order | — | S2 |
+| `TestArgvRejectsBadKeys` | `internal/runner/runner_test.go` | `UPPER`, `has space`, `--flag`, `a;b`, empty and a 33-char key are each rejected | — | S3 |
+| `TestArgvValueWithShellMetacharsIsOneLiteralArgument` | `internal/runner/runner_test.go` | **THE INJECTION GUARD.** A value of ``; rm -rf <canary> `touch` $(touch) && echo pwned \| tee`` reaches a REAL forked child as exactly one argv element, byte-identical, with no extra arguments — and a canary file on disk is untouched. It asserts at the process boundary, not on the argv slice, because a slice assertion proves only what the builder did | — | S3, S4 |
+| `TestRunExecutesWithoutShell` | `internal/runner/runner_test.go` | `$HOME` reaches the child unexpanded — an expanded value would mean a shell ran | — | S4 |
+| `TestRunEnvironmentIsAllowListed` | `internal/runner/runner_test.go` | a secret exported in the worker's environment is `absent` inside the child | — | S4 |
+| `TestRunParsesJSONArray` | `internal/runner/runner_test.go` | `["a","b"]` yields two units | — | S6 |
+| `TestRunRejectsNonArrayStdout` | `internal/runner/runner_test.go` | an object, a bare string, a number array, prose and empty output are each a job failure, not a panic | — | S6 |
+| `TestRunNonZeroExitIsJobFailureWithStderr` | `internal/runner/runner_test.go` | exit 3 yields an error naming the status AND carrying the stderr tail, so the dashboard shows a reason | — | S6 |
+| `TestRunTimeoutKillsProcessGroup` | `internal/runner/runner_test.go` | after the timeout nothing from the job is still running. ⚠ It does NOT distinguish the group kill from a child-only kill on darwin — see §Risks; the corresponding mutant is recorded as SURVIVED | — | S5 |
+| `TestRunRespectsCallerCancellation` | `internal/runner/runner_test.go` | the caller's cancellation wins over a long `--timeout`, so a shutting-down worker does not hang | — | S5 |
+| `TestRunCapsStdout` | `internal/runner/runner_test.go` | a command emitting 10MB is bounded rather than exhausting the worker | — | S6 |
+| `TestRunMissingCommand` | `internal/runner/runner_test.go` | a nonexistent `--cmd` is a job failure, not a crash | — | S6 |
+| `TestRunEmptyCommandIsRejected` | `internal/runner/runner_test.go` | no configured command is `core.ErrInvalidParam` | — | S2 |
+| `TestRunReadsInputFile` | `internal/runner/runner_test.go` | a real tool reads `-i` and emits one unit per line | — | S2, S6 |
+| `TestParseUnitsAcceptsEmptyArray` | `internal/runner/runner_test.go` | `[]` is a legitimate outcome — a service can correctly produce nothing | — | S6 |
+| `TestAgentClaimsRunsAndReports` | `internal/agent/agent_test.go` | on a `work` event the agent claims, downloads the blob, runs the program and posts the units | — | S7, S8 |
+| `TestAgentClaimsWithoutBlob` | `internal/agent/agent_test.go` | a params-only job runs with no `-i` and no download | — | S8 |
+| `TestAgentClaimsOnPing` | `internal/agent/agent_test.go` | with NO `work` event ever sent, a `ping` alone drives a claim — the dropped-event safety net | — | S7 |
+| `TestAgentDrainsOnConnect` | `internal/agent/agent_test.go` | work queued before the worker existed is claimed on connect, with no event at all | — | S7 |
+| `TestAgentRespectsSlots` | `internal/agent/agent_test.go` | with 5 jobs and 2 slots, peak observed concurrency is 2 and all 5 still complete — which also proves the agent re-drains as slots free rather than stalling | — | S9 |
+| `TestAgentReportsFailureAndContinues` | `internal/agent/agent_test.go` | a failing job is reported with its stderr and the agent goes on to the next — one bad document must not stop a worker | — | S6, S7 |
+| `TestAgentDeletesTempFileOnEveryPath` | `internal/agent/agent_test.go` | success, non-zero exit and unparseable output each leave the tmpdir empty | — | S8 |
+| `TestAgentReconnectsAfterStreamDrop` | `internal/agent/agent_test.go` | a dropped stream is reconnected rather than ending the worker | — | S10 |
+| `TestAgentStopsOnContextCancel` | `internal/agent/agent_test.go` | `Run` returns promptly and nil when its context is cancelled | — | S10 |
+| `TestCLIExposesEveryFlag` | `cmd/worker/main_test.go` | every setting has a command-line flag — a setting an operator cannot reach is not configuration | — | S11 |
+| `TestTokenCanComeFromTheEnvironment` | `cmd/worker/main_test.go` | `--token` reads `OCR_WORKER_TOKEN`, because a token on the command line is visible in the process table | — | S11 |
+| `TestAllowedEnvExcludesEverythingElse` | `cmd/worker/main_test.go` | the worker's own router token and an unrelated secret are both absent from the child's environment, while `PATH` is present — built through the same `buildRunner` the binary uses | — | S4, S11 |
+| `TestUsageDocumentsTheSubprocessContract` | `cmd/worker/main_test.go` | `--help` states `-i`, `-o -`, the JSON-array contract and the leading-`-` caveat — rung 3, since none of it is inferable from the flag names | — | S11 |
+| `TestWorkerRunsAgainstARealScript` | `cmd/worker/main_test.go` | the runner the binary builds executes a real program and returns its units | — | S11 |
 
 ## Reachability
 
@@ -122,6 +133,17 @@ written into `t.TempDir()`, so nothing outside the checkout is required.
 
 ## Mutation Log
 
+- 2026-09-15 · ab1c0cb* · mutant killed · exit 1 · `internal/runner/argv.go` · A value concatenated with its flag can split into several arguments at the process boundary; each value must be its own argv element. · acceptance-sha256:63955be0437b23a14cb54b6ac3aff2cd75cb6ec612ae702ca7dae1c6afc15e06 · covers:the argv construction
+- 2026-09-15 · ab1c0cb* · mutant killed · exit 1 · `internal/runner/argv.go` · A key becomes a flag NAME; without validation a client supplies its own flags to the operator's program. · acceptance-sha256:63955be0437b23a14cb54b6ac3aff2cd75cb6ec612ae702ca7dae1c6afc15e06
+- 2026-09-15 · ab1c0cb* · mutant survived · exit 0 · `internal/runner/runner.go` · Killing only the direct child leaves a grandchild holding stdout, and the worker then blocks forever on a read that never ends. · acceptance-sha256:63955be0437b23a14cb54b6ac3aff2cd75cb6ec612ae702ca7dae1c6afc15e06 · covers:the subprocess timeout
+  ```
+  the fence passed with the mechanism broken; it may not materialize, compile, load, or assert on the changed path
+  ```
+- 2026-09-15 · ab1c0cb* · mutant survived · exit 0 · `internal/runner/runner.go` · Killing only the direct child leaves a grandchild alive on the worker host — one orphan per timed-out job, holding the inherited stdout pipe. · acceptance-sha256:63955be0437b23a14cb54b6ac3aff2cd75cb6ec612ae702ca7dae1c6afc15e06 · covers:the subprocess timeout
+  ```
+  the fence passed with the mechanism broken; it may not materialize, compile, load, or assert on the changed path
+  ```
+
 ## Invariants
 
 - **No shell is ever invoked.** `exec.CommandContext` with an explicit argv, always.
@@ -133,6 +155,19 @@ written into `t.TempDir()`, so nothing outside the checkout is required.
 - One worker process serves exactly one label.
 
 ## Risks
+
+⚠ **A SURVIVED MUTANT IS RECORDED IN THE MUTATION LOG AND IS LEFT THERE DELIBERATELY.**
+Replacing the process-group kill with a child-only kill survives the fence. Measured
+2026-09-15 on darwin/arm64 with a standalone probe: a `( sleep 1; touch marker ) &`
+grandchild is reaped in BOTH arms — with no kill at all the marker appears, so the fixture
+works, but `cmd.Process.Kill()` alone is enough to stop it on this platform. The fixture
+therefore cannot exhibit the defect, which is not the same as the code being right.
+
+The group kill is kept because it is correct where the platform does not do the work for
+us: a program that genuinely detaches — double-forks, or calls `setsid` — leaves an orphan
+holding the inherited stdout pipe, one per timed-out job. Reproducing that shape portably
+needs a helper binary, which is more machinery than this property is worth today. Recorded
+rather than hidden, and re-check it if this ever runs on Linux in CI.
 
 - **`TestArgvValueWithShellMetacharsIsOneLiteralArgument` is the single most important test
   in the repository**, and it is easy to write so it cannot fail: asserting the argv *slice*
@@ -164,3 +199,10 @@ doubles the injection surface for a convenience nobody has requested.
 - Windows support (deferred: docs/adr/BACKLOG.md).
 
 ## Verification Log
+- 2026-09-15 · ab1c0cb* · exit 0 · `set -o pipefail …` · acceptance-sha256:63955be0437b23a14cb54b6ac3aff2cd75cb6ec612ae702ca7dae1c6afc15e06 · ms:13420
+- 2026-09-15 · ab1c0cb* · exit 0 · `set -o pipefail …` · acceptance-sha256:63955be0437b23a14cb54b6ac3aff2cd75cb6ec612ae702ca7dae1c6afc15e06 · ms:11131
+- 2026-09-15 · ab1c0cb* · exit 0 · `set -o pipefail …` · acceptance-sha256:63955be0437b23a14cb54b6ac3aff2cd75cb6ec612ae702ca7dae1c6afc15e06 · ms:11163
+- 2026-09-15 · ab1c0cb* · exit 0 · `set -o pipefail …` · acceptance-sha256:63955be0437b23a14cb54b6ac3aff2cd75cb6ec612ae702ca7dae1c6afc15e06 · ms:10939
+- 2026-09-15 · ab1c0cb* · exit 0 · `set -o pipefail …` · acceptance-sha256:63955be0437b23a14cb54b6ac3aff2cd75cb6ec612ae702ca7dae1c6afc15e06 · ms:12311
+- 2026-09-15 · ab1c0cb* · exit 0 · `set -o pipefail …` · acceptance-sha256:63955be0437b23a14cb54b6ac3aff2cd75cb6ec612ae702ca7dae1c6afc15e06 · ms:12256
+- 2026-09-15 · ab1c0cb* · exit 0 · `set -o pipefail …` · acceptance-sha256:63955be0437b23a14cb54b6ac3aff2cd75cb6ec612ae702ca7dae1c6afc15e06 · ms:16447
