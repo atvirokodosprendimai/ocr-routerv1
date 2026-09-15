@@ -366,6 +366,29 @@ const sqliteConstraintUnique = 2067
 // sqliteConstraintPrimaryKey is SQLITE_CONSTRAINT_PRIMARYKEY.
 const sqliteConstraintPrimaryKey = 1555
 
+// SetPasswordHash stores a user's argon2id hash, or clears it with "".
+//
+// Clearing is a real operation, not an accident to guard against: an empty hash
+// is how an account is barred from form login while keeping its bearer tokens.
+func (r *Repo) SetPasswordHash(ctx context.Context, userID, hash string) error {
+	res, err := r.write.ExecContext(ctx,
+		`UPDATE users SET password_hash = ? WHERE id = ?`, hash, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		// Silence here would report success for a user that does not exist,
+		// which is how a set-password command appears to work and changes
+		// nothing.
+		return core.ErrNotFound
+	}
+	return nil
+}
+
 // mapConstraint turns a driver uniqueness violation into core.ErrConflict.
 //
 // It matches on the driver's numeric CODE through an anonymous interface rather

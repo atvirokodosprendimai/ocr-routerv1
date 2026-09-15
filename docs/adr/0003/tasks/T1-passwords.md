@@ -88,7 +88,8 @@ the migration. Red at authoring: `password.go` does not exist, so the package do
 | `TestVerifyAgainstEmptyHashStillCostsTime` | `internal/identity/password_test.go` | verifying against `""` takes at least a third of the time a real verification takes — **the anti-enumeration property**, measured rather than asserted by reading the source | — | S6 |
 | `TestMigrationAddsColumnToAnExistingDatabase` | `internal/store/store_test.go` | a database created at schema `00001` WITH USER ROWS migrates to `00002` and every row keeps its data with an empty `password_hash` — red if the column is added `NOT NULL` without a default | — | S2 |
 | `TestSetAndReadPasswordHash` | `internal/identity/password_test.go` | a hash written by `SetPasswordHash` comes back from `PasswordHashByEmail` with the user's id | — | S7 |
-| `TestPasswordHashByEmailIsCaseInsensitive` | `internal/identity/password_test.go` | `Admin@Example.com` finds the row stored as `admin@example.com` — emails are normalised on write and a login form will not be | — | S7 |
+| `TestPasswordHashByEmailMatchesTheStoredFormOnly` | `internal/identity/password_test.go` | the stored (already normalised) email resolves and an unnormalised one does not — **pins WHERE normalisation lives**. The task first called for a case-insensitive repository read; on implementation that would have put normalisation in two places, and two places drift. `identity.Login` normalises, and this test is what stops a later change doing it in both or neither | — | S7 |
+| `TestNewUserHasNoPassword` | `internal/identity/password_test.go` | a freshly bootstrapped admin has an empty hash — the migration's `DEFAULT ''` is what bars form login for every account nobody has deliberately given a password | — | S2, S7 |
 | `TestPasswordHashByEmailOnUnknownEmail` | `internal/identity/password_test.go` | an unknown email returns `core.ErrNotFound` and an EMPTY hash, never a partially populated result a caller might verify against | — | S7 |
 | `TestUserStructHasNoPasswordField` | `internal/identity/password_test.go` | reflection over `core.User` finds no field whose name contains "password" — the hash cannot reach a handler that renders a user table, because there is nowhere on the struct for it to sit | — | S7 |
 
@@ -102,6 +103,10 @@ the migration. Red at authoring: `password.go` does not exist, so the package do
 | 4 — it is used | nothing measures password use; the operator logging in is the use, and that is not observable from here |
 
 ## Mutation Log
+
+- 2026-09-15 · 269e8a6* · mutant killed · exit 1 · `internal/identity/password.go` · verification uses package constants instead of the parameters stored with the hash, so raising the cost later would silently invalidate every existing password · acceptance-sha256:113a1c056f09636c5cb58c0624a7fe799172f4b4c493c9861881ab18f8e6cb3d · covers:the argon2id parameters in the stored hash
+- 2026-09-15 · 269e8a6* · mutant killed · exit 1 · `internal/identity/password.go` · a missing account returns in microseconds where a real check takes tens of milliseconds, turning login into an account-enumeration oracle no error message can hide · acceptance-sha256:113a1c056f09636c5cb58c0624a7fe799172f4b4c493c9861881ab18f8e6cb3d · covers:the dummy verify
+- 2026-09-15 · 269e8a6* · mutant killed · exit 1 · `internal/store/migrations/00002_password_and_sessions.sql` · the column is added without a default, so the migration fails on any database that already has users — which is every real deployment · acceptance-sha256:113a1c056f09636c5cb58c0624a7fe799172f4b4c493c9861881ab18f8e6cb3d · covers:the backward-compatible migration
 
 ## Invariants
 
@@ -145,3 +150,7 @@ neither is implied by "email and password for admins".
 - Passwords for client and worker accounts (permanent: boundary: they have no UI to log into).
 
 ## Verification Log
+- 2026-09-15 · 269e8a6* · exit 0 · `set -o pipefail …` · acceptance-sha256:113a1c056f09636c5cb58c0624a7fe799172f4b4c493c9861881ab18f8e6cb3d · ms:41881
+- 2026-09-15 · 269e8a6* · exit 0 · `set -o pipefail …` · acceptance-sha256:113a1c056f09636c5cb58c0624a7fe799172f4b4c493c9861881ab18f8e6cb3d · ms:25029
+- 2026-09-15 · 269e8a6* · exit 0 · `set -o pipefail …` · acceptance-sha256:113a1c056f09636c5cb58c0624a7fe799172f4b4c493c9861881ab18f8e6cb3d · ms:27570
+- 2026-09-15 · 269e8a6* · exit 0 · `set -o pipefail …` · acceptance-sha256:113a1c056f09636c5cb58c0624a7fe799172f4b4c493c9861881ab18f8e6cb3d · ms:29325

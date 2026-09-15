@@ -64,6 +64,28 @@ func (r *Repo) UserByEmail(ctx context.Context, email string) (core.User, error)
 		`SELECT `+userColumns+` FROM users WHERE email = ?`, email))
 }
 
+// PasswordHashByEmail returns a user's id and password hash.
+//
+// ⚠ A PURPOSE-BUILT READ, and deliberately not a field on core.User. The hash is
+// absent from userColumns, so it cannot reach a handler that renders a user
+// table simply by someone adding a column to a template — there is nowhere on
+// the struct for it to sit. This query is the only path that loads it, and its
+// only caller is password verification.
+//
+// An unknown email returns core.ErrNotFound with an EMPTY hash, never a
+// partially populated result a caller might verify against.
+func (r *Repo) PasswordHashByEmail(ctx context.Context, email string) (userID, hash string, err error) {
+	err = r.read.QueryRowContext(ctx,
+		`SELECT id, password_hash FROM users WHERE email = ?`, email).Scan(&userID, &hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", core.ErrNotFound
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return userID, hash, nil
+}
+
 // ListUsers returns every user, newest first. uuidv7 ids sort by creation, so
 // no ORDER BY created_at is needed.
 func (r *Repo) ListUsers(ctx context.Context) ([]core.User, error) {

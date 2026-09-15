@@ -4,7 +4,7 @@ Derived index — the task files are the source of truth. Execute in the order b
 
 | Task | Goal | Status | Depends-on | Acceptance (first command) |
 |------|------|--------|------------|----------------------------|
-| T1 | argon2id passwords on the user row, with no timing oracle | pending | none | `go test ./internal/identity/... -race` |
+| T1 | argon2id passwords on the user row, with no timing oracle | done | none | `go test ./internal/identity/... -race` |
 | T2 | Revocable, expiring sessions — a token row with a deadline | pending | T1 | `go test ./internal/session/... -race` |
 | T3 | The login page, the cookie, and a CSRF check that fails closed | pending | T1, T2 | `go test ./internal/web/... -race` |
 | T4 | Set passwords from the CLI, sweep sessions on the existing tick | pending | T1, T2, T3 | `go test ./cmd/router/... -race` |

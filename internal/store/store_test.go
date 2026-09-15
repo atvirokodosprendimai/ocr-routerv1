@@ -6,9 +6,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/atvirokodosprendimai/ocr-router/internal/store"
 )
@@ -245,6 +248,124 @@ func TestOpenIsIdempotentAcrossRestart(t *testing.T) {
 	if n != 1 {
 		t.Errorf("rows after reopen = %d, want 1 — data did not survive", n)
 	}
+}
+
+// TestMigrationAddsColumnToAnExistingDatabase is the only test that exercises
+// the risk `ALTER TABLE ADD COLUMN` actually carries.
+//
+// ⚠ A migration test against a FRESH database proves nothing here: the whole
+// question is what happens to rows that already exist. This builds a database at
+// schema 00001, puts real rows in it, stamps goose's version table so 00001 is
+// already applied, and only then opens it normally — which is the moment 00002
+// runs against live data, exactly as it will in production.
+//
+// It is red if the column is added `NOT NULL` without a default, which is the
+// spelling that looks stricter and fails on every existing row.
+func TestMigrationAddsColumnToAnExistingDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "upgrade.db")
+
+	// 1. Build the database at schema 00001, reading the real migration rather
+	//    than a copy of it — a hand-written copy would drift and the test would
+	//    then be asserting against a schema nobody ships.
+	first, err := os.ReadFile(filepath.Join("migrations", "00001_init.sql"))
+	if err != nil {
+		t.Fatalf("reading 00001: %v", err)
+	}
+	up := upSection(t, string(first))
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("opening raw: %v", err)
+	}
+	if _, err := raw.Exec(up); err != nil {
+		t.Fatalf("applying 00001: %v", err)
+	}
+	// Rows that predate the new column.
+	if _, err := raw.Exec(
+		`INSERT INTO users (id,email,role,credits,created_at) VALUES
+		 ('u1','a@example.com','client',7,100),
+		 ('u2','b@example.com','admin',0,200)`); err != nil {
+		t.Fatalf("seeding users: %v", err)
+	}
+	// Stamp goose so it believes 00001 is applied and only 00002 remains.
+	if _, err := raw.Exec(`CREATE TABLE goose_db_version (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		version_id INTEGER NOT NULL,
+		is_applied INTEGER NOT NULL,
+		tstamp TIMESTAMP DEFAULT (datetime('now')))`); err != nil {
+		t.Fatalf("creating goose table: %v", err)
+	}
+	if _, err := raw.Exec(
+		`INSERT INTO goose_db_version (version_id,is_applied) VALUES (0,1),(1,1)`); err != nil {
+		t.Fatalf("stamping goose: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("closing raw: %v", err)
+	}
+
+	// 2. Open normally. This is where 00002 runs against the rows above.
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("opening an existing 00001 database: %v — the migration cannot be applied to a "+
+			"database that already has rows, which is every real deployment", err)
+	}
+	defer db.Close()
+
+	// 3. Every row survived, with an empty hash.
+	rows, err := db.Read.Query(`SELECT id, credits, password_hash FROM users ORDER BY id`)
+	if err != nil {
+		t.Fatalf("reading after migration: %v", err)
+	}
+	defer rows.Close()
+
+	type got struct {
+		id      string
+		credits int
+		hash    string
+	}
+	var all []got
+	for rows.Next() {
+		var g got
+		if err := rows.Scan(&g.id, &g.credits, &g.hash); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		all = append(all, g)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	if len(all) != 2 {
+		t.Fatalf("got %d users after migration, want 2 — rows were lost", len(all))
+	}
+	if all[0].credits != 7 {
+		t.Errorf("u1 credits = %d, want 7 — existing data did not survive", all[0].credits)
+	}
+	for _, g := range all {
+		if g.hash != "" {
+			t.Errorf("%s has password_hash %q after migration, want empty — an existing account "+
+				"must not silently acquire a credential", g.id, g.hash)
+		}
+	}
+
+	// 4. And the sessions table arrived in the same migration.
+	var name string
+	if err := db.Read.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'`).Scan(&name); err != nil {
+		t.Errorf("sessions table missing after migration: %v", err)
+	}
+}
+
+// upSection returns the statements between the first goose Up markers.
+func upSection(t *testing.T, migration string) string {
+	t.Helper()
+	const begin, end = "-- +goose StatementBegin", "-- +goose StatementEnd"
+	i := strings.Index(migration, begin)
+	j := strings.Index(migration, end)
+	if i < 0 || j < 0 || j < i {
+		t.Fatalf("migration has no Up statement block, so this test would apply nothing")
+	}
+	return migration[i+len(begin) : j]
 }
 
 func TestWriterIsSerialised(t *testing.T) {
