@@ -70,6 +70,8 @@ func configFlags() []cli.Flag {
 		&cli.DurationFlag{Name: "reap-interval", Value: 30 * time.Second,
 			Usage: "how often expired leases, deadlines and results are swept"},
 		&cli.IntFlag{Name: "max-upload", Value: 64 << 20, Usage: "maximum upload size in bytes"},
+		&cli.StringFlag{Name: "metrics-addr", Value: "127.0.0.1:9090",
+			Usage: "PRIVATE listener for /metrics; loopback by default because queue depth and throughput are commercially sensitive"},
 		&cli.StringFlag{Name: "default-label", Value: "ocr",
 			Usage: "the service a client gets when it names none"},
 	}
@@ -88,6 +90,8 @@ func configFrom(c *cli.Command) Config {
 		ReapInterval: c.Duration("reap-interval"),
 		MaxUpload:    int64(c.Int("max-upload")),
 		DefaultLabel: c.String("default-label"),
+		MetricsAddr:  c.String("metrics-addr"),
+		Version:      version,
 	}
 }
 
@@ -104,6 +108,22 @@ func runServe(ctx context.Context, c *cli.Command) error {
 	defer stop()
 
 	app.StartReaper(ctx, cfg.ReapInterval)
+
+	// The metrics endpoint listens separately, so exposing it is a deliberate
+	// act in the operator's proxy rather than a consequence of running the
+	// router at all.
+	metricsAddr, shutdownMetrics, err := app.Monitor.Serve(ctx, cfg.MetricsAddr)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdownCtx, cancelMetrics := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancelMetrics()
+		_ = shutdownMetrics(shutdownCtx)
+	}()
+	// The RESOLVED address, not the flag: an operator reading ":9090" from the log
+	// cannot tell what it actually bound to.
+	fmt.Printf("metrics on http://%s/metrics (private)\n", metricsAddr)
 
 	srv := &http.Server{
 		Addr:    cfg.Addr,
@@ -159,3 +179,8 @@ func runBootstrap(ctx context.Context, c *cli.Command) error {
 	fmt.Println("Save it now; if it is lost, create another administrator with a new email.")
 	return nil
 }
+
+// version is reported by /healthz. A build stamps it with -ldflags; the default
+// says plainly that nobody did, which is more useful than a plausible-looking
+// fake number.
+var version = "dev"

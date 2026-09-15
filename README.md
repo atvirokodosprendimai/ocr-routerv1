@@ -36,6 +36,7 @@ label for judging a leak, and carries no authority.
 | `GET` | `/files/{id}` | the result JSON; **deleted and charged on success** | the source file; requires holding the lease |
 | `POST` | `/claim` | — | `?label=<l>` → `200 {job_id,…}` or `204` when idle |
 | `GET` | `/services` | the labels currently available | — |
+| `GET` | `/healthz` | **no token** — `200 {"ok":true,…}` or `503` naming what broke | same |
 
 ### Uploading
 
@@ -108,7 +109,56 @@ uncharged. A job a worker has already started runs to completion regardless.
 --reap-interval  how often expiries and sweeps run                (30s)
 --max-upload     maximum upload size in bytes                     (64MiB)
 --default-label  the service used when none is named              (ocr)
+--metrics-addr   PRIVATE listener for /metrics                    (127.0.0.1:9090)
 ```
+
+## Health and metrics
+
+`GET /healthz` is on the main listener and is the **only** unauthenticated route
+in the process, because a load balancer cannot hold a bearer token. It does real
+work: a `SELECT 1` through the read handle, and a create-write-sync in the blob
+directory. A full or read-only volume is a failure a `SELECT` would not catch —
+the database can be perfectly healthy while every upload is about to fail.
+
+```json
+{"ok": false, "version": "v1.2.3", "failed": ["blobs"]}   // 503
+```
+
+⚠ **It deliberately ignores worker availability.** Zero workers for a label means
+the queue is filling and the router is fine. Reporting that as unhealthy would
+make an orchestrator restart the one component still working — and the restart
+would fix nothing, so it would do it again. That signal is a metric and an alert,
+not a liveness input.
+
+`GET /metrics` is Prometheus text format on a **separate listener**, bound to
+loopback by default. Queue depth and throughput say how much work each customer
+is pushing, and the main listener faces the internet. The obvious alternative —
+`/metrics` behind the admin token — works, but it puts a credential that creates
+users and mints tokens into a scrape config, which is the least-guarded file in
+most deployments. Point `--metrics-addr` elsewhere and exposing it becomes a
+deliberate act in your proxy.
+
+| Metric | Type | What it answers |
+|---|---|---|
+| `ocrr_workers_live{label}` | gauge | ★ **is anybody serving this service?** A label at 0 queues silently until its jobs hit their deadline; nothing else reports it |
+| `ocrr_queue_oldest_age_seconds{label}` | gauge | ★ a better stall signal than depth — depth sits low while one job is wedged |
+| `ocrr_queue_depth{label}` | gauge | backlog per service |
+| `ocrr_jobs_current{state}` | gauge | census by state |
+| `ocrr_results_in_memory` | gauge | uncollected results held in RAM |
+| `ocrr_jobs_total{state}` | counter | terminal outcomes |
+| `ocrr_stage_advances_total` | counter | pipeline movement; a pipeline that stopped advancing looks exactly like a slow one |
+| `ocrr_reaper_actions_total{action}` | counter | requeues, expiries and sweeps — a reaper that silently stopped is otherwise invisible |
+| `ocrr_credits_debited_total` | counter | should agree with the ledger |
+
+Metric label **names** are restricted in code to `label`, `state` and `action`.
+A user id or email would be unbounded, and unbounded label values are how a
+metrics endpoint kills the scraper it feeds; the per-customer question is
+answered by the authenticated dashboard.
+
+Alert on `ocrr_workers_live == 0` for a label with a non-zero
+`ocrr_queue_depth`, and on `ocrr_queue_oldest_age_seconds` above whatever your
+deployment considers late. No thresholds ship here: a threshold is valid for a
+deployment, and this repository does not know yours.
 
 ## Operational notes
 

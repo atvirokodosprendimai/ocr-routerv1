@@ -41,6 +41,7 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 	}
 	for _, job := range expiredLeases {
 		rep.LeasesExpired++
+		s.counter.Inc(metricReaperActions, map[string]string{"action": "lease-expired"})
 		if job.Attempts+1 >= s.cfg.MaxAttempts {
 			rep.JobsAbandoned++
 		}
@@ -58,6 +59,8 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 	}
 	for _, job := range expiredJobs {
 		rep.JobsExpired++
+		s.counter.Inc(metricReaperActions, map[string]string{"action": "deadline-expired"})
+		s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobExpired)})
 		_ = s.blobs.Delete(job.ID)
 		s.results.Drop(job.ID)
 		s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
@@ -70,6 +73,7 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 	//    instead would strand each job in `done` with no result, forever.
 	for _, jobID := range s.results.Sweep() {
 		rep.ResultsSwept++
+		s.counter.Inc(metricReaperActions, map[string]string{"action": "result-swept"})
 		job, err := s.repo.JobByID(ctx, jobID)
 		if err != nil {
 			// The job is gone; the orphaned result has already been removed by

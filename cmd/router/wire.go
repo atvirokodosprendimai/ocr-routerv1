@@ -12,6 +12,7 @@ import (
 	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
 	"github.com/atvirokodosprendimai/ocr-router/internal/httpapi"
 	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-router/internal/monitor"
 	"github.com/atvirokodosprendimai/ocr-router/internal/results"
 	"github.com/atvirokodosprendimai/ocr-router/internal/router"
 	"github.com/atvirokodosprendimai/ocr-router/internal/store"
@@ -36,6 +37,12 @@ type Config struct {
 	// without waiting fifteen seconds — a fence that runs three times per task
 	// pays that wait nine times.
 	PingInterval time.Duration
+	// MetricsAddr is where the PRIVATE metrics listener binds. Loopback by
+	// default: queue depths and throughput say how much work a customer pushes,
+	// and the main listener faces the internet.
+	MetricsAddr string
+	// Version is reported by /healthz.
+	Version string
 }
 
 // App is a fully constructed router: its handler, its collaborators, and the
@@ -48,6 +55,7 @@ type App struct {
 	Bus     *bus.Bus
 	Results *results.Store
 	Blobs   *blob.Store
+	Monitor *monitor.Monitor
 	Close   func() error
 }
 
@@ -106,10 +114,47 @@ func buildApp(cfg Config) (*App, error) {
 		Identity: ident, Router: rt, Repo: repo, Bus: b, Results: res,
 		PingInterval: cfg.PingInterval, Now: time.Now,
 	})
+	// The metrics registry is attached to the single writer, so the counters are
+	// incremented at the same place the state actually changes. A counter nobody
+	// increments is always zero, and always-zero reads exactly like healthy.
+	reg := monitor.NewRegistry()
+	rt.SetCounter(reg)
+
+	mon := monitor.New(reg, monitor.Deps{
+		Version: cfg.Version,
+		BlobDir: cfg.BlobDir,
+		PingDB: func(ctx context.Context) error {
+			// Through the READ handle, deliberately: a health probe must never
+			// be able to write.
+			var one int
+			return db.Read.QueryRowContext(ctx, `SELECT 1`).Scan(&one)
+		},
+		QueueDepth:   repo.QueueDepthByLabel,
+		OldestQueued: repo.OldestQueuedByLabel,
+		JobStates: func(ctx context.Context) (map[string]int, error) {
+			byState, err := repo.CountJobsByState(ctx)
+			if err != nil {
+				return nil, err
+			}
+			out := make(map[string]int, len(byState))
+			for s, n := range byState {
+				out[string(s)] = n
+			}
+			return out, nil
+		},
+		LiveLabels:      rt.AvailableLabels,
+		WorkersFor:      func(label string) int { return b.Subscribers(bus.WorkerTopic(label)) },
+		ResultsInMemory: res.Len,
+		Now:             time.Now,
+	})
 
 	mux := chi.NewRouter()
-	// The dashboard is mounted FIRST, behind the API's own authenticator, so
-	// there is one authentication path in the process rather than two.
+	// ⚠ /healthz is mounted OUTSIDE the API's authenticated group, and is the
+	// only unauthenticated route in the process. A load balancer and an
+	// orchestrator probe cannot hold a bearer token.
+	mux.Get("/healthz", mon.HealthHandler)
+	// The dashboard is mounted behind the API's own authenticator, so there is
+	// one authentication path in the process rather than two.
 	dash.Mount(mux, api.Authenticator())
 	mux.Mount("/", api)
 
@@ -121,6 +166,7 @@ func buildApp(cfg Config) (*App, error) {
 		Bus:     b,
 		Results: res,
 		Blobs:   blobs,
+		Monitor: mon,
 		Close:   db.Close,
 	}, nil
 }

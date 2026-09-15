@@ -53,6 +53,10 @@ type Service struct {
 	// labelSeen is when a label last had a live worker. It is what implements
 	// the grace window.
 	labelSeen map[string]time.Time
+
+	// counter records what happened, for the metrics endpoint. Never nil: the
+	// constructor installs a no-op so no call site needs a guard.
+	counter Counter
 }
 
 // New builds the service.
@@ -63,6 +67,7 @@ func New(repo *store.Repo, blobs *blob.Store, res *results.Store, b *bus.Bus, cf
 	return &Service{
 		repo: repo, blobs: blobs, results: res, bus: b, cfg: cfg,
 		labelSeen: make(map[string]time.Time),
+		counter:   nopCounter{},
 	}
 }
 
@@ -241,6 +246,7 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 				return err
 			}
 		}
+		s.counter.Inc(metricStageAdvances, nil)
 		s.publishWork(next)
 		s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 		return nil
@@ -294,6 +300,7 @@ func (s *Service) failJob(ctx context.Context, job core.Job, reason string, now 
 		return nil
 	}
 
+	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})
 	if err := s.repo.FailJobDead(ctx, job.ID, reason, now); err != nil {
 		return err
 	}
@@ -339,6 +346,8 @@ func (s *Service) Deliver(ctx context.Context, userID, jobID string, now time.Ti
 
 	// Only after the transaction commits. An orphan blob is recoverable; a
 	// delivered job whose blob was deleted before a failed commit is not.
+	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDelivered)})
+	s.counter.Add(metricCreditsDebited, nil, int64(job.AccruedCredits))
 	_ = s.blobs.Delete(jobID)
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: jobID})
 	return res, nil
