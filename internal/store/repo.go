@@ -419,21 +419,25 @@ func (r *Repo) RateForLabel(ctx context.Context, label string) (int, error) {
 	return rate, err
 }
 
-// ListRates returns every configured service rate.
-func (r *Repo) ListRates(ctx context.Context) (map[string]int, error) {
-	rows, err := r.read.QueryContext(ctx, `SELECT label, credits_per_unit FROM service_rates`)
+// ListRates returns every configured service's admin-owned pricing.
+//
+// It returns BOTH halves — the per-unit price and the raw flag — because they
+// are one decision, taken in one place, and a caller that reads only the number
+// renders a price that is wrong for every raw service (ADR-0006).
+func (r *Repo) ListRates(ctx context.Context) (map[string]core.ServiceRate, error) {
+	rows, err := r.read.QueryContext(ctx, `SELECT label, credits_per_unit, raw FROM service_rates`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]int{}
+	out := map[string]core.ServiceRate{}
 	for rows.Next() {
 		var label string
-		var rate int
-		if err := rows.Scan(&label, &rate); err != nil {
+		var rate, raw int
+		if err := rows.Scan(&label, &rate, &raw); err != nil {
 			return nil, err
 		}
-		out[label] = rate
+		out[label] = core.ServiceRate{CreditsPerUnit: rate, Raw: raw == 1}
 	}
 	return out, rows.Err()
 }

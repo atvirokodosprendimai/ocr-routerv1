@@ -47,7 +47,7 @@ nothing downstream of it can be proved before it lands.
 | T5 | Store a raw result as a blob and stream it to the client unchanged | pending | — | `go test ./internal/httpapi/... -run 'TestRawResultRoundTripsByteForByte\|...'` |
 | T6 | Charge a raw job a flat credit on delivery and bridge a raw stage without joinUnits | pending | — | `go test ./internal/router/... -run 'TestRawJobCostsOneCreditRegardlessOfSize\|...'` |
 | T7 | Let the client request raw and write the bytes it gets back unchanged | pending | — | `go test ./internal/client/... ./cmd/client/... -run 'TestRawClientWritesBytesVerbatim\|...'` |
-| T8 | Give the administrator the control that marks a service raw | pending | — | `templ generate && go test ./internal/web/... -run 'TestAdminCanMarkServiceRaw\|...'` |
+| T8 | Give the administrator the control that marks a service raw | done | — | `templ generate && go test ./internal/web -run 'TestAdminCanMarkServiceRaw\|TestRateStillSettableWithoutTouchingMode\|TestServicesPageShowsMode'` |
 
 Status: `pending` | `partial` | `blocked` | `done`.
 

@@ -217,15 +217,19 @@ func (wb *Web) buildDashboard(ctx context.Context) (views.Dashboard, error) {
 
 	services := make([]views.ServiceRow, 0, len(labels))
 	for l := range labels {
-		rate, ok := rates[l]
-		if !ok {
-			rate = 1
+		// A label with no row costs 1 and is units — the same defaults
+		// Repo.ServiceMode applies, restated here because this map is built from
+		// the rows that EXIST and a missing one is the common case.
+		rate := core.ServiceRate{CreditsPerUnit: 1}
+		if r, ok := rates[l]; ok {
+			rate = r
 		}
 		services = append(services, views.ServiceRow{
 			Label:   l,
 			Workers: wb.deps.Bus.Subscribers(bus.WorkerTopic(l)),
 			Queued:  depth[l],
-			Rate:    rate,
+			Rate:    rate.CreditsPerUnit,
+			Raw:     rate.Raw,
 		})
 	}
 	sort.Slice(services, func(i, j int) bool { return services[i].Label < services[j].Label })
@@ -281,6 +285,10 @@ type signals struct {
 	NewRole   string `json:"newRole"`
 	RateLabel string `json:"rateLabel"`
 	RateValue string `json:"rateValue"`
+	// RateRaw is the service's OUTPUT MODE (ADR-0006), not a display preference.
+	// It is a bool rather than the numText the numeric signals use because it
+	// binds a checkbox, which datastar holds as a JSON boolean.
+	RateRaw bool `json:"rateRaw"`
 
 	// Per-customer editing signals (ADR-0004).
 	//
@@ -507,20 +515,20 @@ func (wb *Web) setRate(w http.ResponseWriter, r *http.Request) {
 		wb.patch(w, r, views.CreateError("credits per unit must be a non-negative whole number"))
 		return
 	}
-	// Carry the service's CURRENT mode through unchanged. SetRate upserts the
-	// whole row, so passing a literal here would silently reset every raw
-	// service to units the next time an admin edited its price. ADR-0006 T8
-	// replaces this read with the control that actually sets the mode.
-	_, raw, err := wb.deps.Repo.ServiceMode(r.Context(), label)
-	if err != nil {
+	// The mode comes from the control, not from a re-read. T1 installed a
+	// pass-the-existing-value placeholder here so its schema change altered no
+	// admin behaviour; this is the line that replaces it.
+	//
+	// ⚠ SetRate upserts the WHOLE row, so the mode is rewritten every time a
+	// price is edited. That is why the page renders the CURRENT mode into the
+	// checkbox: an admin editing a price on a raw service must find the box
+	// already ticked, or saving the price would silently demote the service to
+	// units and reprice every later job.
+	if err := wb.deps.Repo.SetRate(r.Context(), label, rate, s.RateRaw, wb.deps.Now()); err != nil {
 		wb.patch(w, r, views.CreateError(err.Error()))
 		return
 	}
-	if err := wb.deps.Repo.SetRate(r.Context(), label, rate, raw, wb.deps.Now()); err != nil {
-		wb.patch(w, r, views.CreateError(err.Error()))
-		return
-	}
-	wb.patch(w, r, views.RateSaved(label, rate))
+	wb.patch(w, r, views.RateSaved(label, rate, s.RateRaw))
 }
 
 // patch sends one or more fragments over SSE.

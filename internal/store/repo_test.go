@@ -442,8 +442,11 @@ func TestSetRateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRates: %v", err)
 	}
-	if all["ocr"] != 5 {
-		t.Errorf("ListRates[ocr] = %d, want 5", all["ocr"])
+	if all["ocr"].CreditsPerUnit != 5 {
+		t.Errorf("ListRates[ocr].CreditsPerUnit = %d, want 5", all["ocr"].CreditsPerUnit)
+	}
+	if all["ocr"].Raw {
+		t.Error("ListRates[ocr].Raw = true for a service set as units")
 	}
 }
 

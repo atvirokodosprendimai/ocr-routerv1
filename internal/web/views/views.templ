@@ -91,7 +91,7 @@ templ Workers(d Dashboard) {
 		} else {
 			<table>
 				<thead>
-					<tr><th>Label</th><th class="num">Workers</th><th class="num">Queued</th><th class="num">Rate</th><th>Health</th></tr>
+					<tr><th>Label</th><th class="num">Workers</th><th class="num">Queued</th><th class="num">Rate</th><th>Mode</th><th>Health</th></tr>
 				</thead>
 				<tbody>
 					for _, s := range d.Services {
@@ -100,6 +100,11 @@ templ Workers(d Dashboard) {
 							<td class="num">{ fmt.Sprint(s.Workers) }</td>
 							<td class="num">{ fmt.Sprint(s.Queued) }</td>
 							<td class="num">{ fmt.Sprint(s.Rate) }</td>
+							if s.Raw {
+								<td><span class="tag raw">raw</span></td>
+							} else {
+								<td><span class="muted">units</span></td>
+							}
 							if s.Workers == 0 && s.Queued > 0 {
 								<td><span class="tag dead">no worker, { fmt.Sprint(s.Queued) } waiting</span></td>
 							} else if s.Workers == 0 {
@@ -379,7 +384,7 @@ templ CreateError(msg string) {
 
 // Services is the rate administration page.
 templ Services(d Dashboard) {
-	@Layout("Services", `{"rateLabel":"","rateValue":"1"}`) {
+	@Layout("Services", `{"rateLabel":"","rateValue":"1","rateRaw":false}`) {
 		<section>
 			<h2>Set a price</h2>
 			<p class="muted">
@@ -396,6 +401,11 @@ templ Services(d Dashboard) {
 					<label for="rate-value">Credits per unit</label>
 					<input id="rate-value" type="number" min="0" data-bind:rate-value/>
 				</div>
+				<div>
+					<label for="rate-raw">Raw output</label>
+					<input id="rate-raw" type="checkbox" data-bind:rate-raw/>
+					<span class="muted">Bytes through unchanged, billed a flat 1 credit per job.</span>
+				</div>
 				<button data-on:click="@post('/admin/rates')" data-indicator:saving>Save</button>
 				<span class="spin" data-show="$saving">Saving…</span>
 			</div>
@@ -406,9 +416,17 @@ templ Services(d Dashboard) {
 }
 
 // RateSaved confirms a rate change.
-templ RateSaved(label string, rate int) {
+//
+// It names the MODE as well as the number, because the two together are the
+// price: "1 credit per unit" and "a flat 1 credit per job" are different
+// statements that would otherwise render identically.
+templ RateSaved(label string, rate int, raw bool) {
 	<div id="rate-result">
-		<p class="muted">{ fmt.Sprintf("%s now costs %d credit(s) per unit.", label, rate) }</p>
+		if raw {
+			<p class="muted">{ fmt.Sprintf("%s is a raw service: bytes through unchanged, a flat 1 credit per job.", label) }</p>
+		} else {
+			<p class="muted">{ fmt.Sprintf("%s now costs %d credit(s) per unit.", label, rate) }</p>
+		}
 	</div>
 }
 

@@ -56,4 +56,8 @@ type ServiceRow struct {
 	Workers int
 	Queued  int
 	Rate    int
+	// Raw is the service's output mode. It is shown beside the rate because it
+	// is part of the price: a raw service bills a flat credit per job rather
+	// than Rate per unit.
+	Raw bool
 }
