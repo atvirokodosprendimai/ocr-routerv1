@@ -359,12 +359,12 @@ func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body 
 		return err
 	}
 
-	// Stage advance for a raw job is T6's: the bridge moves the result blob to
-	// the next stage's input rather than rendering units. Until then a raw job is
-	// single-stage by construction, because a raw stage cannot produce a unit
-	// list for joinUnits to render.
-	if _, more := job.NextLabel(); more {
-		return fmt.Errorf("%w: raw pipelines are not wired yet", core.ErrInvalidState)
+	// A raw stage's output IS a blob, so the bridge between stages is a MOVE
+	// rather than a render. joinUnits stops being involved entirely on this path,
+	// which removes its lossy newline encoding from the one case where it would
+	// corrupt a payload rather than merely reshape one.
+	if next, more := job.NextLabel(); more {
+		return s.bridgeRawStage(ctx, job, next, workerID, now)
 	}
 
 	if err := s.repo.CompleteJob(ctx, job.ID, 1, job.AccruedCredits, now); err != nil {
@@ -377,6 +377,60 @@ func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body 
 	s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
 		Kind: bus.KindReady, JobID: job.ID, Units: 1,
 	})
+	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
+	return nil
+}
+
+// bridgeRawStage hands a raw stage's output to the next stage as its input.
+//
+// The bridge is a MOVE of the result blob onto the input key, not a render:
+// joinUnits is never reached, so its newline joining — documented as lossy, and
+// for binary actively wrong — cannot touch the payload.
+//
+// ⚠ The NEXT stage's mode is validated here rather than at admission. ADR-0001
+// deliberately checks only pipeline[0] against live workers, because a later
+// service may legitimately deploy after the job is queued; the same reasoning
+// applies to its mode. Checking it at the moment of advance is what stops a job
+// queueing forever under a label that will refuse every worker.
+func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, workerID string, now time.Time) error {
+	_, nextRaw, err := s.repo.ServiceMode(ctx, next)
+	if err != nil {
+		return err
+	}
+	if !nextRaw {
+		// Fail the job with a reason a human can act on. Left queued instead, it
+		// would sit under a label whose every worker is refused, with nothing
+		// saying why.
+		return s.failJob(ctx, job, "router",
+			fmt.Sprintf("stage %q is a units service and cannot accept a raw stage's output", next),
+			now)
+	}
+
+	src, err := s.blobs.OpenResult(job.ID)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	if _, err := s.blobs.Put(job.ID, src); err != nil {
+		return err
+	}
+	// Only after the input is safely written: the staged-write-and-rename in Put
+	// has committed, so the result is no longer the only copy.
+	_ = s.blobs.DeleteResult(job.ID)
+
+	if err := s.repo.AdvanceStage(ctx, job.ID, next, job.AccruedCredits, now); err != nil {
+		return err
+	}
+	if !job.HasBlob {
+		// A params-only raw job now HAS a blob: its first stage produced one.
+		if err := s.repo.MarkHasBlob(ctx, job.ID); err != nil {
+			return err
+		}
+	}
+	s.counter.Inc(metricStageAdvances, nil)
+	s.logTransition(job, core.JobProcessing, core.JobQueued, job.UpdatedAt,
+		"router", workerID, "", now)
+	s.publishWork(next)
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 	return nil
 }
@@ -407,13 +461,20 @@ func (s *Service) DeliverRaw(ctx context.Context, userID, jobID string, now time
 		return nil, err
 	}
 
-	if err := s.repo.DeliverJob(ctx, jobID, userID, job.AccruedCredits, now); err != nil {
+	// ⚠ FLAT ONE CREDIT, and asserted as the NUMBER rather than "a charge
+	// happened". A raw job has no units, so falling through to the accrued
+	// per-unit total charges ZERO — a failure in the customer's favour that
+	// nothing anywhere would report. The MOMENT is unchanged: on delivery, in
+	// this transaction, exactly as a units job.
+	const rawCost = 1
+	if err := s.repo.DeliverJob(ctx, jobID, userID, rawCost, now); err != nil {
 		_ = f.Close()
 		return nil, err
 	}
 
 	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDelivered)})
-	s.counter.Add(metricCreditsDebited, nil, int64(job.AccruedCredits))
+	s.counter.Inc(metricRawJobs, map[string]string{"label": job.Label})
+	s.counter.Add(metricCreditsDebited, nil, int64(rawCost))
 	s.logTransition(job, job.State, core.JobDelivered, job.UpdatedAt, "client", "", "", now)
 	_ = s.blobs.Delete(jobID)
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: jobID})

@@ -27,8 +27,13 @@ func (nopCounter) Add(string, map[string]string, int64) {}
 // package's constants rather than imported, because importing upward would
 // invert the dependency; the pair is pinned by a test in T11.
 const (
-	metricJobsTotal      = "ocrr_jobs_total"
-	metricStageAdvances  = "ocrr_stage_advances_total"
+	metricJobsTotal     = "ocrr_jobs_total"
+	metricStageAdvances = "ocrr_stage_advances_total"
+	// metricRawJobs counts raw jobs DELIVERED, by label. Raw output is priced and
+	// transported unlike anything else here, so "jobs delivered" alone cannot
+	// show a raw service growing. Label is the only dimension, which keeps it
+	// inside T11's cardinality allow-list rather than beside it.
+	metricRawJobs        = "ocrr_raw_jobs_total"
 	metricReaperActions  = "ocrr_reaper_actions_total"
 	metricCreditsDebited = "ocrr_credits_debited_total"
 )

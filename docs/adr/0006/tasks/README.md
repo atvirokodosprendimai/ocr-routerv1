@@ -45,7 +45,7 @@ nothing downstream of it can be proved before it lands.
 | T3 | Match the client's requested mode against the admin record and stamp it on the job | done | — | `go test ./internal/httpapi/... ./internal/router/... -run 'TestClientRawOnUnitsLabelIsRefused\|TestClientUnitsOnRawLabelIsRefused\|TestRawIsNotPassedToArgv\|TestRawRefusalReadsNoBody\|TestJobStampsRawAtAdmission\|TestUploadRefusesModeMismatch'` |
 | T4 | Let a worker emit raw bytes and post them without passing through a string | done | — | `go test ./internal/runner ./internal/agent -run 'TestRawRunnerReturnsBytesVerbatim\|…9 tests'` |
 | T5 | Store a raw result as a blob and stream it to the client unchanged | done | — | `go test ./internal/httpapi ./internal/router -run 'TestRawResultRoundTripsByteForByte\|…7 tests'` |
-| T6 | Charge a raw job a flat credit on delivery and bridge a raw stage without joinUnits | pending | — | `go test ./internal/router/... -run 'TestRawJobCostsOneCreditRegardlessOfSize\|...'` |
+| T6 | Charge a raw job a flat credit on delivery and bridge a raw stage without joinUnits | done | — | `go test ./internal/router -run 'TestRawJobCostsOneCreditRegardlessOfSize\|…6 tests'` |
 | T7 | Let the client request raw and write the bytes it gets back unchanged | pending | — | `go test ./internal/client/... ./cmd/client/... -run 'TestRawClientWritesBytesVerbatim\|...'` |
 | T8 | Give the administrator the control that marks a service raw | done | — | `templ generate && go test ./internal/web -run 'TestAdminCanMarkServiceRaw\|TestRateStillSettableWithoutTouchingMode\|TestServicesPageShowsMode'` |
 

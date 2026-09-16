@@ -8,7 +8,7 @@
 **Consumes:** `jobs.raw` (T3), raw result blob (T5)
 **Data dependency:** hermetic
 **Proof map:** v1
-**Rests-on:** `the flat price replacing len(units) × rate`, `the charge landing on delivery`, `the stage bridge moving the blob rather than joining units`
+**Rests-on:** `the flat price replacing len(units) × rate`, `the stage bridge moving the blob rather than joining units`, `the next stage's mode being validated`
 
 ## Goal
 
@@ -19,10 +19,10 @@ next stage's input without passing through `joinUnits`.
 
 | File | Change | Why |
 |------|--------|-----|
-| `internal/router/service.go` | edit | `Deliver` prices a raw job at 1; the stage-advance path moves the result blob to the next stage's input |
-| `internal/router/metrics.go` | edit | `ocrr_raw_jobs` counter |
-| `internal/router/service_test.go` | edit | Pricing tests |
-| `internal/router/pipeline_test.go` | edit | Stage-bridge tests |
+| `internal/router/service.go` | edit | `DeliverRaw` charges a flat credit; `bridgeRawStage` moves the result blob onto the next stage's input key and validates that stage's mode |
+| `internal/router/metrics.go` | edit | `ocrr_raw_jobs_total`, labelled by service only |
+| `internal/router/rawpricing_test.go` | add | Pricing tests |
+| `internal/router/rawpipeline_test.go` | add | Stage-bridge, mismatch and counter tests |
 
 ## Ordered Steps
 
@@ -44,7 +44,7 @@ next stage's input without passing through `joinUnits`.
 
 ```bash
 set -o pipefail
-go test ./internal/router/... -run 'TestRawJobCostsOneCreditRegardlessOfSize|TestRawStageBridgesWithoutJoinUnits|TestFailedRawJobCostsNothing' -count=1 -v 2>&1 | tee /tmp/acc-0006-T6.out \
+go test ./internal/router -run 'TestRawJobCostsOneCreditRegardlessOfSize|TestFailedRawJobCostsNothing|TestUnitsPricingUnchanged|TestRawStageBridgesWithoutJoinUnits|TestRawStageModeMismatchFailsTheJob|TestRawJobsCounterIncrementsOnDelivery' -count=1 -v 2>&1 | tee /tmp/acc-0006-T6.out \
   && ! grep -qE "no tests to run|^FAIL|^--- FAIL" /tmp/acc-0006-T6.out \
   && go test ./internal/router/... ./internal/httpapi/... -count=1
 ```
@@ -53,12 +53,12 @@ go test ./internal/router/... -run 'TestRawJobCostsOneCreditRegardlessOfSize|Tes
 
 | Test name | File | Verifies | Covers | Steps |
 |-----------|------|----------|--------|-------|
-| `TestRawJobCostsOneCreditRegardlessOfSize` | `internal/router/service_test.go` | A 1-byte and a 10 MB raw result both debit exactly 1 credit; a units job at the same label is unaffected | — | S2 |
-| `TestFailedRawJobCostsNothing` | `internal/router/service_test.go` | A raw job that fails, is abandoned, or expires debits nothing — the charge-on-delivery rule | — | S2, S6 |
-| `TestRawStageBridgesWithoutJoinUnits` | `internal/router/pipeline_test.go` | A raw stage's exact bytes become the next stage's input blob; `joinUnits` is not called | — | S3 |
-| `TestRawStageModeMismatchFailsTheJob` | `internal/router/pipeline_test.go` | Advancing into a stage whose label's mode disagrees fails the job with a named reason instead of queueing it forever | — | S4 |
-| `TestUnitsPricingUnchanged` | `internal/router/service_test.go` | A non-raw job still costs `len(units) * rate` across multi-stage accrual | — | S2 |
-| `TestRawJobsCounterIncrementsOnDelivery` | `internal/router/metrics_test.go` | `ocrr_raw_jobs` moves on raw delivery only | — | S5 |
+| `TestRawJobCostsOneCreditRegardlessOfSize` | `internal/router/rawpricing_test.go` | A 1-byte and a 1 MiB raw result both debit EXACTLY 1, against a service whose per-unit rate is 5 — so both the 0 of an empty unit list and the 5 of a single unit are caught | — | S2 |
+| `TestFailedRawJobCostsNothing` | `internal/router/rawpricing_test.go` | A raw job that never delivers debits nothing — the charge-on-delivery rule | — | S2, S6 |
+| `TestUnitsPricingUnchanged` | `internal/router/rawpricing_test.go` | A 4-unit job at rate 3 still costs 12 | — | S2 |
+| `TestRawStageBridgesWithoutJoinUnits` | `internal/router/rawpipeline_test.go` | Stage 1's bytes — containing an embedded NEWLINE and a non-UTF-8 lead — are stage 2's input byte for byte; joinUnits would mangle the first and JSON the second | — | S3 |
+| `TestRawStageModeMismatchFailsTheJob` | `internal/router/rawpipeline_test.go` | Advancing into a units stage fails the job with a reason NAMING that stage, instead of queueing it under a label whose every worker is refused | — | S4 |
+| `TestRawJobsCounterIncrementsOnDelivery` | `internal/router/rawpipeline_test.go` | `ocrr_raw_jobs_total{label}` moves once on a raw delivery | — | S5 |
 
 ## Reachability
 
@@ -70,6 +70,17 @@ go test ./internal/router/... -run 'TestRawJobCostsOneCreditRegardlessOfSize|Tes
 | 4 — it is used | `ocrr_raw_jobs` (S5) |
 
 ## Mutation Log
+
+- 2026-09-16 · 2d6794c* · mutant killed · exit 1 · `internal/router/service.go` · a raw job falls back to the accrued per-unit total, which for a job with no units is ZERO — a silent failure in the customer favour that nothing reports · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · covers:the flat price replacing len(units) × rate
+- 2026-09-16 · 2d6794c* · mutant inconclusive · exit 1 · `internal/router/service.go` · a raw stage may advance into a units stage, queueing the job under a label whose every worker the mode check refuses — stalled with nothing saying why · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · covers:the stage bridge moving the blob rather than joining units
+  ```
+  the fence failed on a build/parse error, not an assertion
+  ```
+- 2026-09-16 · 2d6794c* · mutant killed · exit 1 · `internal/router/service.go` · the bridge delivers a TRUNCATED payload to the next stage — the silent shortening a raw stream has no syntax to reveal · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · covers:the stage bridge moving the blob rather than joining units
+- 2026-09-16 · 2d6794c* · mutant killed · exit 1 · `internal/router/service.go` · a raw stage advances into a UNITS stage, so the job queues under a label whose every worker the mode check refuses — stalled forever with nothing saying why · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · covers:the charge landing on delivery
+- 2026-09-16 · 2d6794c* · mutant killed · exit 1 · `internal/router/service.go` · a raw stage advances into a UNITS stage, so the job queues under a label whose every worker the mode check refuses — stalled forever with nothing saying why · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · covers:the next stage's mode being validated
+- 2026-09-16 · 2d6794c* · mutant killed · exit 1 · `internal/router/service.go` · a raw job falls back to the accrued per-unit total, which with no units is ZERO — a silent failure in the customer favour · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · covers:the flat price replacing len(units) × rate
+- 2026-09-16 · 2d6794c* · mutant killed · exit 1 · `internal/router/service.go` · the bridge delivers a TRUNCATED payload to the next stage — the silent shortening a raw stream has no syntax to reveal · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · covers:the stage bridge moving the blob rather than joining units
 
 ## Invariants
 
@@ -100,3 +111,23 @@ question for the owner, not an implementation detail to settle here.
 - The admin control that marks a service raw — T8.
 
 ## Verification Log
+- 2026-09-16 · 2d6794c* · exit 1 · `set -o pipefail …` · acceptance-sha256:9c3ac8994bc2541fb9630f5b4144ce20a3d3e1dcc22bc6156e7ccdf58bc2b813 · ms:942
+  ```
+  --- last 9 line(s) of stdout
+  === RUN   TestRawJobCostsOneCreditRegardlessOfSize
+      rawpricing_test.go:59: a 1-byte raw job cost 0 credit(s), want exactly 1 — the service's rate is 5 per unit and a raw job has no units, so both 0 and 5 are wrong
+      rawpricing_test.go:59: a 1048576-byte raw job cost 0 credit(s), want exactly 1 — the service's rate is 5 per unit and a raw job has no units, so both 0 and 5 are wrong
+  --- FAIL: TestRawJobCostsOneCreditRegardlessOfSize (0.05s)
+  === RUN   TestFailedRawJobCostsNothing
+  --- PASS: TestFailedRawJobCostsNothing (0.01s)
+  FAIL
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/router	0.432s
+  FAIL
+  ```
+- 2026-09-16 · 2d6794c* · exit 0 · `set -o pipefail …` · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · ms:4913
+- 2026-09-16 · 2d6794c* · exit 0 · `set -o pipefail …` · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · ms:4876
+- 2026-09-16 · 2d6794c* · exit 0 · `set -o pipefail …` · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · ms:5576
+- 2026-09-16 · 2d6794c* · exit 0 · `set -o pipefail …` · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · ms:4647
+- 2026-09-16 · 2d6794c* · exit 0 · `set -o pipefail …` · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · ms:5854
+- 2026-09-16 · 2d6794c* · exit 0 · `set -o pipefail …` · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · ms:4853
+- 2026-09-16 · 2d6794c* · exit 0 · `set -o pipefail …` · acceptance-sha256:94be1b3ff21c899380dfd72734a030793482397e393435226dad622b1bfb2574 · ms:4622
