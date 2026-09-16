@@ -428,10 +428,10 @@ func TestRateForLabelDefaultsToOne(t *testing.T) {
 func TestSetRateRoundTrip(t *testing.T) {
 	r := newRepo(t)
 	ctx := context.Background()
-	if err := r.SetRate(ctx, "ocr", 3, base); err != nil {
+	if err := r.SetRate(ctx, "ocr", 3, false, base); err != nil {
 		t.Fatalf("SetRate: %v", err)
 	}
-	if err := r.SetRate(ctx, "ocr", 5, base); err != nil {
+	if err := r.SetRate(ctx, "ocr", 5, false, base); err != nil {
 		t.Fatalf("SetRate upsert: %v", err)
 	}
 	rate, _ := r.RateForLabel(ctx, "ocr")
@@ -442,8 +442,11 @@ func TestSetRateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRates: %v", err)
 	}
-	if all["ocr"] != 5 {
-		t.Errorf("ListRates[ocr] = %d, want 5", all["ocr"])
+	if all["ocr"].CreditsPerUnit != 5 {
+		t.Errorf("ListRates[ocr].CreditsPerUnit = %d, want 5", all["ocr"].CreditsPerUnit)
+	}
+	if all["ocr"].Raw {
+		t.Error("ListRates[ocr].Raw = true for a service set as units")
 	}
 }
 

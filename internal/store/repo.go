@@ -200,7 +200,7 @@ func (r *Repo) ListTokens(ctx context.Context, userID string) ([]core.Token, err
 }
 
 const jobColumns = `id, user_id, filename, size_byte, label, pipeline, stage, params,
-	has_blob, state, attempts, units, accrued_credits, worker_id, lease_expires_at,
+	has_blob, raw, state, attempts, units, accrued_credits, worker_id, lease_expires_at,
 	last_error, queued_at, expires_at, created_at, updated_at`
 
 func scanJob(row interface{ Scan(...any) error }) (core.Job, error) {
@@ -209,6 +209,7 @@ func scanJob(row interface{ Scan(...any) error }) (core.Job, error) {
 		pipeline string
 		params   string
 		hasBlob  int
+		raw      int
 		lease    sql.NullInt64
 		expires  sql.NullInt64
 		queued   int64
@@ -216,7 +217,7 @@ func scanJob(row interface{ Scan(...any) error }) (core.Job, error) {
 		updated  int64
 	)
 	err := row.Scan(&j.ID, &j.UserID, &j.Filename, &j.SizeByte, &j.Label, &pipeline,
-		&j.Stage, &params, &hasBlob, &j.State, &j.Attempts, &j.Units, &j.AccruedCredits,
+		&j.Stage, &params, &hasBlob, &raw, &j.State, &j.Attempts, &j.Units, &j.AccruedCredits,
 		&j.WorkerID, &lease, &j.LastError, &queued, &expires, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return core.Job{}, core.ErrNotFound
@@ -231,6 +232,7 @@ func scanJob(row interface{ Scan(...any) error }) (core.Job, error) {
 		return core.Job{}, fmt.Errorf("job %s: decoding params: %w", j.ID, err)
 	}
 	j.HasBlob = hasBlob == 1
+	j.Raw = raw == 1
 	if lease.Valid {
 		j.LeaseExpiresAt = time.Unix(lease.Int64, 0).UTC()
 	}
@@ -316,6 +318,41 @@ func (r *Repo) QueueDepthByLabel(ctx context.Context) (map[string]int, error) {
 	return out, rows.Err()
 }
 
+// RawJobsDoneBefore returns raw jobs that finished before cutoff and were never
+// collected.
+//
+// ⚠ It exists because a RAW job never enters the in-memory result store, so the
+// reaper's result sweep — which iterates that store — cannot see one. Without
+// this query a completed raw job nobody collects sits in `done` forever with its
+// output blob on disk: not merely a leak, a permanently stranded job.
+func (r *Repo) RawJobsDoneBefore(ctx context.Context, cutoff time.Time) ([]core.Job, error) {
+	rows, err := r.read.QueryContext(ctx,
+		`SELECT `+jobColumns+` FROM jobs WHERE state = 'done' AND raw = 1 AND updated_at <= ?`,
+		cutoff.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []core.Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// CountRawResultsPending is how many raw results sit on disk awaiting
+// collection. The gauge behind ocrr_raw_results_pending.
+func (r *Repo) CountRawResultsPending(ctx context.Context) (int, error) {
+	var n int
+	err := r.read.QueryRowContext(ctx,
+		`SELECT count(*) FROM jobs WHERE state = 'done' AND raw = 1`).Scan(&n)
+	return n, err
+}
+
 // OldestQueuedByLabel returns, per label, when the oldest queued job was queued.
 //
 // This is the stall signal: depth can sit low while one job is stuck forever, so
@@ -384,39 +421,58 @@ func (r *Repo) Ledger(ctx context.Context, userID string, limit int) ([]core.Led
 	return out, rows.Err()
 }
 
-// RateForLabel returns the credits charged per output unit for a service.
+// ServiceMode returns what a service costs per unit AND whether it is a raw
+// service, in one read.
 //
-// A label with no row costs 1. That default matters: returning 0 for an
-// unconfigured service would make every new service silently free, and nobody
-// would notice until the bill did not arrive.
-func (r *Repo) RateForLabel(ctx context.Context, label string) (int, error) {
-	var rate int
+// Both halves are ADMIN-OWNED and neither is derived from workers. ADR-0001 set
+// that boundary for the rate — a worker advertising its own price is a leaked
+// worker token setting what customers are charged — and ADR-0006 puts `raw`
+// under it for the same reason, because a raw job is priced at a flat credit
+// rather than per unit.
+//
+// A label with no row costs 1 and is NOT raw. Those defaults matter in opposite
+// directions: returning 0 would make an unconfigured service silently free, and
+// returning raw would silently promote it to flat-rate billing.
+func (r *Repo) ServiceMode(ctx context.Context, label string) (int, bool, error) {
+	var rate, raw int
 	err := r.read.QueryRowContext(ctx,
-		`SELECT credits_per_unit FROM service_rates WHERE label = ?`, label).Scan(&rate)
+		`SELECT credits_per_unit, raw FROM service_rates WHERE label = ?`, label).Scan(&rate, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 1, nil
+		return 1, false, nil
 	}
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return rate, nil
+	return rate, raw == 1, nil
 }
 
-// ListRates returns every configured service rate.
-func (r *Repo) ListRates(ctx context.Context) (map[string]int, error) {
-	rows, err := r.read.QueryContext(ctx, `SELECT label, credits_per_unit FROM service_rates`)
+// RateForLabel returns the credits charged per output unit for a service.
+//
+// The price half of ServiceMode, kept because several callers want only that.
+func (r *Repo) RateForLabel(ctx context.Context, label string) (int, error) {
+	rate, _, err := r.ServiceMode(ctx, label)
+	return rate, err
+}
+
+// ListRates returns every configured service's admin-owned pricing.
+//
+// It returns BOTH halves — the per-unit price and the raw flag — because they
+// are one decision, taken in one place, and a caller that reads only the number
+// renders a price that is wrong for every raw service (ADR-0006).
+func (r *Repo) ListRates(ctx context.Context) (map[string]core.ServiceRate, error) {
+	rows, err := r.read.QueryContext(ctx, `SELECT label, credits_per_unit, raw FROM service_rates`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]int{}
+	out := map[string]core.ServiceRate{}
 	for rows.Next() {
 		var label string
-		var rate int
-		if err := rows.Scan(&label, &rate); err != nil {
+		var rate, raw int
+		if err := rows.Scan(&label, &rate, &raw); err != nil {
 			return nil, err
 		}
-		out[label] = rate
+		out[label] = core.ServiceRate{CreditsPerUnit: rate, Raw: raw == 1}
 	}
 	return out, rows.Err()
 }

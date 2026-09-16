@@ -54,6 +54,10 @@ func filePart(r *http.Request) (*multipart.Part, error) {
 var reservedParams = map[string]struct{}{
 	"label":    {},
 	"pipeline": {},
+	// `raw` is the client's declared output mode. Reserving it is the security
+	// half: a param that is NOT reserved becomes a subprocess FLAG on the worker
+	// (ADR-0001), so leaking this one puts `-raw` on somebody's command line.
+	"raw": {},
 }
 
 // handleUpload serves both roles on one path.
@@ -86,8 +90,14 @@ func (a *API) uploadFromClient(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	q := r.URL.Query()
 
+	raw, err := rawParam(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	in := router.UploadInput{
 		Params: map[string]string{},
+		Raw:    raw,
 	}
 
 	// Pipeline wins over label when both are given: it is the more specific
@@ -169,8 +179,36 @@ type workerResult struct {
 }
 
 // resultFromWorker records a stage's outcome.
+//
+// ⚠ IT BRANCHES ON Content-Type, AND THAT IS NOT THE ROLE-CONFUSION BUG. The
+// role branch in handleUpload is unchanged and still first; this selects a
+// PAYLOAD SHAPE after the principal's role is already settled. The body cannot
+// choose the mode either, because jobs.raw was stamped at admission and
+// CompleteRaw/Complete each refuse a job of the other kind — so a worker sending
+// bytes for a units job is refused, and vice versa.
 func (a *API) resultFromWorker(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
+
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/octet-stream") {
+		jobID := r.URL.Query().Get("job_id")
+		if jobID == "" {
+			writeError(w, core.ErrInvalidParam)
+			return
+		}
+		// The id rides the query because the body IS the payload and has no room
+		// for an envelope. Streamed under the same cap as a client upload.
+		r.Body = http.MaxBytesReader(w, r.Body, a.deps.MaxUpload)
+		if err := a.deps.Router.CompleteRaw(r.Context(), p.TokenID, jobID, r.Body, a.deps.Now()); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				err = fmt.Errorf("%w: result exceeds the %d byte limit", core.ErrInvalidParam, tooBig.Limit)
+			}
+			writeError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
 	var body workerResult
 	if err := json.NewDecoder(io.LimitReader(r.Body, a.deps.MaxUpload)).Decode(&body); err != nil {

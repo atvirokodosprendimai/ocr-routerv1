@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,6 +33,14 @@ type fakeRouter struct {
 
 	events chan string // event names to push to the connected stream
 	drop   chan struct{}
+
+	// What the worker DECLARED and POSTED, for ADR-0006's tests. Captured on the
+	// fake rather than asserted through the real router, because the property
+	// under test is what the AGENT sends — the router's half is T2's.
+	sseRaw    string   // ?raw= seen on the subscribe
+	claimRaw  string   // ?raw= seen on the claim
+	rawBodies [][]byte // octet-stream bodies, in order
+	rawJobIDs []string // ?job_id= that came with each
 }
 
 type report struct {
@@ -68,6 +77,9 @@ func (f *fakeRouter) handler() http.Handler {
 
 	mux.HandleFunc("/sse", func(w http.ResponseWriter, r *http.Request) {
 		f.streams.Add(1)
+		f.mu.Lock()
+		f.sseRaw = r.URL.Query().Get("raw")
+		f.mu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "event: hello\ndata: {}\n\n")
@@ -88,6 +100,9 @@ func (f *fakeRouter) handler() http.Handler {
 
 	mux.HandleFunc("/claim", func(w http.ResponseWriter, r *http.Request) {
 		f.claims.Add(1)
+		f.mu.Lock()
+		f.claimRaw = r.URL.Query().Get("raw")
+		f.mu.Unlock()
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if len(f.queued) == 0 {
@@ -117,6 +132,17 @@ func (f *fakeRouter) handler() http.Handler {
 	})
 
 	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+		// Branch on the content type, exactly as the real router's worker arm
+		// does: octet-stream is a raw result, JSON is units-or-failure.
+		if r.Header.Get("Content-Type") == "application/octet-stream" {
+			body, _ := io.ReadAll(r.Body)
+			f.mu.Lock()
+			f.rawBodies = append(f.rawBodies, body)
+			f.rawJobIDs = append(f.rawJobIDs, r.URL.Query().Get("job_id"))
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		var rep report
 		_ = json.NewDecoder(r.Body).Decode(&rep)
 		f.mu.Lock()

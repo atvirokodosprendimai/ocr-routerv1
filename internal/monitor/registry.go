@@ -175,6 +175,13 @@ const (
 	MetricQueueDepth = "ocrr_queue_depth"
 	// MetricResultsInMemory tracks the unbounded-growth risk in the result store.
 	MetricResultsInMemory = "ocrr_results_in_memory"
+	// MetricRawResultsPending is the same risk for RAW results, which live on
+	// disk rather than in the result store and are therefore invisible to the
+	// gauge above (ADR-0006). Counted from the JOB TABLE rather than by walking
+	// the blob directory: the number an operator needs is "raw results awaiting
+	// collection", and a directory walk on every scrape would cost more the worse
+	// the problem got.
+	MetricRawResultsPending = "ocrr_raw_results_pending"
 
 	// MetricRequestsThrottled counts rate-limit refusals by role (ADR-0002). It
 	// is what makes throttling visible to the operator before a customer

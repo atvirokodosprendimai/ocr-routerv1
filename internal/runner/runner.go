@@ -26,6 +26,10 @@ type Runner struct {
 	// MaxOutput caps stdout, so a runaway command cannot exhaust the worker's
 	// memory before the timeout fires.
 	MaxOutput int64
+	// Raw means this worker's service emits opaque BYTES rather than a JSON
+	// array of units (ADR-0006). It changes only how stdout is interpreted:
+	// argv, the timeout, the process group and MaxOutput are identical.
+	Raw bool
 	// Env is the allow-listed environment passed to the child.
 	Env []string
 }
@@ -40,9 +44,41 @@ const stderrTail = 2000
 // to report — never a panic and never a worker exit. One malformed document must
 // not take down a worker that is serving every other customer.
 func (r Runner) Run(ctx context.Context, j Job) ([]string, error) {
-	argv, err := BuildArgv(r.Cmd, j)
+	stdout, stderr, err := r.exec(ctx, j)
 	if err != nil {
 		return nil, err
+	}
+	return parseUnits(stdout, stderr)
+}
+
+// RunRaw executes the job and returns its stdout unchanged.
+//
+// ⚠ THE BYTES ARE NEVER CONVERTED TO A STRING on this path, here or downstream.
+// The conversion itself is lossless in Go, but a string is what invites the next
+// author to hand the payload to encoding/json — which replaces every invalid
+// UTF-8 byte with U+FFFD, returns a nil error, and changes the length. That is
+// the defect ADR-0006 exists to remove, so the type is the guard.
+//
+// parseUnits is deliberately NOT reached, and deliberately not widened with a
+// mode argument: two output contracts sharing one function is how they become
+// one confused contract.
+func (r Runner) RunRaw(ctx context.Context, j Job) ([]byte, error) {
+	stdout, _, err := r.exec(ctx, j)
+	if err != nil {
+		return nil, err
+	}
+	return stdout, nil
+}
+
+// exec forks the command and returns its captured streams.
+//
+// Everything that is true of BOTH modes lives here — argv, the timeout, the
+// process group, the output cap, the exit-status mapping — so the two arms
+// differ in exactly one thing: how stdout is read.
+func (r Runner) exec(ctx context.Context, j Job) (stdoutBytes []byte, stderrText string, err error) {
+	argv, err := BuildArgv(r.Cmd, j)
+	if err != nil {
+		return nil, "", err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
@@ -63,11 +99,12 @@ func (r Runner) Run(ctx context.Context, j Job) ([]string, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &limitedWriter{w: &stdout, remaining: r.MaxOutput}
+	outCap := &limitedWriter{w: &stdout, remaining: r.MaxOutput}
+	cmd.Stdout = outCap
 	cmd.Stderr = &limitedWriter{w: &stderr, remaining: stderrTail}
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("starting %q: %w", r.Cmd, err)
+		return nil, "", fmt.Errorf("starting %q: %w", r.Cmd, err)
 	}
 
 	done := make(chan error, 1)
@@ -77,20 +114,25 @@ func (r Runner) Run(ctx context.Context, j Job) ([]string, error) {
 	case <-ctx.Done():
 		killGroup(cmd)
 		<-done // reap, so the process is not left a zombie
-		return nil, fmt.Errorf("timed out after %s", r.Timeout)
+		return nil, "", fmt.Errorf("timed out after %s", r.Timeout)
 
 	case err := <-done:
 		if err != nil {
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) {
-				return nil, fmt.Errorf("exit status %d: %s",
+				return nil, "", fmt.Errorf("exit status %d: %s",
 					exitErr.ExitCode(), strings.TrimSpace(stderr.String()))
 			}
-			return nil, err
+			return nil, "", err
 		}
 	}
 
-	return parseUnits(stdout.Bytes(), stderr.String())
+	// Overflow is a JOB FAILURE, never a quietly shortened result. Reported after
+	// the child is reaped so the exit path stays one shape.
+	if outCap.overflowed {
+		return nil, "", fmt.Errorf("produced more than the %d byte output limit", r.MaxOutput)
+	}
+	return stdout.Bytes(), stderr.String(), nil
 }
 
 // parseUnits reads the command's contract: a JSON array of strings on stdout.
@@ -133,23 +175,37 @@ func killGroup(cmd *exec.Cmd) {
 	_ = cmd.Process.Kill()
 }
 
-// limitedWriter discards everything past a byte budget.
+// limitedWriter discards everything past a byte budget and REMEMBERS that it
+// did.
 //
-// It does not error on overflow: a command that prints too much has failed in a
-// way the caller will discover when the truncated output does not parse, and
-// returning an error from a writer mid-execution only complicates the exit path.
+// ⚠ It deliberately does not error from Write — returning one mid-execution
+// complicates the exit path and can wedge the child on a closed pipe. Instead it
+// records the overflow, and exec turns that into a job failure after the process
+// has been reaped.
+//
+// ⚠ THE `overflowed` FLAG IS NOT BOOKKEEPING. This type used to truncate
+// silently, on the reasoning that "the caller will discover it when the
+// truncated output does not parse". That held only for the UNITS contract, and
+// only by accident: chopped JSON happens not to parse. A RAW service's output
+// has no syntax to violate, so a truncated payload would be delivered, stored
+// and billed as though it were whole — which is the same defect blob.Put's
+// staged write and atomic rename exist to prevent at the other end of the wire.
+// Found by ADR-0006 T4's own test, not by reading.
 type limitedWriter struct {
-	w         *bytes.Buffer
-	remaining int64
+	w          *bytes.Buffer
+	remaining  int64
+	overflowed bool
 }
 
 func (l *limitedWriter) Write(p []byte) (int, error) {
 	if l.remaining <= 0 {
+		l.overflowed = true
 		return len(p), nil
 	}
 	if int64(len(p)) > l.remaining {
 		l.w.Write(p[:l.remaining])
 		l.remaining = 0
+		l.overflowed = true
 		return len(p), nil
 	}
 	l.w.Write(p)

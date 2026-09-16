@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +36,12 @@ type Config struct {
 	// disconnects, so a rolling worker restart does not start rejecting uploads.
 	LabelGrace time.Duration
 	// DefaultLabel is the service a client gets when it names none.
+	// DefaultLabel is the service a client gets when it names none.
 	DefaultLabel string
+	// ResultTTL is how long a finished result stays collectable. The in-memory
+	// store enforces it for units results; the reaper enforces the SAME window
+	// for raw results, which live on disk and are invisible to that store.
+	ResultTTL time.Duration
 }
 
 // Service is the write API. There is exactly one per process.
@@ -89,6 +95,15 @@ type UploadInput struct {
 	// Params become subprocess flags on the worker. Keys are validated here;
 	// values are data.
 	Params map[string]string
+	// Raw is the output mode the CLIENT asked for, and must agree with the
+	// service's admin-owned mode or the upload is refused (ADR-0006).
+	//
+	// A plain bool, deliberately. The task planned a tri-state so that "the
+	// client said nothing" stayed distinguishable from "the client said units" —
+	// but the two produce the same outcome in every case: both are admitted on a
+	// units service and both are refused on a raw one. A distinction nothing can
+	// act on is state that can only be got wrong.
+	Raw bool
 }
 
 // Upload admits a job.
@@ -144,14 +159,34 @@ func (s *Service) Upload(ctx context.Context, userID string, in UploadInput, now
 			core.ErrNotFound, pipeline[0], strings.Join(s.AvailableLabels(now), ", "))
 	}
 
+	// The mode agreement, and the LAST refusal before anything is written. The
+	// client's declaration must match the service's admin-owned mode for exactly
+	// the reason a worker's must (ADR-0006): raw is a price, the admin owns it,
+	// and both ends only get to agree with it.
+	//
+	// Only pipeline[0] is checked here, consistently with the live-worker check
+	// above — a later stage's mode is validated when the job advances into it.
+	_, wantRaw, err := s.repo.ServiceMode(ctx, pipeline[0])
+	if err != nil {
+		return core.Job{}, err
+	}
+	if in.Raw != wantRaw {
+		return core.Job{}, fmt.Errorf("%w: client asked for %s output from %q, which the operator has configured as %s",
+			core.ErrModeMismatch, modeName(in.Raw), pipeline[0], modeName(wantRaw))
+	}
+
 	job := core.Job{
-		ID:        core.NewID(),
-		UserID:    userID,
-		Filename:  in.Filename,
-		Label:     pipeline[0],
-		Pipeline:  pipeline,
-		Stage:     0,
-		Params:    in.Params,
+		ID:       core.NewID(),
+		UserID:   userID,
+		Filename: in.Filename,
+		Label:    pipeline[0],
+		Pipeline: pipeline,
+		Stage:    0,
+		Params:   in.Params,
+		// Stamped ONCE, here. A job carries the mode it was admitted under, so an
+		// administrator editing the service later cannot reprice work already
+		// running.
+		Raw:       in.Raw,
 		State:     core.JobQueued,
 		QueuedAt:  now,
 		CreatedAt: now,
@@ -236,6 +271,14 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 	if !holdsLease(job, workerID, now) {
 		return core.ErrConflict
 	}
+	// The mirror of CompleteRaw's check, and it has to be here rather than at the
+	// HTTP boundary: the job's STAMPED mode decides the result's shape, so a
+	// worker posting a unit list for a raw job is refused whatever Content-Type
+	// it announced. Without this pair, the header would be choosing the mode.
+	if job.Raw {
+		return fmt.Errorf("%w: job %s is a raw job and its result must be an opaque body",
+			core.ErrModeMismatch, jobID)
+	}
 
 	rate, err := s.repo.RateForLabel(ctx, job.Label)
 	if err != nil {
@@ -285,6 +328,163 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 	return nil
 }
+
+// CompleteRaw accepts a worker's opaque output for the stage it holds.
+//
+// The bytes are STREAMED into the blob store and never held as a value: not a
+// string, not a []string, and never through encoding/json — which replaces
+// invalid UTF-8 with U+FFFD, returns no error, and changes the length. That is
+// the defect ADR-0006 exists to remove.
+//
+// ⚠ THE LEASE CHECK IS THE SAME ONE Complete MAKES, and it is not optional
+// duplication: it is what stops one customer's worker writing another's result,
+// and a second write path is exactly where such a guard gets forgotten.
+//
+// Pricing is deliberately NOT decided here — a raw job's flat credit is T6's,
+// and until then a raw job accrues what an empty unit list accrues.
+func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body io.Reader, now time.Time) error {
+	job, err := s.repo.JobByID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if !holdsLease(job, workerID, now) {
+		return core.ErrConflict
+	}
+	if !job.Raw {
+		return fmt.Errorf("%w: job %s is a units job and its result must be a JSON unit list",
+			core.ErrModeMismatch, jobID)
+	}
+
+	if _, err := s.blobs.PutResult(job.ID, body); err != nil {
+		return err
+	}
+
+	// A raw stage's output IS a blob, so the bridge between stages is a MOVE
+	// rather than a render. joinUnits stops being involved entirely on this path,
+	// which removes its lossy newline encoding from the one case where it would
+	// corrupt a payload rather than merely reshape one.
+	if next, more := job.NextLabel(); more {
+		return s.bridgeRawStage(ctx, job, next, workerID, now)
+	}
+
+	if err := s.repo.CompleteJob(ctx, job.ID, 1, job.AccruedCredits, now); err != nil {
+		// The result blob would otherwise sit on disk for a job that is not done.
+		_ = s.blobs.DeleteResult(job.ID)
+		return err
+	}
+	s.logTransition(job, core.JobProcessing, core.JobDone, job.UpdatedAt,
+		"worker", workerID, "", now)
+	s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
+		Kind: bus.KindReady, JobID: job.ID, Units: 1,
+	})
+	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
+	return nil
+}
+
+// bridgeRawStage hands a raw stage's output to the next stage as its input.
+//
+// The bridge is a MOVE of the result blob onto the input key, not a render:
+// joinUnits is never reached, so its newline joining — documented as lossy, and
+// for binary actively wrong — cannot touch the payload.
+//
+// ⚠ The NEXT stage's mode is validated here rather than at admission. ADR-0001
+// deliberately checks only pipeline[0] against live workers, because a later
+// service may legitimately deploy after the job is queued; the same reasoning
+// applies to its mode. Checking it at the moment of advance is what stops a job
+// queueing forever under a label that will refuse every worker.
+func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, workerID string, now time.Time) error {
+	_, nextRaw, err := s.repo.ServiceMode(ctx, next)
+	if err != nil {
+		return err
+	}
+	if !nextRaw {
+		// Fail the job with a reason a human can act on. Left queued instead, it
+		// would sit under a label whose every worker is refused, with nothing
+		// saying why.
+		return s.failJob(ctx, job, "router",
+			fmt.Sprintf("stage %q is a units service and cannot accept a raw stage's output", next),
+			now)
+	}
+
+	src, err := s.blobs.OpenResult(job.ID)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	if _, err := s.blobs.Put(job.ID, src); err != nil {
+		return err
+	}
+	// Only after the input is safely written: the staged-write-and-rename in Put
+	// has committed, so the result is no longer the only copy.
+	_ = s.blobs.DeleteResult(job.ID)
+
+	if err := s.repo.AdvanceStage(ctx, job.ID, next, job.AccruedCredits, now); err != nil {
+		return err
+	}
+	if !job.HasBlob {
+		// A params-only raw job now HAS a blob: its first stage produced one.
+		if err := s.repo.MarkHasBlob(ctx, job.ID); err != nil {
+			return err
+		}
+	}
+	s.counter.Inc(metricStageAdvances, nil)
+	s.logTransition(job, core.JobProcessing, core.JobQueued, job.UpdatedAt,
+		"router", workerID, "", now)
+	s.publishWork(next)
+	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
+	return nil
+}
+
+// DeliverRaw hands a finished raw result to its owner and charges for it.
+//
+// It mirrors Deliver's ordering exactly, with one difference forced by the
+// payload: the result is a FILE, so the caller streams it and this returns the
+// open handle. The charge commits BEFORE the handle is returned, and the blob is
+// removed by the caller once the copy succeeds — a result deleted before the
+// transaction committed would be unrecoverable, while an orphan file is not.
+func (s *Service) DeliverRaw(ctx context.Context, userID, jobID string, now time.Time) (*os.File, error) {
+	job, err := s.repo.JobByID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.UserID != userID {
+		// Not ErrForbidden: a caller must not learn that someone else's job id
+		// exists.
+		return nil, core.ErrNotFound
+	}
+	if !job.Raw {
+		return nil, core.ErrNotFound
+	}
+
+	f, err := s.blobs.OpenResult(jobID)
+	if err != nil {
+		return nil, err
+	}
+
+	// ⚠ FLAT ONE CREDIT, and asserted as the NUMBER rather than "a charge
+	// happened". A raw job has no units, so falling through to the accrued
+	// per-unit total charges ZERO — a failure in the customer's favour that
+	// nothing anywhere would report. The MOMENT is unchanged: on delivery, in
+	// this transaction, exactly as a units job.
+	const rawCost = 1
+	if err := s.repo.DeliverJob(ctx, jobID, userID, rawCost, now); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+
+	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDelivered)})
+	s.counter.Inc(metricRawJobs, map[string]string{"label": job.Label})
+	s.counter.Add(metricCreditsDebited, nil, int64(rawCost))
+	s.logTransition(job, job.State, core.JobDelivered, job.UpdatedAt, "client", "", "", now)
+	_ = s.blobs.Delete(jobID)
+	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: jobID})
+	return f, nil
+}
+
+// DropRawResult removes a delivered raw result. Called once the caller has
+// finished streaming it, so a failed copy leaves the file for a retry rather
+// than destroying it mid-flight.
+func (s *Service) DropRawResult(jobID string) { _ = s.blobs.DeleteResult(jobID) }
 
 // joinUnits renders a stage's output as the next stage's input.
 //
@@ -339,8 +539,9 @@ func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason strin
 	// reason, at which attempt.
 	s.logTransition(job, job.State, core.JobDead, job.UpdatedAt,
 		actor, job.WorkerID, reason, now)
-	// Terminal: the blob has no further use and nothing was charged.
+	// Terminal: neither blob has any further use and nothing was charged.
 	_ = s.blobs.Delete(job.ID)
+	_ = s.blobs.DeleteResult(job.ID)
 	s.results.Drop(job.ID)
 	s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
 		Kind: bus.KindFailed, JobID: job.ID, Reason: reason,
@@ -428,6 +629,47 @@ func (s *Service) noteLabel(label string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.labelSeen[label] = now
+}
+
+// CheckWorkerMode refuses a worker whose declared output mode disagrees with the
+// service's admin-owned one.
+//
+// ⚠ THIS IS A SECURITY BOUNDARY, not a validation nicety. `raw` is a PRICE — a
+// raw job costs a flat credit instead of len(units) × rate — so a worker able to
+// declare its own mode is a worker able to set what customers are charged.
+// ADR-0001 split label VALIDITY (derived from live workers, harmless if wrong)
+// from PRICING (admin-owned, in service_rates) for exactly that reason, and
+// ADR-0006 keeps the mode on the pricing side of the split.
+//
+// It CHECKS and records nothing, which is the whole of its job. An earlier draft
+// also stamped the label into labelSeen on agreement; a mutation proved that
+// line dead — Claim already stamps, and ObserveLabels derives the registry from
+// live bus topics — so it was removed rather than given a test. The admin record
+// stays the single authority on a mode and is re-read on every declaration: a
+// second copy in the registry would be a value able to disagree with the one
+// that decides the bill.
+func (s *Service) CheckWorkerMode(ctx context.Context, label string, raw bool) error {
+	_, wantRaw, err := s.repo.ServiceMode(ctx, label)
+	if err != nil {
+		return err
+	}
+	if raw != wantRaw {
+		return fmt.Errorf("%w: worker declares %s for %q, which the operator has configured as %s",
+			core.ErrModeMismatch, modeName(raw), label, modeName(wantRaw))
+	}
+	return nil
+}
+
+// modeName renders a mode for a human reading a refusal.
+//
+// The message names BOTH values on purpose: a worker that is refused forever is
+// diagnosable from one log line only if that line says what it asked for and
+// what the operator configured, so the reader knows which of the two to change.
+func modeName(raw bool) string {
+	if raw {
+		return "raw"
+	}
+	return "units"
 }
 
 // ObserveLabels samples which labels currently have a subscribed worker.

@@ -83,6 +83,63 @@ func (s *Store) path(id string) (string, error) {
 	return filepath.Join(s.dir, id[:2], id), nil
 }
 
+// resultPath is where a RAW job's output lives.
+//
+// The suffix is appended AFTER validID has accepted the id, so it introduces no
+// separator and no dot into anything untrusted — the traversal guard still
+// governs every byte that came from the URL. A distinct key rather than a
+// distinct directory keeps one job's input and output side by side, which
+// matters during a pipeline stage: the next stage's input is written while the
+// previous stage's output is still readable.
+func (s *Store) resultPath(id string) (string, error) {
+	full, err := s.path(id)
+	if err != nil {
+		return "", err
+	}
+	return full + ".out", nil
+}
+
+// PutResult writes r's bytes as the raw output of id.
+//
+// Same staged write, fsync and atomic rename as Put, and for the same reason: a
+// crash must never leave a TRUNCATED result under the real name. A short raw
+// payload is indistinguishable from a complete one — there is no syntax to fail
+// — so it would be delivered and billed as though it were whole.
+func (s *Store) PutResult(id string, r io.Reader) (int64, error) {
+	full, err := s.resultPath(id)
+	if err != nil {
+		return 0, err
+	}
+	return s.putAt(full, id, r)
+}
+
+// OpenResult returns a reader over a raw job's output. The caller closes it.
+func (s *Store) OpenResult(id string) (*os.File, error) {
+	full, err := s.resultPath(id)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(full)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, core.ErrNotFound
+	}
+	return f, err
+}
+
+// DeleteResult removes a raw job's output. Deleting an absent one is not an
+// error, for the same reason Delete is idempotent: delivery, the dead letter and
+// expiry all reach it, and a job that took two of them must not fail the second.
+func (s *Store) DeleteResult(id string) error {
+	full, err := s.resultPath(id)
+	if err != nil {
+		return nil
+	}
+	if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // Put writes r's bytes as the blob for id, replacing any existing one.
 //
 // The write is staged in a temp file in the SAME directory, fsync'd, and then
@@ -95,6 +152,14 @@ func (s *Store) Put(id string, r io.Reader) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	return s.putAt(full, id, r)
+}
+
+// putAt is the staged write both keys share: temp file in the SAME directory,
+// fsync, atomic rename. Factored out rather than copied so the source and the
+// result blob cannot drift apart on the property that matters — a crash partway
+// through leaves a stray temp file, never a truncated blob under the real name.
+func (s *Store) putAt(full, id string, r io.Reader) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		return 0, err
 	}

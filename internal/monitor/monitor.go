@@ -29,6 +29,10 @@ type Deps struct {
 	WorkersFor func(label string) int
 	// ResultsInMemory is the size of the result store.
 	ResultsInMemory func() int
+	// RawResultsPending is how many raw results are on disk awaiting collection.
+	// Optional: nil means the sample is omitted rather than reported as zero,
+	// because "not measured" and "none" are different claims.
+	RawResultsPending func() int
 
 	Now func() time.Time
 }
@@ -116,6 +120,10 @@ func (m *Monitor) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	b.help(MetricResultsInMemory, "gauge", "Results held in memory awaiting collection.")
 	b.sample(MetricResultsInMemory, nil, float64(m.deps.ResultsInMemory()))
+	if m.deps.RawResultsPending != nil {
+		b.help(MetricRawResultsPending, "gauge", "Raw results on disk awaiting collection.")
+		b.sample(MetricRawResultsPending, nil, float64(m.deps.RawResultsPending()))
+	}
 
 	// Counters, rendered from the registry.
 	for _, s := range m.reg.snapshot() {

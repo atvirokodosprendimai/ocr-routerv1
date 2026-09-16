@@ -63,7 +63,11 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobExpired)})
 		s.logTransition(job, core.JobQueued, core.JobExpired, job.QueuedAt,
 			"reaper", "", "deadline passed", now)
+		// BOTH keys. A raw job has an input blob and an output blob, and a
+		// deletion added to one path and forgotten on the other leaks silently
+		// — which is why every terminal path below calls the same pair.
 		_ = s.blobs.Delete(job.ID)
+		_ = s.blobs.DeleteResult(job.ID)
 		s.results.Drop(job.ID)
 		s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
 			Kind: bus.KindFailed, JobID: job.ID, Reason: "expired",
@@ -91,6 +95,28 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,
 			"reaper", "", "result expired before collection", now)
 		s.publishWork(job.Label)
+	}
+
+	// 3b. The same sweep for RAW results, which live on disk rather than in the
+	//     result store and are therefore invisible to the loop above. Same
+	//     outcome, deliberately: the input blob is still there, so the job is
+	//     requeued and the work is redone rather than stranded in `done`.
+	if s.cfg.ResultTTL > 0 {
+		stale, err := s.repo.RawJobsDoneBefore(ctx, now.Add(-s.cfg.ResultTTL))
+		if err != nil {
+			return rep, err
+		}
+		for _, job := range stale {
+			rep.ResultsSwept++
+			s.counter.Inc(metricReaperActions, map[string]string{"action": "result-swept"})
+			_ = s.blobs.DeleteResult(job.ID)
+			if err := s.repo.RequeueJob(ctx, job.ID, "result expired before collection", now); err != nil {
+				return rep, err
+			}
+			s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,
+				"reaper", "", "result expired before collection", now)
+			s.publishWork(job.Label)
+		}
 	}
 
 	if rep.LeasesExpired+rep.JobsExpired+rep.ResultsSwept > 0 {

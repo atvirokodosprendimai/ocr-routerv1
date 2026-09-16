@@ -23,7 +23,7 @@ func statusFor(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, core.ErrNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, core.ErrConflict):
+	case errors.Is(err, core.ErrConflict), errors.Is(err, core.ErrModeMismatch):
 		return http.StatusConflict
 	case errors.Is(err, core.ErrNoCredits):
 		// 402 is the one status in this table that says something a retry cannot

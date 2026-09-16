@@ -59,6 +59,10 @@ Point --cmd at something that honours "--", or at a small wrapper script.`,
 				Usage: "per-job time limit"},
 			&cli.IntFlag{Name: "max-output", Value: 64 << 20,
 				Usage: "maximum bytes read from the program's stdout"},
+			&cli.BoolFlag{Name: "raw",
+				Usage: "the program emits opaque BYTES on stdout, not a JSON array of strings. " +
+					"The service must also be marked raw by an administrator, or the router " +
+					"refuses this worker"},
 		},
 		Action: run,
 	}
@@ -68,7 +72,7 @@ func run(ctx context.Context, c *cli.Command) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	r := buildRunner(c.String("cmd"), c.Duration("timeout"), int64(c.Int("max-output")))
+	r := buildRunner(c.String("cmd"), c.Duration("timeout"), int64(c.Int("max-output")), c.Bool("raw"))
 
 	a := agent.New(agent.Config{
 		RouterURL: c.String("router"),
@@ -76,13 +80,14 @@ func run(ctx context.Context, c *cli.Command) error {
 		Label:     c.String("label"),
 		TmpDir:    c.String("tmpdir"),
 		Slots:     int(c.Int("slots")),
+		Raw:       c.Bool("raw"),
 	}, r)
 	a.Log = func(format string, args ...any) {
 		fmt.Printf(time.Now().Format(time.RFC3339)+" "+format+"\n", args...)
 	}
 
-	fmt.Printf("worker serving %q via %s (slots=%d cmd=%s)\n",
-		c.String("label"), c.String("router"), c.Int("slots"), c.String("cmd"))
+	fmt.Printf("worker serving %q via %s (slots=%d cmd=%s mode=%s)\n",
+		c.String("label"), c.String("router"), c.Int("slots"), c.String("cmd"), modeName(c.Bool("raw")))
 
 	return a.Run(ctx)
 }
@@ -93,11 +98,12 @@ func run(ctx context.Context, c *cli.Command) error {
 // can build the runner THE SAME WAY the binary does. A test that constructs its
 // own runner proves nothing about the one this command actually uses — in
 // particular, nothing about the environment allow-list.
-func buildRunner(cmd string, timeout time.Duration, maxOutput int64) runner.Runner {
+func buildRunner(cmd string, timeout time.Duration, maxOutput int64, raw bool) runner.Runner {
 	return runner.Runner{
 		Cmd:       cmd,
 		Timeout:   timeout,
 		MaxOutput: maxOutput,
+		Raw:       raw,
 		// An explicit allow-list, so the worker's own environment — which holds
 		// its router token — is never handed to a service it runs.
 		Env: allowedEnv(),
@@ -122,4 +128,16 @@ func allowedEnv() []string {
 		}
 	}
 	return out
+}
+
+// modeName names the output contract on the startup line.
+//
+// Printed because a mode mismatch is refused by the router on every claim, and
+// an operator reading "mode=raw" beside a service the dashboard shows as units
+// has the whole diagnosis in two places they already look.
+func modeName(raw bool) string {
+	if raw {
+		return "raw"
+	}
+	return "units"
 }

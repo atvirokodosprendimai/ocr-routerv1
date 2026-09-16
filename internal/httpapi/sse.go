@@ -38,6 +38,19 @@ func (a *API) handleSSE(w http.ResponseWriter, r *http.Request) {
 			writeError(w, core.ErrInvalidParam)
 			return
 		}
+		// Declaring the mode on the SUBSCRIBE too, not only on claim. This is
+		// the call that registers the label at all, so a worker refused on
+		// /claim but accepted here would still make its label available to
+		// clients — advertising a service nothing can correctly serve.
+		raw, err := rawParam(r)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if err := a.deps.Router.CheckWorkerMode(r.Context(), label, raw); err != nil {
+			writeError(w, err)
+			return
+		}
 		topic = bus.WorkerTopic(label)
 	default:
 		writeError(w, core.ErrForbidden)

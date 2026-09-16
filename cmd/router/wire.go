@@ -156,6 +156,10 @@ func buildApp(cfg Config) (*App, error) {
 		AgingStep:    cfg.AgingStep,
 		LabelGrace:   cfg.LabelGrace,
 		DefaultLabel: cfg.DefaultLabel,
+		// The SAME window the in-memory result store uses. A raw result lives on
+		// disk instead, so the reaper enforces it there — and if these two ever
+		// disagree, one class of result outlives the other for no stated reason.
+		ResultTTL: cfg.ResultTTL,
 	})
 
 	// Leases and in-memory results died with the previous process, so anything
@@ -230,7 +234,15 @@ func buildApp(cfg Config) (*App, error) {
 		LiveLabels:      rt.AvailableLabels,
 		WorkersFor:      func(label string) int { return b.Subscribers(bus.WorkerTopic(label)) },
 		ResultsInMemory: res.Len,
-		Now:             time.Now,
+		RawResultsPending: func() int {
+			n, err := repo.CountRawResultsPending(context.Background())
+			if err != nil {
+				// A scrape must never fail because one gauge could not be read.
+				return 0
+			}
+			return n
+		},
+		Now: time.Now,
 	})
 
 	mux := chi.NewRouter()
