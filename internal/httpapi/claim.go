@@ -33,6 +33,20 @@ func (a *API) handleClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The worker declares its output mode here, and is REFUSED if it disagrees
+	// with the service's admin-owned one. Doing this before the claim matters:
+	// a mismatched worker must never hold a lease, because it would then produce
+	// output in the wrong shape for a job that is already counted as running.
+	raw, err := rawParam(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := a.deps.Router.CheckWorkerMode(r.Context(), label, raw); err != nil {
+		writeError(w, err)
+		return
+	}
+
 	job, err := a.deps.Router.Claim(r.Context(), p.TokenID, label, a.deps.Now())
 	if errors.Is(err, core.ErrNotFound) {
 		// 204, not 404. An empty queue is the NORMAL answer to a polling

@@ -5,7 +5,7 @@
 **Estimated scope:** M (multi-file)
 **Owner:** unassigned
 **Produces:** `--raw` on `cmd/worker`, `runner.Run` raw arm, worker raw result wire shape (`POST /upload?job_id=<id>`, `Content-Type: application/octet-stream`)
-**Consumes:** `Service.NoteWorker(label, raw, now)` (T2)
+**Consumes:** `Service.CheckWorkerMode(ctx, label, raw)` (T2), `?raw=` on `/sse` and `/claim` (T2)
 **Data dependency:** hermetic
 **Proof map:** v1
 **Rests-on:** `stdout bypassing parseUnits`, `the bytes never becoming a string`, `the flag reaching the declaration`

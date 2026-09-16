@@ -430,6 +430,47 @@ func (s *Service) noteLabel(label string, now time.Time) {
 	s.labelSeen[label] = now
 }
 
+// CheckWorkerMode refuses a worker whose declared output mode disagrees with the
+// service's admin-owned one.
+//
+// ⚠ THIS IS A SECURITY BOUNDARY, not a validation nicety. `raw` is a PRICE — a
+// raw job costs a flat credit instead of len(units) × rate — so a worker able to
+// declare its own mode is a worker able to set what customers are charged.
+// ADR-0001 split label VALIDITY (derived from live workers, harmless if wrong)
+// from PRICING (admin-owned, in service_rates) for exactly that reason, and
+// ADR-0006 keeps the mode on the pricing side of the split.
+//
+// It CHECKS and records nothing, which is the whole of its job. An earlier draft
+// also stamped the label into labelSeen on agreement; a mutation proved that
+// line dead — Claim already stamps, and ObserveLabels derives the registry from
+// live bus topics — so it was removed rather than given a test. The admin record
+// stays the single authority on a mode and is re-read on every declaration: a
+// second copy in the registry would be a value able to disagree with the one
+// that decides the bill.
+func (s *Service) CheckWorkerMode(ctx context.Context, label string, raw bool) error {
+	_, wantRaw, err := s.repo.ServiceMode(ctx, label)
+	if err != nil {
+		return err
+	}
+	if raw != wantRaw {
+		return fmt.Errorf("%w: worker declares %s for %q, which the operator has configured as %s",
+			core.ErrModeMismatch, modeName(raw), label, modeName(wantRaw))
+	}
+	return nil
+}
+
+// modeName renders a mode for a human reading a refusal.
+//
+// The message names BOTH values on purpose: a worker that is refused forever is
+// diagnosable from one log line only if that line says what it asked for and
+// what the operator configured, so the reader knows which of the two to change.
+func modeName(raw bool) string {
+	if raw {
+		return "raw"
+	}
+	return "units"
+}
+
 // ObserveLabels samples which labels currently have a subscribed worker.
 //
 // The registry is DERIVED from live workers rather than administered: adding a

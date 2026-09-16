@@ -166,7 +166,7 @@ a new subsystem.
 |----------|----------------|-------------------|-----------|
 | `Repo.ServiceMode(label)` / `Repo.SetRate(label, rate, raw)` | T1 | T2, T3, T8 | Yes — `SetRate` gains a parameter; every existing caller must be updated in T1 |
 | `jobs.raw` column + `core.Job.Raw` | T1 | T3, T5, T6 | No — additive, defaults 0 |
-| `Service.NoteWorker(label, raw)` + `core.ErrModeMismatch` | T2 | T4 | Yes — replaces `noteLabel`, which is unexported and has two call sites |
+| `Service.CheckWorkerMode(ctx, label, raw)` + `core.ErrModeMismatch` + `?raw=` on `/sse` and `/claim` | T2 | T4 | No — additive; `noteLabel` is unchanged and still stamps from `Claim` |
 | `jobs.raw` stamped at admission | T3 | T5, T6 | No |
 | worker raw result wire shape (`?job_id=`, octet-stream body) | T4 | T5 | No — new shape beside the existing one |
 | raw result blob + `GET /files/{id}` octet-stream response | T5 | T6, T7 | No |

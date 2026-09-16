@@ -51,4 +51,11 @@ var (
 	// different things for different reasons. Both map to 429, and the
 	// Retry-After header is what tells them apart to a client.
 	ErrRateLimited = errors.New("rate limited")
+
+	// ErrModeMismatch is a worker or a client whose declared output mode
+	// disagrees with the service's admin-owned mode (ADR-0006). It is a
+	// CONFLICT rather than a bad parameter: both values are individually valid
+	// and the request is refused because they disagree, which is a fact about
+	// the system's state rather than about the caller's syntax.
+	ErrModeMismatch = errors.New("output mode mismatch")
 )
