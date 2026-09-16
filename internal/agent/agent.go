@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -90,6 +91,16 @@ func (a *Agent) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
+		// ⚠ A CONFIGURATION REFUSAL IS NOT RETRIED. Reconnecting can only fix a
+		// TRANSIENT failure; a wrong label, a revoked token, the wrong role or a
+		// mode the operator did not configure are all answers that will be
+		// identical on every attempt. Looping on them turns a one-line fix into a
+		// silent forever-loop whose log says only "409 Conflict".
+		var fatal *fatalRefusal
+		if errors.As(err, &fatal) {
+			a.Log("refused by the router and NOT retrying: %v", fatal)
+			return err
+		}
 		a.Log("stream ended (%v); reconnecting in %s", err, backoff)
 
 		jitter := time.Duration(rand.Int63n(int64(backoff / 2)))
@@ -121,7 +132,12 @@ func (a *Agent) listen(ctx context.Context, slots chan struct{}) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("stream returned %s", resp.Status)
+		// Read the body: the router explains ITSELF there — which label, which
+		// mode it was asked for, which mode the operator configured — and
+		// discarding it is why a mode mismatch used to surface as a bare
+		// "409 Conflict" with nothing to act on.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return classifyStreamStatus(resp.StatusCode, resp.Status, body)
 	}
 	a.Log("connected to %s serving %q", a.cfg.RouterURL, a.cfg.Label)
 
