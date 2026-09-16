@@ -507,7 +507,16 @@ func (wb *Web) setRate(w http.ResponseWriter, r *http.Request) {
 		wb.patch(w, r, views.CreateError("credits per unit must be a non-negative whole number"))
 		return
 	}
-	if err := wb.deps.Repo.SetRate(r.Context(), label, rate, wb.deps.Now()); err != nil {
+	// Carry the service's CURRENT mode through unchanged. SetRate upserts the
+	// whole row, so passing a literal here would silently reset every raw
+	// service to units the next time an admin edited its price. ADR-0006 T8
+	// replaces this read with the control that actually sets the mode.
+	_, raw, err := wb.deps.Repo.ServiceMode(r.Context(), label)
+	if err != nil {
+		wb.patch(w, r, views.CreateError(err.Error()))
+		return
+	}
+	if err := wb.deps.Repo.SetRate(r.Context(), label, rate, raw, wb.deps.Now()); err != nil {
 		wb.patch(w, r, views.CreateError(err.Error()))
 		return
 	}

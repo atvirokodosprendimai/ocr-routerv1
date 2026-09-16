@@ -428,10 +428,10 @@ func TestRateForLabelDefaultsToOne(t *testing.T) {
 func TestSetRateRoundTrip(t *testing.T) {
 	r := newRepo(t)
 	ctx := context.Background()
-	if err := r.SetRate(ctx, "ocr", 3, base); err != nil {
+	if err := r.SetRate(ctx, "ocr", 3, false, base); err != nil {
 		t.Fatalf("SetRate: %v", err)
 	}
-	if err := r.SetRate(ctx, "ocr", 5, base); err != nil {
+	if err := r.SetRate(ctx, "ocr", 5, false, base); err != nil {
 		t.Fatalf("SetRate upsert: %v", err)
 	}
 	rate, _ := r.RateForLabel(ctx, "ocr")

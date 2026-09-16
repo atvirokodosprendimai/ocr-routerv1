@@ -181,10 +181,10 @@ func TestPipelineAccruesPerStageRate(t *testing.T) {
 	ctx := context.Background()
 
 	// crawl is free; ocr costs 2 per unit.
-	if err := h.repo.SetRate(ctx, "crawl", 0, base); err != nil {
+	if err := h.repo.SetRate(ctx, "crawl", 0, false, base); err != nil {
 		t.Fatalf("SetRate crawl: %v", err)
 	}
-	if err := h.repo.SetRate(ctx, "ocr", 2, base); err != nil {
+	if err := h.repo.SetRate(ctx, "ocr", 2, false, base); err != nil {
 		t.Fatalf("SetRate ocr: %v", err)
 	}
 

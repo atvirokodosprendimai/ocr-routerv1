@@ -34,6 +34,11 @@ type Job struct {
 	// inferring it from an empty path. A crawler-style job has parameters and
 	// no file at all, and that is a normal shape rather than a corrupt upload.
 	HasBlob bool
+	// Raw records that this job's output is opaque bytes rather than a list of
+	// units, and is stamped ONCE at admission (ADR-0006). It is deliberately a
+	// property of the JOB rather than a lookup of the service's current mode: an
+	// administrator editing a service must not reprice work already running.
+	Raw bool
 
 	State    JobState
 	Attempts int

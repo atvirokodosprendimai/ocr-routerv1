@@ -102,11 +102,11 @@ func (r *Repo) CreateJob(ctx context.Context, j core.Job) error {
 	}
 	_, err = r.write.ExecContext(ctx,
 		`INSERT INTO jobs (id, user_id, filename, size_byte, label, pipeline, stage, params,
-		                   has_blob, state, attempts, units, accrued_credits, worker_id,
+		                   has_blob, raw, state, attempts, units, accrued_credits, worker_id,
 		                   lease_expires_at, last_error, queued_at, expires_at, created_at, updated_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,0,0,0,'',NULL,'',?,?,?,?)`,
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,0,0,0,'',NULL,'',?,?,?,?)`,
 		j.ID, j.UserID, j.Filename, j.SizeByte, j.Label, string(pipeline), j.Stage,
-		string(params), boolToInt(j.HasBlob), core.JobQueued,
+		string(params), boolToInt(j.HasBlob), boolToInt(j.Raw), core.JobQueued,
 		j.QueuedAt.Unix(), expires, j.CreatedAt.Unix(), j.UpdatedAt.Unix())
 	return mapConstraint(err)
 }
@@ -322,13 +322,18 @@ func (r *Repo) ResetInFlightOnBoot(ctx context.Context, now time.Time) (int, err
 	return int(n), err
 }
 
-// SetRate upserts a service's price per output unit.
-func (r *Repo) SetRate(ctx context.Context, label string, creditsPerUnit int, now time.Time) error {
+// SetRate upserts a service's price per output unit and its output mode.
+//
+// `raw` rides with the rate because it IS one: a raw service bills a flat credit
+// instead of per unit, so letting it be set anywhere less privileged would put
+// pricing back in reach of a worker (ADR-0006, ADR-0001 §security boundary).
+func (r *Repo) SetRate(ctx context.Context, label string, creditsPerUnit int, raw bool, now time.Time) error {
 	_, err := r.write.ExecContext(ctx,
-		`INSERT INTO service_rates (label, credits_per_unit, updated_at) VALUES (?,?,?)
+		`INSERT INTO service_rates (label, credits_per_unit, raw, updated_at) VALUES (?,?,?,?)
 		 ON CONFLICT(label) DO UPDATE SET credits_per_unit = excluded.credits_per_unit,
+		                                  raw = excluded.raw,
 		                                  updated_at = excluded.updated_at`,
-		label, creditsPerUnit, now.Unix())
+		label, creditsPerUnit, boolToInt(raw), now.Unix())
 	return err
 }
 

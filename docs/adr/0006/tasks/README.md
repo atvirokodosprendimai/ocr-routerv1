@@ -40,7 +40,7 @@ nothing downstream of it can be proved before it lands.
 
 | ID | Title | Status | Covers | Acceptance |
 |----|-------|--------|--------|------------|
-| T1 | Store a service's raw mode where the admin owns it, and stamp it on the job | pending | — | `go test ./internal/store/... -run 'TestSetRateCarriesRawMode\|TestServiceModeDefaultsToUnits'` |
+| T1 | Store a service's raw mode where the admin owns it, and stamp it on the job | done | — | `go test ./internal/store/... -run 'TestSetRateCarriesRawMode\|TestServiceModeDefaultsToUnits\|TestCreateJobPersistsRawStamp\|TestRateForLabelStillAnswers\|TestMigrationDownDropsRawColumns'` |
 | T2 | Make a worker declare its mode, and refuse one that disagrees with the admin record | pending | — | `go test ./internal/httpapi/... -run 'TestRawModeMismatchIsRefused\|TestMatchingModeIsAccepted'` |
 | T3 | Match the client's requested mode against the admin record and stamp it on the job | pending | — | `go test ./internal/httpapi/... -run 'TestClientRawOnUnitsLabelIsRefused\|...'` |
 | T4 | Let a worker emit raw bytes and post them without passing through a string | pending | — | `go test ./internal/runner/... ./internal/agent/... -run 'TestRawRunnerReturnsBytesVerbatim\|...'` |
@@ -55,7 +55,7 @@ Status: `pending` | `partial` | `blocked` | `done`.
 
 | Producer | Contract | Consumer(s) | Ordering note |
 |----------|----------|-------------|---------------|
-| T1 | `Repo.ServiceMode` / `Repo.SetRate(…, raw, …)` | T2, T3, T8 | T1 before all three — `SetRate`'s signature break reaches `internal/web/web.go:510` |
+| T1 | `Repo.ServiceMode` / `Repo.SetRate(…, raw, …)` | T2, T3, T8 | T1 before all three — the signature break reached `internal/web/web.go:510` AND `internal/router/pipeline_test.go:184,187`, which the task's Affected Files did not predict; enumerated with `git grep -n "SetRate(" -- '*.go'`, 5 call sites, all updated |
 | T1 | `jobs.raw` + `core.Job.Raw` | T3, T5, T6 | T1 before T3 |
 | T2 | `Service.NoteWorker` + `core.ErrModeMismatch` | T4 | T2 before T4 — the worker's flag needs the wire contract to declare into |
 | T3 | `jobs.raw` stamped at admission | T5, T6 | T3 before T5 — the stamp is what T5's shape check reads |
