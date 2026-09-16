@@ -42,6 +42,13 @@ func newHarness(t *testing.T) *harness {
 	}
 	repo := store.NewRepo(db)
 	res := results.New(time.Hour)
+	// Pin the result store to the SAME injected clock every other assertion uses.
+	// Without this, Put stamps expiresAt from the real time.Now while the tests
+	// reason in `base` — so a test that moves the clock to base+2h is comparing
+	// against an expiry computed from today's date. That passed only while `base`
+	// happened to be within an hour of the real clock, and went red on its own the
+	// day after `base` (2026-09-15), with no code change.
+	res.SetClock(func() time.Time { return base })
 	b := bus.New()
 	svc := router.New(repo, blobs, res, b, router.Config{
 		Lease:        5 * time.Minute,
