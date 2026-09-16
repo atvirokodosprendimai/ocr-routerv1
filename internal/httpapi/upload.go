@@ -2,13 +2,52 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
 	"github.com/atvirokodosprendimai/ocr-router/internal/core"
 	"github.com/atvirokodosprendimai/ocr-router/internal/router"
 )
+
+// filePart returns the "file" part of a multipart request as a STREAM, without
+// parsing the form.
+//
+// r.FormFile is shorter and is the wrong tool here. It parses the WHOLE form up
+// front: up to 32 MiB of the file is held in memory and the remainder is spilled
+// to a temp file in os.TempDir, so every byte is written to disk twice — once by
+// the form parser and again by blob.Put — and the entire upload is absorbed
+// before Upload is even reached, which means a client with no credits, at its
+// buffer limit, or naming a label no worker serves still costs the router a full
+// copy of the file before being refused.
+//
+// Handing the part itself to Upload lets blob.Put copy the network straight into
+// the blob's staging file, and lets every refusal cost nothing.
+//
+// A part with no filename is skipped for the same reason FormFile ignores one:
+// it is an ordinary form field, not the source file.
+func filePart(r *http.Request) (*multipart.Part, error) {
+	mr, err := r.MultipartReader()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		// io.EOF here means the body held no "file" part at all, which is an
+		// error rather than an empty upload: the params-only crawler shape sends
+		// no body, not an empty multipart one.
+		p, err := mr.NextPart()
+		if err != nil {
+			return nil, err
+		}
+		if p.FormName() == "file" && p.FileName() != "" {
+			return p, nil
+		}
+		_ = p.Close()
+	}
+}
 
 // reservedParams are query keys that mean something to the router itself and
 // must not leak through into the job's subprocess parameters.
@@ -77,14 +116,19 @@ func (a *API) uploadFromClient(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/"):
 		r.Body = http.MaxBytesReader(w, r.Body, a.deps.MaxUpload)
-		file, header, err := r.FormFile("file")
+		part, err := filePart(r)
 		if err != nil {
 			writeError(w, core.ErrInvalidParam)
 			return
 		}
-		defer file.Close()
-		in.Body = file
-		in.Filename = header.Filename
+		// The part is deliberately NOT closed. multipart.Part.Close drains
+		// whatever is left of the part into io.Discard so the next part can be
+		// read, and there is no next part here — so on a refusal it would pull
+		// the entire file off the wire for nothing, which is most of what this
+		// handler was changed to stop doing. The part is backed by r.Body, and
+		// net/http closes that.
+		in.Body = part
+		in.Filename = part.FileName()
 
 	case r.ContentLength > 0:
 		// A body that is NOT multipart is a mistake, and refusing it is the
@@ -99,6 +143,14 @@ func (a *API) uploadFromClient(w http.ResponseWriter, r *http.Request) {
 
 	job, err := a.deps.Router.Upload(r.Context(), p.UserID, in, a.deps.Now())
 	if err != nil {
+		// The cap is enforced by MaxBytesReader while blob.Put streams the part,
+		// so an oversize upload now surfaces as a blob write failure. Without
+		// this it would map to 500 — a server fault — when it is the client that
+		// sent too much.
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			err = fmt.Errorf("%w: upload exceeds the %d byte limit", core.ErrInvalidParam, tooBig.Limit)
+		}
 		writeError(w, err)
 		return
 	}
