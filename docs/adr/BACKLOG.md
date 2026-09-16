@@ -9,6 +9,15 @@ reported by `adr-debt` and missing here is a pointer to nothing.
 - **Per-token rate limiting beyond the per-customer buffer limit.**
   Deferred by ADR-0001; **taken up by ADR-0002**
   (`docs/adr/0002/0002-rate-limiting-and-structured-logging.md`, §Decision 1).
+- **`?raw=1` — stdio passthrough billed at a flat 1 credit per request.**
+  Requested by M 2026-09-15; **taken up by ADR-0006**
+  (`docs/adr/0006/0006-raw-passthrough.md`), after M added the binary requirement on 2026-09-16.
+  Every question this entry listed is answered there: raw composes with pipelines (the stage bridge
+  is already a blob), the flat credit is charged on delivery, `GET /files/{id}` returns
+  `application/octet-stream`, and a worker opts in by declaring a mode the admin record must
+  already carry. The entry did NOT anticipate that the units channel is `[]string` end to end and
+  cannot carry bytes at all — measured 2026-09-16, `encoding/json` replaces invalid UTF-8 with
+  U+FFFD silently — which is what turned this from a flag into a record.
 - **Structured request and transition logging (`log/slog` JSON).**
   Deferred by ADR-0001 task T11; **taken up by ADR-0002** (§Decision 2).
 - **A way into the admin dashboard from a browser.**
@@ -33,20 +42,19 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   still accrues a cost for reporting, since "we cannot bill it" and "we cannot see what it cost"
   are different claims, and the metrics counter at `:385` currently conflates them.
 
-- **`?raw=1` — stdio passthrough billed at a flat 1 credit per request.** (requested by M,
-  2026-09-15)
-  **Shape asked for:** the request body goes to the worker subprocess on stdin unchanged, whatever
-  the worker writes on stdout comes back unchanged, and the request costs exactly 1 credit however
-  much comes out.
-  **What an ADR has to decide:** today a result is a list of UNITS — `joinUnits` renders them for
-  the next stage (`internal/router/service.go:289`) and `len(out) * rate` prices them (`:244`). Raw
-  mode has no units, so it needs a job-level mode that both the pricing and the unit-splitting
-  respect, not a special case in one of them. Also: whether raw composes with pipelines at all
-  (stage 2's input is `joinUnits` of stage 1, which raw has no answer for); whether the flat credit
-  is charged on admission or on delivery, which decides who pays for a job that dies; what
-  `GET /files/{id}` returns for a raw job, since the client currently expects units; and whether a
-  worker opts into raw or is handed it, because a worker that ignores the mode silently returns
-  unit-split output at a flat price.
+- **Compression of a raw result in transit.**
+  Deferred by ADR-0006 (`docs/adr/0006/0006-raw-passthrough.md`, §Out of Scope), 2026-09-16.
+  A raw result streams uncompressed from the blob store to the client. For the outputs raw exists to
+  carry — images, PDFs, audio — that is usually right, because they are already compressed and a
+  second pass costs CPU for nothing. It is wrong for a raw service emitting large text, which is a
+  shape nobody has asked for yet. Needs a decision on whether the router negotiates encoding at all,
+  given that ADR-0001's "fat morph" argument elsewhere rests on brotli being negotiated on the SSE
+  path and nobody has verified that it is.
+- **Marking several services raw in one action from the dashboard.**
+  Deferred by ADR-0006 task T8 (`docs/adr/0006/tasks/T8-admin-raw-control.md`, §Out of Scope),
+  2026-09-16. T8 adds a per-row control. Bulk editing across rows is the same shape already
+  deferred for customer settings by ADR-0004, and should be decided once for both rather than
+  twice differently.
 
 - **OpenTelemetry / OTLP export for the router.**
   Deferred by ADR-0001 (§Alternatives), by task T11 (§Out of Scope), and **re-deferred by ADR-0002**
