@@ -72,10 +72,9 @@ func writeResult(stdout io.Writer, path string, res client.Result, asJSON bool) 
 	if path == stdoutPath {
 		// Nothing to be atomic about: a pipe has no partial-file state, and the
 		// caller sees exactly what arrives.
-		_, err := io.WriteString(stdout, body)
+		_, err := stdout.Write(body)
 		return err
 	}
-
 	// ⚠ A non-regular destination is written DIRECTLY. `-o /dev/null` is the
 	// common case, and renaming a temp file over a device node would replace it
 	// with a regular file — destroying something the system needs, to protect
@@ -86,7 +85,7 @@ func writeResult(stdout io.Writer, path string, res client.Result, asJSON bool) 
 			return err
 		}
 		defer f.Close()
-		_, err = io.WriteString(f, body)
+		_, err = f.Write(body)
 		return err
 	}
 
@@ -102,7 +101,7 @@ func writeResult(stdout io.Writer, path string, res client.Result, asJSON bool) 
 		_ = os.Remove(tmpName)
 	}()
 
-	if _, err := io.WriteString(tmp, body); err != nil {
+	if _, err := tmp.Write(body); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -119,22 +118,40 @@ func writeResult(stdout io.Writer, path string, res client.Result, asJSON bool) 
 }
 
 // render turns a result into the bytes that go to the destination.
-func render(res client.Result, asJSON bool) (string, error) {
+//
+// ⚠ A RAW RESULT IS RETURNED UNCHANGED — no trailing newline, no join, no
+// encoding. Appending a newline is the single most likely accidental corruption
+// here, because every other output path in this CLI ends with one, which is why
+// the test asserts exact LENGTH rather than a prefix.
+func render(res client.Result, asJSON bool) ([]byte, error) {
+	if len(res.Raw) > 0 {
+		if asJSON {
+			// Refused rather than encoded. The --json envelope is a units shape,
+			// and putting bytes through a JSON string field is exactly the
+			// silent U+FFFD corruption ADR-0006 exists to remove — it would come
+			// straight back at the last hop.
+			return nil, fmt.Errorf("--json cannot represent a raw result: a JSON string field " +
+				"cannot carry arbitrary bytes. Write it to a file with -o, or to stdout with -o -")
+		}
+		return res.Raw, nil
+	}
+
 	if asJSON {
 		b, err := json.MarshalIndent(map[string]any{
 			"job_id": res.JobID,
 			"units":  res.Units,
 		}, "", "  ")
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		return string(b) + "\n", nil
+		return append(b, '\n'), nil
 	}
 
 	// Newline-joined text: the natural form, and the same shape ADR-0001
-	// specified for a worker's own stdout.
+	// specified for a worker's own stdout. This is a UNITS contract (ADR-0005)
+	// and stays one.
 	if len(res.Units) == 0 {
-		return "", nil
+		return nil, nil
 	}
-	return strings.Join(res.Units, "\n") + "\n", nil
+	return []byte(strings.Join(res.Units, "\n") + "\n"), nil
 }

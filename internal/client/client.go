@@ -46,12 +46,22 @@ type Input struct {
 	Pipeline []string
 	// Params become subprocess flags on the worker.
 	Params map[string]string
+	// Raw asks for a raw service, whose output is opaque bytes rather than a
+	// unit list (ADR-0006). It must agree with the service's admin-owned mode or
+	// the router refuses the upload — a client cannot choose a mode any more
+	// than a worker can, because the mode is a price.
+	Raw bool
 }
 
 // Result is a finished job's output.
 type Result struct {
 	JobID string
 	Units []string
+	// Raw is a raw service's output, byte for byte. Exactly one of Units and Raw
+	// is populated, decided by the RESPONSE's content type rather than by what
+	// was requested — the two differ precisely when something is wrong, and that
+	// is the case worth reporting instead of misreading.
+	Raw []byte
 }
 
 // Stage names what the client is doing, for a progress callback.
@@ -263,6 +273,10 @@ func upload(ctx context.Context, httpc *http.Client, base, token string, in Inpu
 	for k, v := range in.Params {
 		q.Set(k, v)
 	}
+	// Sent in BOTH modes, never omitted. Absent would be read as units, which is
+	// the same answer — but an explicit value makes a mismatch a disagreement
+	// between two stated positions.
+	q.Set("raw", rawParam(in.Raw))
 
 	endpoint := base + "/upload"
 	if len(q) > 0 {
@@ -350,6 +364,22 @@ func collect(ctx context.Context, httpc *http.Client, base, token, jobID string,
 		return Result{}, classify(resp.StatusCode, "collecting the result", b)
 	}
 
+	// ⚠ BRANCH ON WHAT THE SERVER SAID, never on what was requested. The two
+	// disagree exactly when something is wrong — a raw request answered with
+	// units, or the reverse — and that is the case worth surfacing rather than
+	// misreading. Reading a JSON envelope as bytes would hand the caller a file
+	// full of `{"job_id":…}` and call it a result.
+	if strings.HasPrefix(resp.Header.Get("Content-Type"), "application/octet-stream") {
+		// io.ReadAll, not a decoder: these bytes never become a string and never
+		// meet encoding/json, which is the whole of ADR-0006.
+		raw, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return Result{}, fmt.Errorf("reading the result: %w", err)
+		}
+		prog.report(StageDone, jobID)
+		return Result{JobID: jobID, Raw: raw}, nil
+	}
+
 	var out struct {
 		Units []string `json:"units"`
 	}
@@ -359,6 +389,18 @@ func collect(ctx context.Context, httpc *http.Client, base, token, jobID string,
 
 	prog.report(StageDone, jobID)
 	return Result{JobID: jobID, Units: out.Units}, nil
+}
+
+// rawParam renders the requested mode for a query string.
+//
+// Sent in both modes rather than omitted for units: an explicit value makes a
+// mismatch a disagreement between two stated positions rather than between a
+// statement and a default.
+func rawParam(raw bool) string {
+	if raw {
+		return "1"
+	}
+	return "0"
 }
 
 // classify turns an HTTP status into a fatal or retryable error.

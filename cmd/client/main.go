@@ -93,6 +93,9 @@ func newCLI(stdout, stderr io.Writer) *cli.Command {
 				Usage: "a k=v parameter for the worker, repeatable"},
 			&cli.BoolFlag{Name: "json",
 				Usage: "write the result envelope instead of newline-joined text"},
+			&cli.BoolFlag{Name: "raw",
+				Usage: "the service returns opaque BYTES, written to -o unchanged. " +
+					"The service must be marked raw by an administrator, or the upload is refused"},
 			&cli.BoolFlag{Name: "quiet",
 				Usage: "suppress progress; errors are still reported"},
 			&cli.DurationFlag{Name: "timeout",
@@ -164,6 +167,7 @@ func submit(ctx context.Context, c *cli.Command, stdout, stderr io.Writer) error
 		Label:    c.String("label"),
 		Pipeline: c.StringSlice("pipeline"),
 		Params:   params,
+		Raw:      c.Bool("raw"),
 	}, rep.stage)
 	if err != nil {
 		rep.done()
