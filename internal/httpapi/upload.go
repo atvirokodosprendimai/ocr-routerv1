@@ -54,6 +54,10 @@ func filePart(r *http.Request) (*multipart.Part, error) {
 var reservedParams = map[string]struct{}{
 	"label":    {},
 	"pipeline": {},
+	// `raw` is the client's declared output mode. Reserving it is the security
+	// half: a param that is NOT reserved becomes a subprocess FLAG on the worker
+	// (ADR-0001), so leaking this one puts `-raw` on somebody's command line.
+	"raw": {},
 }
 
 // handleUpload serves both roles on one path.
@@ -86,8 +90,14 @@ func (a *API) uploadFromClient(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	q := r.URL.Query()
 
+	raw, err := rawParam(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	in := router.UploadInput{
 		Params: map[string]string{},
+		Raw:    raw,
 	}
 
 	// Pipeline wins over label when both are given: it is the more specific

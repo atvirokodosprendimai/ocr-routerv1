@@ -67,7 +67,11 @@ go test ./internal/httpapi/... -run 'TestRawModeMismatchIsRefused|TestMatchingMo
 | `TestMatchingModeIsAccepted` | `internal/httpapi/raw_test.go` | A worker whose declaration agrees is admitted and its label becomes available | — | S3, S4 |
 | `TestUndeclaredModeIsUnits` | `internal/httpapi/raw_test.go` | A worker that sends no `raw` param at all is treated as units — an un-upgraded worker degrades to a refusal on a raw label, never to silent acceptance | — | S3 |
 | `TestUnconfiguredLabelIsUnits` | `internal/httpapi/raw_test.go` | A label with no `service_rates` row at all is units: an undeclared worker is admitted and a raw worker is refused — raw is admin-owned, so a service nobody configured is not one | — | S3 |
-| `TestErrorStatusMapping` | `internal/httpapi/api_test.go` | Every `core` sentinel maps to a status; catches an unmapped `ErrModeMismatch` | — | S5 |
+<!-- TestErrorStatusMapping (internal/httpapi/api_test.go) is deliberately NOT a row here. It is a
+pre-existing table-driven test over every sentinel in core, it runs in this fence's REGRESSION
+segment, and it is not a test this task adds — listing it would claim ownership of coverage that
+already existed. What T2 owns is that ErrModeMismatch reaches the worker as 409, and that is proved
+by TestRawModeMismatchIsRefused plus the killed mutant on internal/httpapi/errors.go. -->
 
 ## Reachability
 

@@ -89,6 +89,15 @@ type UploadInput struct {
 	// Params become subprocess flags on the worker. Keys are validated here;
 	// values are data.
 	Params map[string]string
+	// Raw is the output mode the CLIENT asked for, and must agree with the
+	// service's admin-owned mode or the upload is refused (ADR-0006).
+	//
+	// A plain bool, deliberately. The task planned a tri-state so that "the
+	// client said nothing" stayed distinguishable from "the client said units" —
+	// but the two produce the same outcome in every case: both are admitted on a
+	// units service and both are refused on a raw one. A distinction nothing can
+	// act on is state that can only be got wrong.
+	Raw bool
 }
 
 // Upload admits a job.
@@ -144,14 +153,34 @@ func (s *Service) Upload(ctx context.Context, userID string, in UploadInput, now
 			core.ErrNotFound, pipeline[0], strings.Join(s.AvailableLabels(now), ", "))
 	}
 
+	// The mode agreement, and the LAST refusal before anything is written. The
+	// client's declaration must match the service's admin-owned mode for exactly
+	// the reason a worker's must (ADR-0006): raw is a price, the admin owns it,
+	// and both ends only get to agree with it.
+	//
+	// Only pipeline[0] is checked here, consistently with the live-worker check
+	// above — a later stage's mode is validated when the job advances into it.
+	_, wantRaw, err := s.repo.ServiceMode(ctx, pipeline[0])
+	if err != nil {
+		return core.Job{}, err
+	}
+	if in.Raw != wantRaw {
+		return core.Job{}, fmt.Errorf("%w: client asked for %s output from %q, which the operator has configured as %s",
+			core.ErrModeMismatch, modeName(in.Raw), pipeline[0], modeName(wantRaw))
+	}
+
 	job := core.Job{
-		ID:        core.NewID(),
-		UserID:    userID,
-		Filename:  in.Filename,
-		Label:     pipeline[0],
-		Pipeline:  pipeline,
-		Stage:     0,
-		Params:    in.Params,
+		ID:       core.NewID(),
+		UserID:   userID,
+		Filename: in.Filename,
+		Label:    pipeline[0],
+		Pipeline: pipeline,
+		Stage:    0,
+		Params:   in.Params,
+		// Stamped ONCE, here. A job carries the mode it was admitted under, so an
+		// administrator editing the service later cannot reprice work already
+		// running.
+		Raw:       in.Raw,
 		State:     core.JobQueued,
 		QueuedAt:  now,
 		CreatedAt: now,
