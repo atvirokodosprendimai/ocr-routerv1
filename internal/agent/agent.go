@@ -38,6 +38,11 @@ type Config struct {
 	// PollInterval is a floor on how often the agent claims when nothing is
 	// pushing it. The SSE stream is the primary trigger; this is the safety net.
 	PollInterval time.Duration
+	// Raw means this worker's service emits opaque bytes (ADR-0006). It is
+	// DECLARED to the router on every subscribe and claim, and the router refuses
+	// the worker if it disagrees with the service's admin-owned mode — a worker
+	// cannot set its own mode, because the mode is a price.
+	Raw bool
 }
 
 // Agent runs the claim/run/report loop.
@@ -102,7 +107,8 @@ func (a *Agent) Run(ctx context.Context) error {
 
 // listen holds one SSE connection and drains work for as long as it lasts.
 func (a *Agent) listen(ctx context.Context, slots chan struct{}) error {
-	url := fmt.Sprintf("%s/sse?label=%s", strings.TrimRight(a.cfg.RouterURL, "/"), a.cfg.Label)
+	url := fmt.Sprintf("%s/sse?label=%s&raw=%s",
+		strings.TrimRight(a.cfg.RouterURL, "/"), a.cfg.Label, rawParam(a.cfg.Raw))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -195,7 +201,8 @@ type claimResponse struct {
 }
 
 func (a *Agent) claim(ctx context.Context) (claimResponse, bool, error) {
-	req, err := a.newRequest(ctx, http.MethodPost, "/claim?label="+a.cfg.Label, nil)
+	req, err := a.newRequest(ctx, http.MethodPost,
+		"/claim?label="+a.cfg.Label+"&raw="+rawParam(a.cfg.Raw), nil)
 	if err != nil {
 		return claimResponse{}, false, err
 	}
@@ -235,9 +242,21 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 		return
 	}
 
-	units, runErr := a.run.Run(ctx, runner.Job{
-		ID: job.JobID, InputPath: inputPath, Params: job.Params,
-	})
+	rj := runner.Job{ID: job.JobID, InputPath: inputPath, Params: job.Params}
+
+	if a.cfg.Raw {
+		out, runErr := a.run.RunRaw(ctx, rj)
+		if runErr != nil {
+			a.Log("job %s failed: %v", job.JobID, runErr)
+			a.report(ctx, job.JobID, nil, runErr.Error())
+			return
+		}
+		a.Log("job %s produced %d byte(s)", job.JobID, len(out))
+		a.reportRaw(ctx, job.JobID, out)
+		return
+	}
+
+	units, runErr := a.run.Run(ctx, rj)
 	if runErr != nil {
 		// A failed job is reported and the agent carries on. One malformed
 		// document must not stop a worker serving every other customer.
@@ -299,6 +318,55 @@ type resultBody struct {
 	JobID string   `json:"job_id"`
 	Units []string `json:"units,omitempty"`
 	Error string   `json:"error,omitempty"`
+}
+
+// rawParam renders the declared mode for a query string.
+//
+// Sent EXPLICITLY in both modes, including the units one. Omitting it would be
+// read by the router as units, which is the same answer — but an explicit value
+// is what makes a mismatch a disagreement between two stated positions rather
+// than between a statement and a default.
+func rawParam(raw bool) string {
+	if raw {
+		return "1"
+	}
+	return "0"
+}
+
+// reportRaw posts a raw job's stdout back as an opaque body.
+//
+// ⚠ THE BYTES DO NOT GO THROUGH JSON, and that is the entire point of ADR-0006.
+// The units channel is []string end to end, and encoding/json replaces every
+// invalid UTF-8 byte with U+FFFD — no error, different bytes, different length —
+// so a PNG posted that way arrives corrupted and is stored, delivered and billed
+// as though it were whole. The job id therefore rides the QUERY STRING, because
+// the body is the payload and has no room for an envelope.
+//
+// A FAILURE still goes through report() as JSON in both modes: a failure is a
+// reason string, which is text whatever the service emits, and giving failures
+// two encodings would double the router's parse surface for nothing.
+func (a *Agent) reportRaw(ctx context.Context, jobID string, out []byte) {
+	// Same fresh, bounded context as report, and for the same reason: a result
+	// that is never reported costs the customer a full lease timeout.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+
+	req, err := a.newRequest(ctx, http.MethodPost, "/upload?job_id="+jobID, bytes.NewReader(out))
+	if err != nil {
+		a.Log("job %s: building raw report: %v", jobID, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		a.Log("job %s: reporting: %v", jobID, err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		a.Log("job %s: router rejected the raw report (%s)", jobID, resp.Status)
+	}
 }
 
 // report posts the outcome back to the router.

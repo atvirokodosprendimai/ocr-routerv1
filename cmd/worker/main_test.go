@@ -104,7 +104,7 @@ printf '["%s"]' "$(cat "$f")"
 		t.Fatalf("writing input: %v", err)
 	}
 
-	r := buildRunner(svc, 5*time.Second, 1<<20)
+	r := buildRunner(svc, 5*time.Second, 1<<20, false)
 	units, err := r.Run(context.Background(), jobFor(input))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
