@@ -39,6 +39,35 @@ func (a *API) resultToClient(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	id := chi.URLParam(r, "id")
 
+	// A raw job's result is a FILE, so it is streamed rather than rendered. The
+	// client branches on the response Content-Type, never on what it asked for:
+	// the two disagree exactly when something is wrong, and that is the case
+	// worth reporting instead of misreading.
+	job, err := a.deps.Repo.JobByID(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if job.Raw {
+		f, err := a.deps.Router.DeliverRaw(r.Context(), p.UserID, id, a.deps.Now())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		defer f.Close()
+
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.Copy(w, f); err != nil {
+			// The charge has committed and the bytes are partly sent; there is no
+			// status left to change. Leave the blob so a retry can still collect
+			// it rather than destroying the only copy mid-flight.
+			return
+		}
+		a.deps.Router.DropRawResult(id)
+		return
+	}
+
 	res, err := a.deps.Router.Deliver(r.Context(), p.UserID, id, a.deps.Now())
 	if err != nil {
 		writeError(w, err)

@@ -55,6 +55,7 @@ func newHarness(t *testing.T) *harness {
 		MaxAttempts:  3,
 		AgingStep:    time.Minute,
 		LabelGrace:   5 * time.Minute,
+		ResultTTL:    time.Hour,
 		DefaultLabel: "ocr",
 	})
 	return &harness{svc: svc, repo: repo, bus: b, blobs: blobs, results: res}

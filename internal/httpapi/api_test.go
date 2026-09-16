@@ -61,7 +61,7 @@ func newEnv(t *testing.T) *env {
 	ident := identity.New(repo)
 	rt := router.New(repo, blobs, res, b, router.Config{
 		Lease: 5 * time.Minute, MaxAttempts: 3, AgingStep: time.Minute,
-		LabelGrace: 5 * time.Minute, DefaultLabel: "ocr",
+		LabelGrace: 5 * time.Minute, DefaultLabel: "ocr", ResultTTL: time.Hour,
 	})
 
 	ctx := context.Background()

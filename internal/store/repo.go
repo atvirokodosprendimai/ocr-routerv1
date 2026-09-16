@@ -318,6 +318,41 @@ func (r *Repo) QueueDepthByLabel(ctx context.Context) (map[string]int, error) {
 	return out, rows.Err()
 }
 
+// RawJobsDoneBefore returns raw jobs that finished before cutoff and were never
+// collected.
+//
+// ⚠ It exists because a RAW job never enters the in-memory result store, so the
+// reaper's result sweep — which iterates that store — cannot see one. Without
+// this query a completed raw job nobody collects sits in `done` forever with its
+// output blob on disk: not merely a leak, a permanently stranded job.
+func (r *Repo) RawJobsDoneBefore(ctx context.Context, cutoff time.Time) ([]core.Job, error) {
+	rows, err := r.read.QueryContext(ctx,
+		`SELECT `+jobColumns+` FROM jobs WHERE state = 'done' AND raw = 1 AND updated_at <= ?`,
+		cutoff.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []core.Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// CountRawResultsPending is how many raw results sit on disk awaiting
+// collection. The gauge behind ocrr_raw_results_pending.
+func (r *Repo) CountRawResultsPending(ctx context.Context) (int, error) {
+	var n int
+	err := r.read.QueryRowContext(ctx,
+		`SELECT count(*) FROM jobs WHERE state = 'done' AND raw = 1`).Scan(&n)
+	return n, err
+}
+
 // OldestQueuedByLabel returns, per label, when the oldest queued job was queued.
 //
 // This is the stall signal: depth can sit low while one job is stuck forever, so

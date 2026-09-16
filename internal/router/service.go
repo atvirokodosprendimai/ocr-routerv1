@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +36,12 @@ type Config struct {
 	// disconnects, so a rolling worker restart does not start rejecting uploads.
 	LabelGrace time.Duration
 	// DefaultLabel is the service a client gets when it names none.
+	// DefaultLabel is the service a client gets when it names none.
 	DefaultLabel string
+	// ResultTTL is how long a finished result stays collectable. The in-memory
+	// store enforces it for units results; the reaper enforces the SAME window
+	// for raw results, which live on disk and are invisible to that store.
+	ResultTTL time.Duration
 }
 
 // Service is the write API. There is exactly one per process.
@@ -265,6 +271,14 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 	if !holdsLease(job, workerID, now) {
 		return core.ErrConflict
 	}
+	// The mirror of CompleteRaw's check, and it has to be here rather than at the
+	// HTTP boundary: the job's STAMPED mode decides the result's shape, so a
+	// worker posting a unit list for a raw job is refused whatever Content-Type
+	// it announced. Without this pair, the header would be choosing the mode.
+	if job.Raw {
+		return fmt.Errorf("%w: job %s is a raw job and its result must be an opaque body",
+			core.ErrModeMismatch, jobID)
+	}
 
 	rate, err := s.repo.RateForLabel(ctx, job.Label)
 	if err != nil {
@@ -314,6 +328,102 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 	return nil
 }
+
+// CompleteRaw accepts a worker's opaque output for the stage it holds.
+//
+// The bytes are STREAMED into the blob store and never held as a value: not a
+// string, not a []string, and never through encoding/json — which replaces
+// invalid UTF-8 with U+FFFD, returns no error, and changes the length. That is
+// the defect ADR-0006 exists to remove.
+//
+// ⚠ THE LEASE CHECK IS THE SAME ONE Complete MAKES, and it is not optional
+// duplication: it is what stops one customer's worker writing another's result,
+// and a second write path is exactly where such a guard gets forgotten.
+//
+// Pricing is deliberately NOT decided here — a raw job's flat credit is T6's,
+// and until then a raw job accrues what an empty unit list accrues.
+func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body io.Reader, now time.Time) error {
+	job, err := s.repo.JobByID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if !holdsLease(job, workerID, now) {
+		return core.ErrConflict
+	}
+	if !job.Raw {
+		return fmt.Errorf("%w: job %s is a units job and its result must be a JSON unit list",
+			core.ErrModeMismatch, jobID)
+	}
+
+	if _, err := s.blobs.PutResult(job.ID, body); err != nil {
+		return err
+	}
+
+	// Stage advance for a raw job is T6's: the bridge moves the result blob to
+	// the next stage's input rather than rendering units. Until then a raw job is
+	// single-stage by construction, because a raw stage cannot produce a unit
+	// list for joinUnits to render.
+	if _, more := job.NextLabel(); more {
+		return fmt.Errorf("%w: raw pipelines are not wired yet", core.ErrInvalidState)
+	}
+
+	if err := s.repo.CompleteJob(ctx, job.ID, 1, job.AccruedCredits, now); err != nil {
+		// The result blob would otherwise sit on disk for a job that is not done.
+		_ = s.blobs.DeleteResult(job.ID)
+		return err
+	}
+	s.logTransition(job, core.JobProcessing, core.JobDone, job.UpdatedAt,
+		"worker", workerID, "", now)
+	s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
+		Kind: bus.KindReady, JobID: job.ID, Units: 1,
+	})
+	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
+	return nil
+}
+
+// DeliverRaw hands a finished raw result to its owner and charges for it.
+//
+// It mirrors Deliver's ordering exactly, with one difference forced by the
+// payload: the result is a FILE, so the caller streams it and this returns the
+// open handle. The charge commits BEFORE the handle is returned, and the blob is
+// removed by the caller once the copy succeeds — a result deleted before the
+// transaction committed would be unrecoverable, while an orphan file is not.
+func (s *Service) DeliverRaw(ctx context.Context, userID, jobID string, now time.Time) (*os.File, error) {
+	job, err := s.repo.JobByID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.UserID != userID {
+		// Not ErrForbidden: a caller must not learn that someone else's job id
+		// exists.
+		return nil, core.ErrNotFound
+	}
+	if !job.Raw {
+		return nil, core.ErrNotFound
+	}
+
+	f, err := s.blobs.OpenResult(jobID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.repo.DeliverJob(ctx, jobID, userID, job.AccruedCredits, now); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+
+	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDelivered)})
+	s.counter.Add(metricCreditsDebited, nil, int64(job.AccruedCredits))
+	s.logTransition(job, job.State, core.JobDelivered, job.UpdatedAt, "client", "", "", now)
+	_ = s.blobs.Delete(jobID)
+	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: jobID})
+	return f, nil
+}
+
+// DropRawResult removes a delivered raw result. Called once the caller has
+// finished streaming it, so a failed copy leaves the file for a retry rather
+// than destroying it mid-flight.
+func (s *Service) DropRawResult(jobID string) { _ = s.blobs.DeleteResult(jobID) }
 
 // joinUnits renders a stage's output as the next stage's input.
 //
@@ -368,8 +478,9 @@ func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason strin
 	// reason, at which attempt.
 	s.logTransition(job, job.State, core.JobDead, job.UpdatedAt,
 		actor, job.WorkerID, reason, now)
-	// Terminal: the blob has no further use and nothing was charged.
+	// Terminal: neither blob has any further use and nothing was charged.
 	_ = s.blobs.Delete(job.ID)
+	_ = s.blobs.DeleteResult(job.ID)
 	s.results.Drop(job.ID)
 	s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
 		Kind: bus.KindFailed, JobID: job.ID, Reason: reason,
