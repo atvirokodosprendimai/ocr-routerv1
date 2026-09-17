@@ -85,6 +85,17 @@ func configFlags() []cli.Flag {
 			Usage: "how long a worker holds a job before the reaper takes it back"},
 		&cli.IntFlag{Name: "max-attempts", Value: 3,
 			Usage: "attempts before a job is abandoned as dead"},
+		// ⚠ 10, not 3, and the task file records why. ADR-0008-T2 wrote "default
+		// 3" and ALSO named a test asserting that three restarts leave the job
+		// alive; at 3 the third restart is the bound, so the two cannot both
+		// hold. The reported incident was a restart mid-process, and a bound
+		// equal to the failure budget would leave it failing at exactly the
+		// number of restarts that provoked the report. The bound's job is to
+		// stop a poison pill looping forever, and 10 does that.
+		&cli.IntFlag{Name: "max-reclaims", Value: 10,
+			Usage: "times a job's lease may be taken back from a vanished worker before it is " +
+				"given up on; separate from max-attempts, because a worker restarting is not " +
+				"the work failing"},
 		&cli.DurationFlag{Name: "aging-step", Value: time.Minute,
 			Usage: "waiting time that buys one point of effective priority"},
 		&cli.DurationFlag{Name: "label-grace", Value: 5 * time.Minute,
@@ -131,6 +142,7 @@ func configFrom(c *cli.Command) Config {
 		ResultTTL:       c.Duration("result-ttl"),
 		Lease:           c.Duration("lease"),
 		MaxAttempts:     c.Int("max-attempts"),
+		MaxReclaims:     c.Int("max-reclaims"),
 		AgingStep:       c.Duration("aging-step"),
 		LabelGrace:      c.Duration("label-grace"),
 		ReapInterval:    c.Duration("reap-interval"),

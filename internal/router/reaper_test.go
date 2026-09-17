@@ -36,8 +36,14 @@ func TestReapRequeuesExpiredLease(t *testing.T) {
 	if got.State != core.JobQueued {
 		t.Errorf("state after a lapsed lease = %q, want queued", got.State)
 	}
-	if got.Attempts != 1 {
-		t.Errorf("attempts = %d, want 1", got.Attempts)
+	// ADR-0008: the lapsed lease costs a RECLAIM, not an attempt. This assertion
+	// read `Attempts != 1` until 2026-09-17, which is the behaviour the record
+	// removed — the worker vanished, its command never failed.
+	if got.Attempts != 0 {
+		t.Errorf("attempts = %d, want 0", got.Attempts)
+	}
+	if got.Reclaims != 1 {
+		t.Errorf("reclaims = %d, want 1", got.Reclaims)
 	}
 	if got.WorkerID != "" {
 		t.Errorf("worker_id = %q, want empty", got.WorkerID)
@@ -150,14 +156,21 @@ func TestReapSweepsResultsAndRequeues(t *testing.T) {
 	}
 }
 
-func TestReapAbandonsAfterMaxAttempts(t *testing.T) {
-	h := newHarness(t)
+// TestReapAbandonsAfterMaxReclaims: the bound moved from attempts to reclaims in
+// ADR-0008, but it is still a bound — a job that keeps losing its worker must
+// still reach a terminal state.
+func TestReapAbandonsAfterMaxReclaims(t *testing.T) {
+	h := newHarnessWith(t, router.Config{
+		Lease: 5 * time.Minute, MaxAttempts: 3, MaxReclaims: 3,
+		AgingStep: time.Minute, LabelGrace: 5 * time.Minute,
+		ResultTTL: time.Hour, DefaultLabel: "ocr",
+	})
 	h.worker(t, "ocr")
 	h.user(t, "u", 100, 4, 0)
 	ctx := context.Background()
 	j := upload(t, h, "u", router.UploadInput{Body: strings.NewReader("x")})
 
-	// Three lapsed leases, one per attempt.
+	// Three lapsed leases, one per reclaim.
 	for i := 1; i <= 3; i++ {
 		at := base.Add(time.Duration(i) * 10 * time.Minute)
 		if _, err := h.svc.Claim(ctx, "w1", "ocr", at); err != nil {

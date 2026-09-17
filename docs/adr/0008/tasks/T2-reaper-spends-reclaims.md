@@ -41,7 +41,7 @@ attempt — and a job that keeps killing workers still dies.
 
 ```bash
 set -o pipefail
-go test ./internal/router -run 'TestReclaimDoesNotSpendAnAttempt|TestReclaimBudgetIsStillBounded|TestFailureStillSpendsAnAttempt|TestThreeRestartsDoNotKillAJob' -count=1 -v 2>&1 | tee /tmp/acc-0008-T2.out \
+go test ./internal/router -run 'TestReclaimDoesNotSpendAnAttempt|TestReclaimBudgetIsStillBounded|TestFailureStillSpendsAnAttempt|TestThreeRestartsDoNotKillAJob|TestReclaimLogSaysReclaimed' -count=1 -v 2>&1 | tee /tmp/acc-0008-T2.out \
   && ! grep -qE "no tests to run|^FAIL|^--- FAIL" /tmp/acc-0008-T2.out \
   && go test ./internal/router/... ./internal/httpapi/... -count=1
 ```
@@ -66,6 +66,30 @@ go test ./internal/router -run 'TestReclaimDoesNotSpendAnAttempt|TestReclaimBudg
 | 4 — it is used | Nothing measures this yet; the ADR's follow-up holds the metric question deliberately |
 
 ## Mutation Log
+
+- 2026-09-17 · b3755a7* · mutant killed · exit 1 · `internal/router/reaper.go` · the expired-lease loop points back at failJob, which is exactly the behaviour before this record: a router restart spends the retry budget and three of them kill a healthy job · acceptance-sha256:d0066f862827e79bd46a74f64d7f7fe607073d03bdabc663ffa791cbf892068c · covers:the reaper spending reclaims rather than attempts
+- 2026-09-17 · b3755a7* · mutant killed · exit 1 · `internal/router/service.go` · the reclaim becomes unbounded, so a poison-pill job that takes down every worker it touches is requeued forever and never reaches a terminal state — worse than the defect being fixed · acceptance-sha256:d0066f862827e79bd46a74f64d7f7fe607073d03bdabc663ffa791cbf892068c · covers:the reclaim budget still being bounded
+- 2026-09-17 · b3755a7* · mutant killed · exit 1 · `internal/router/service.go` · a job killed by flaky infrastructure records the failure budget as its cause, sending an operator to look for a broken command when no command ever failed · acceptance-sha256:d0066f862827e79bd46a74f64d7f7fe607073d03bdabc663ffa791cbf892068c · covers:the terminal reason naming which budget ran out
+- 2026-09-17 · b3755a7* · mutant killed · exit 1 · `internal/router/reaper.go` · the expired-lease loop points back at failJob — the behaviour before this record, where a router restart spends the retry budget · acceptance-sha256:f249139b182d39c32b120fe1ee19c25fdaf0e3ed7ee1a9d7d3d2374ab5b73fc9 · covers:the reaper spending reclaims rather than attempts
+- 2026-09-17 · b3755a7* · mutant killed · exit 1 · `internal/router/service.go` · the reclaim becomes unbounded, so a poison-pill job is requeued forever and never reaches a terminal state · acceptance-sha256:f249139b182d39c32b120fe1ee19c25fdaf0e3ed7ee1a9d7d3d2374ab5b73fc9 · covers:the reclaim budget still being bounded
+- 2026-09-17 · b3755a7* · mutant killed · exit 1 · `internal/router/service.go` · a job killed by flaky infrastructure records the failure budget as its cause · acceptance-sha256:f249139b182d39c32b120fe1ee19c25fdaf0e3ed7ee1a9d7d3d2374ab5b73fc9 · covers:the terminal reason naming which budget ran out
+
+## Execution Note — the default is 10, not 3 (2026-09-17)
+
+S2 says "`--max-reclaims`, default 3", and the Tests table names
+`TestThreeRestartsDoNotKillAJob`. **Those two cannot both hold.** With
+`Reclaims+1 < MaxReclaims` (S3's own condition) a bound of 3 makes the THIRD
+abandonment terminal, so three restarts kill the job — which is the incident
+verbatim, reported by M on 2026-09-16.
+
+Shipped at **10**, with the reason in a comment at the flag. The bound's purpose,
+stated in this task's own Invariants, is to stop a poison pill looping forever;
+10 does that, and no number between 4 and 10 is better justified. `MaxAttempts`
+is untouched at 3.
+
+If the owner wants the two budgets equal, the fix is to change this number and
+retire `TestThreeRestartsDoNotKillAJob` — not to keep both and let the fence
+decide which one was meant.
 
 ## Invariants
 
@@ -98,3 +122,18 @@ thing and the budget is being asked to cover two.
 - Showing `reclaims` anywhere (deferred: `docs/adr/0007/0007-failure-detail.md`).
 
 ## Verification Log
+- 2026-09-17 · b3755a7* · exit 1 · `set -o pipefail …` · acceptance-sha256:d0066f862827e79bd46a74f64d7f7fe607073d03bdabc663ffa791cbf892068c · ms:506
+  ```
+  --- last 5 line(s) of stdout
+  # github.com/atvirokodosprendimai/ocr-router/internal/router_test [github.com/atvirokodosprendimai/ocr-router/internal/router.test]
+  internal/router/reclaim_test.go:82:43: unknown field MaxReclaims in struct literal of type router.Config
+  internal/router/service_test.go:36:3: unknown field MaxReclaims in struct literal of type router.Config
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/router [build failed]
+  FAIL
+  ```
+- 2026-09-17 · b3755a7* · exit 0 · `set -o pipefail …` · acceptance-sha256:d0066f862827e79bd46a74f64d7f7fe607073d03bdabc663ffa791cbf892068c · ms:6613
+- 2026-09-17 · b3755a7* · exit 0 · `set -o pipefail …` · acceptance-sha256:d0066f862827e79bd46a74f64d7f7fe607073d03bdabc663ffa791cbf892068c · ms:5402
+- 2026-09-17 · b3755a7* · exit 0 · `set -o pipefail …` · acceptance-sha256:d0066f862827e79bd46a74f64d7f7fe607073d03bdabc663ffa791cbf892068c · ms:5383
+- 2026-09-17 · b3755a7* · exit 0 · `set -o pipefail …` · acceptance-sha256:f249139b182d39c32b120fe1ee19c25fdaf0e3ed7ee1a9d7d3d2374ab5b73fc9 · ms:6815
+- 2026-09-17 · b3755a7* · exit 0 · `set -o pipefail …` · acceptance-sha256:f249139b182d39c32b120fe1ee19c25fdaf0e3ed7ee1a9d7d3d2374ab5b73fc9 · ms:6001
+- 2026-09-17 · b3755a7* · exit 0 · `set -o pipefail …` · acceptance-sha256:f249139b182d39c32b120fe1ee19c25fdaf0e3ed7ee1a9d7d3d2374ab5b73fc9 · ms:5375

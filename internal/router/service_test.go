@@ -27,7 +27,23 @@ type harness struct {
 	results *results.Store
 }
 
+// newHarness builds a service on the configuration almost every test wants.
 func newHarness(t *testing.T) *harness {
+	t.Helper()
+	return newHarnessWith(t, router.Config{
+		Lease:        5 * time.Minute,
+		MaxAttempts:  3,
+		MaxReclaims:  10, // the shipped default; see cmd/router/main.go
+		AgingStep:    time.Minute,
+		LabelGrace:   5 * time.Minute,
+		ResultTTL:    time.Hour,
+		DefaultLabel: "ocr",
+	})
+}
+
+// newHarnessWith is the same harness with the config named, for the tests whose
+// subject IS a bound — a budget you cannot vary cannot be shown to be a budget.
+func newHarnessWith(t *testing.T, cfg router.Config) *harness {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "r.db"))
@@ -50,14 +66,7 @@ func newHarness(t *testing.T) *harness {
 	// day after `base` (2026-09-15), with no code change.
 	res.SetClock(func() time.Time { return base })
 	b := bus.New()
-	svc := router.New(repo, blobs, res, b, router.Config{
-		Lease:        5 * time.Minute,
-		MaxAttempts:  3,
-		AgingStep:    time.Minute,
-		LabelGrace:   5 * time.Minute,
-		ResultTTL:    time.Hour,
-		DefaultLabel: "ocr",
-	})
+	svc := router.New(repo, blobs, res, b, cfg)
 	return &harness{svc: svc, repo: repo, bus: b, blobs: blobs, results: res}
 }
 

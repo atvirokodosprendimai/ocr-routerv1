@@ -27,6 +27,7 @@ func testConfig(t *testing.T) Config {
 		ResultTTL:    time.Hour,
 		Lease:        5 * time.Minute,
 		MaxAttempts:  3,
+		MaxReclaims:  10,
 		AgingStep:    time.Minute,
 		LabelGrace:   5 * time.Minute,
 		ReapInterval: 50 * time.Millisecond,
@@ -293,7 +294,7 @@ func TestReaperRunsInBinary(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		job, err := app.Repo.JobByID(context.Background(), created.JobID)
-		if err == nil && job.State == core.JobQueued && job.Attempts > 0 {
+		if err == nil && job.State == core.JobQueued && job.Reclaims > 0 {
 			return // the reaper ran, unprompted
 		}
 		time.Sleep(25 * time.Millisecond)
@@ -407,6 +408,7 @@ func TestFlagDefaultsBuildAServer(t *testing.T) {
 	cfg.ResultTTL = time.Hour
 	cfg.Lease = 5 * time.Minute
 	cfg.MaxAttempts = 3
+	cfg.MaxReclaims = 10
 	cfg.AgingStep = time.Minute
 	cfg.LabelGrace = 5 * time.Minute
 	cfg.MaxUpload = 1 << 20

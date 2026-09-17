@@ -31,6 +31,7 @@ type Config struct {
 	ResultTTL    time.Duration
 	Lease        time.Duration
 	MaxAttempts  int
+	MaxReclaims  int
 	AgingStep    time.Duration
 	LabelGrace   time.Duration
 	ReapInterval time.Duration
@@ -153,6 +154,7 @@ func buildApp(cfg Config) (*App, error) {
 	rt := router.New(repo, blobs, res, b, router.Config{
 		Lease:        cfg.Lease,
 		MaxAttempts:  cfg.MaxAttempts,
+		MaxReclaims:  cfg.MaxReclaims,
 		AgingStep:    cfg.AgingStep,
 		LabelGrace:   cfg.LabelGrace,
 		DefaultLabel: cfg.DefaultLabel,

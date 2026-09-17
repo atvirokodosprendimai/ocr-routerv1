@@ -33,8 +33,13 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 	// this, the grace window would only ever be refreshed by traffic.
 	s.ObserveLabels(now)
 
-	// 1. Leases whose worker went silent. The job goes back to the queue with an
-	//    attempt spent, or dies if the budget is gone.
+	// 1. Leases whose worker went silent. The job goes back to the queue with a
+	//    RECLAIM spent, or dies if the abandonment budget is gone.
+	//
+	//    ⚠ reclaimJob, not failJob, and this is the line ADR-0008 is about. The
+	//    worker vanished — restarted, killed, off the network — which says
+	//    nothing about whether its command works, so spending the retry budget
+	//    here killed jobs that had never failed once.
 	expiredLeases, err := s.repo.LeaseExpired(ctx, now)
 	if err != nil {
 		return rep, err
@@ -42,11 +47,10 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 	for _, job := range expiredLeases {
 		rep.LeasesExpired++
 		s.counter.Inc(metricReaperActions, map[string]string{"action": "lease-expired"})
-		if job.Attempts+1 >= s.cfg.MaxAttempts {
+		if job.Reclaims+1 >= s.cfg.MaxReclaims {
 			rep.JobsAbandoned++
 		}
-		// nil: a lease reclaimed from a vanished worker never ran to an exit.
-		if err := s.failJob(ctx, job, "reaper", "lease expired", nil, now); err != nil {
+		if err := s.reclaimJob(ctx, job, "lease expired, reclaimed", now); err != nil {
 			return rep, err
 		}
 	}

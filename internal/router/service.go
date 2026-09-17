@@ -28,6 +28,14 @@ type Config struct {
 	Lease time.Duration
 	// MaxAttempts bounds retries before a job is abandoned as dead.
 	MaxAttempts int
+	// MaxReclaims bounds how many times a job's lease may be taken back from a
+	// worker that went away before the job is given up on (ADR-0008).
+	//
+	// ⚠ A SEPARATE BOUND from MaxAttempts, and it must exist. Abandonment is not
+	// the work failing, so it must not spend the retry budget — but an UNBOUNDED
+	// reclaim is worse than the defect it fixes: a job that kills every worker
+	// that touches it would be requeued forever, with no terminal state at all.
+	MaxReclaims int
 	// AgingStep is how much waiting time buys one point of effective priority.
 	// It tunes the whole queue, not one customer, which is why it is not a
 	// per-user column.
@@ -545,6 +553,54 @@ func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason strin
 	s.results.Drop(job.ID)
 	s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
 		Kind: bus.KindFailed, JobID: job.ID, Reason: reason,
+	})
+	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
+	return nil
+}
+
+// reclaimJob returns a job whose worker went away, WITHOUT spending an attempt.
+//
+// It is failJob's twin and deliberately reads like it, because the difference is
+// the whole of ADR-0008: the same job, the same requeue, a different budget. A
+// lease taken back says nothing about whether the command works — the worker was
+// restarted, killed, or lost its network — so charging it to `attempts` killed
+// healthy work after three router restarts, which is the bug M reported on
+// 2026-09-16.
+//
+// The bound is still real. A job that reliably takes its worker down with it
+// would otherwise be requeued forever, taking each worker in turn and never
+// reaching a terminal state.
+//
+// No exit code, ever: nothing exited (ADR-0007).
+func (s *Service) reclaimJob(ctx context.Context, job core.Job, reason string, now time.Time) error {
+	if job.Reclaims+1 < s.cfg.MaxReclaims {
+		if err := s.repo.ReclaimJob(ctx, job.ID, reason, now); err != nil {
+			return err
+		}
+		s.logFailureTransition(job, job.State, core.JobQueued, job.UpdatedAt,
+			"reaper", job.WorkerID, reason, nil, now)
+		s.publishWork(job.Label)
+		s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
+		return nil
+	}
+
+	// ⚠ The terminal reason names WHICH budget ran out. "abandoned too many
+	// times" and "attempts exhausted" are different facts about a job, and an
+	// operator who reads one and concludes the other goes looking for a broken
+	// command when the problem is a host that keeps losing workers.
+	dead := reason + ": abandoned too many times"
+	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})
+	if err := s.repo.FailJobDead(ctx, job.ID, dead, nil, now); err != nil {
+		return err
+	}
+	s.logFailureTransition(job, job.State, core.JobDead, job.UpdatedAt,
+		"reaper", job.WorkerID, dead, nil, now)
+	// Terminal: neither blob has any further use and nothing was charged.
+	_ = s.blobs.Delete(job.ID)
+	_ = s.blobs.DeleteResult(job.ID)
+	s.results.Drop(job.ID)
+	s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
+		Kind: bus.KindFailed, JobID: job.ID, Reason: dead,
 	})
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 	return nil

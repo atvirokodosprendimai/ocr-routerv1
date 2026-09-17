@@ -285,6 +285,43 @@ func (a adapter) Transition(e router.TransitionEvent) {
 	})
 }
 
+// TestReclaimLogSaysReclaimed keeps the log honest about which thing happened.
+//
+// The counter and the line are read by the same person for the same incident. A
+// line still saying "lease expired … failed" beside a counter saying "reclaimed"
+// sends whoever is on call looking for a command that never failed, and it
+// carries no exit code because none existed (ADR-0007).
+func TestReclaimLogSaysReclaimed(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+
+	rec := &recordingLogger{}
+	h.svc.SetLogger(rec)
+
+	upload(t, h, "u", router.UploadInput{Body: strings.NewReader("x")})
+	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if _, err := h.svc.Reap(ctx, base.Add(time.Hour)); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+
+	ev, ok := rec.find(core.JobProcessing, core.JobQueued)
+	if !ok {
+		t.Fatal("no processing→queued transition was logged for the lapsed lease")
+	}
+	if !strings.Contains(ev.Reason, "reclaim") {
+		t.Errorf("reason = %q, want one naming a reclaim — the counter and the line are read by "+
+			"the same person for the same incident", ev.Reason)
+	}
+	if ev.ExitCode != nil {
+		t.Errorf("a reclaim carried ExitCode = %d — a lease taken back is not a command that "+
+			"exited, and recording one invents a fact", *ev.ExitCode)
+	}
+}
+
 // lockedBuf is a buffer safe for concurrent writes.
 type lockedBuf struct {
 	mu  sync.Mutex
