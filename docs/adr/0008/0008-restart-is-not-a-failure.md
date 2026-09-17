@@ -1,6 +1,6 @@
 # ADR-0008: Stop charging a worker restart against a job's retry budget
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-17
 **Owner:** M
 **Spec:** None — no spec stage

@@ -39,6 +39,14 @@ type Job struct {
 	// property of the JOB rather than a lookup of the service's current mode: an
 	// administrator editing a service must not reprice work already running.
 	Raw bool
+	// ExitCode is the forked command's exit status, or nil when the failure never
+	// reached one (ADR-0007).
+	//
+	// ⚠ A POINTER, deliberately. A timeout, an output-limit trip and a contract
+	// violation all fail WITHOUT exiting, and 0 is the code for SUCCESS — so an
+	// int would make "never exited" indistinguishable from "exited cleanly", which
+	// is the one comparison an operator most wants to make.
+	ExitCode *int
 
 	State    JobState
 	Attempts int

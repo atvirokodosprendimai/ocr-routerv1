@@ -518,7 +518,7 @@ func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, now 
 // and mean entirely different things to whoever is debugging.
 func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason string, now time.Time) error {
 	if job.Attempts+1 < s.cfg.MaxAttempts {
-		if err := s.repo.RequeueJob(ctx, job.ID, reason, now); err != nil {
+		if err := s.repo.RequeueJob(ctx, job.ID, reason, nil, now); err != nil {
 			return err
 		}
 		// The retry is the transition nothing else records: a job that succeeds
@@ -532,7 +532,7 @@ func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason strin
 	}
 
 	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})
-	if err := s.repo.FailJobDead(ctx, job.ID, reason, now); err != nil {
+	if err := s.repo.FailJobDead(ctx, job.ID, reason, nil, now); err != nil {
 		return err
 	}
 	// The line the counter cannot give you: which job, on which worker, for what

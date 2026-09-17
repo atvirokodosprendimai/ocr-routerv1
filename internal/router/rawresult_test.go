@@ -97,7 +97,7 @@ func TestDeadRawJobDropsItsResultBlob(t *testing.T) {
 				t.Fatalf("CompleteRaw: %v", err)
 			}
 			// Put it back into processing so it can fail.
-			if err := h.repo.RequeueJob(ctx, j.ID, "test", base); err != nil {
+			if err := h.repo.RequeueJob(ctx, j.ID, "test", nil, base); err != nil {
 				t.Fatalf("RequeueJob: %v", err)
 			}
 			continue

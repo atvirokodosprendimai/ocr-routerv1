@@ -201,6 +201,7 @@ func (r *Repo) ListTokens(ctx context.Context, userID string) ([]core.Token, err
 
 const jobColumns = `id, user_id, filename, size_byte, label, pipeline, stage, params,
 	has_blob, raw, state, attempts, units, accrued_credits, worker_id, lease_expires_at,
+	exit_code,
 	last_error, queued_at, expires_at, created_at, updated_at`
 
 func scanJob(row interface{ Scan(...any) error }) (core.Job, error) {
@@ -210,6 +211,7 @@ func scanJob(row interface{ Scan(...any) error }) (core.Job, error) {
 		params   string
 		hasBlob  int
 		raw      int
+		exitCode sql.NullInt64
 		lease    sql.NullInt64
 		expires  sql.NullInt64
 		queued   int64
@@ -218,7 +220,8 @@ func scanJob(row interface{ Scan(...any) error }) (core.Job, error) {
 	)
 	err := row.Scan(&j.ID, &j.UserID, &j.Filename, &j.SizeByte, &j.Label, &pipeline,
 		&j.Stage, &params, &hasBlob, &raw, &j.State, &j.Attempts, &j.Units, &j.AccruedCredits,
-		&j.WorkerID, &lease, &j.LastError, &queued, &expires, &created, &updated)
+		&j.WorkerID, &lease, &exitCode,
+		&j.LastError, &queued, &expires, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return core.Job{}, core.ErrNotFound
 	}
@@ -233,6 +236,12 @@ func scanJob(row interface{ Scan(...any) error }) (core.Job, error) {
 	}
 	j.HasBlob = hasBlob == 1
 	j.Raw = raw == 1
+	if exitCode.Valid {
+		// Through the pointer, so an absent code stays absent rather than
+		// becoming the code for success.
+		n := int(exitCode.Int64)
+		j.ExitCode = &n
+	}
 	if lease.Valid {
 		j.LeaseExpiresAt = time.Unix(lease.Int64, 0).UTC()
 	}

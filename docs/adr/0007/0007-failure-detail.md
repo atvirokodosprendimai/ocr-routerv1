@@ -1,6 +1,6 @@
 # ADR-0007: Carry a failed job's exit code and output as data, and give failures a place to be seen
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-16
 **Owner:** M
 **Spec:** None — no spec stage

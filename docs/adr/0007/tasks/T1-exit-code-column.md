@@ -63,6 +63,9 @@ go test ./internal/store -run 'TestExitCodeRoundTripsThroughTheJobRow|TestNoExit
 
 ## Mutation Log
 
+- 2026-09-17 · 404cdc4* · mutant killed · exit 1 · `internal/store/repo_write.go` · a failure with no exit status is stored as 0 — the code for SUCCESS — so "show me the clean exits" silently includes every job that never exited · acceptance-sha256:a91b35c6df983e4c0375d84f31921afe2087c1a01dae35eeecd9fbad1693500d · covers:the column being nullable
+- 2026-09-17 · 404cdc4* · mutant killed · exit 1 · `internal/store/repo_write.go` · RequeueJob drops the code, so it appears on a dead row and vanishes the moment the job retries · acceptance-sha256:a91b35c6df983e4c0375d84f31921afe2087c1a01dae35eeecd9fbad1693500d · covers:the code surviving a write-read round trip
+
 ## Invariants
 
 - `exit_code` is NULL when no exit happened, NEVER 0. A timeout, an output-limit
@@ -91,3 +94,19 @@ cannot be delivered the Rollback section is wrong and must be amended first.
 - Showing it — T4.
 
 ## Verification Log
+- 2026-09-17 · 404cdc4* · exit 1 · `set -o pipefail …` · acceptance-sha256:a91b35c6df983e4c0375d84f31921afe2087c1a01dae35eeecd9fbad1693500d · ms:280
+  ```
+  --- last 10 line(s) of stdout (of 22 after folding 22 raw)
+  	have (context.Context, string, string, nil, "time".Time)
+  	want (context.Context, string, string, "time".Time)
+  internal/store/exitcode_test.go:59:9: got.ExitCode undefined (type core.Job has no field or method ExitCode)
+  internal/store/exitcode_test.go:61:44: got.ExitCode undefined (type core.Job has no field or method ExitCode)
+  internal/store/exitcode_test.go:73:73: too many arguments in call to r.RequeueJob
+  	have (context.Context, string, string, *int, "time".Time)
+  	want (context.Context, string, string, "time".Time)
+  internal/store/exitcode_test.go:73:73: too many errors
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/store [build failed]
+  FAIL
+  ```
+- 2026-09-17 · 404cdc4* · exit 0 · `set -o pipefail …` · acceptance-sha256:a91b35c6df983e4c0375d84f31921afe2087c1a01dae35eeecd9fbad1693500d · ms:2705
+- 2026-09-17 · 404cdc4* · exit 0 · `set -o pipefail …` · acceptance-sha256:a91b35c6df983e4c0375d84f31921afe2087c1a01dae35eeecd9fbad1693500d · ms:2961

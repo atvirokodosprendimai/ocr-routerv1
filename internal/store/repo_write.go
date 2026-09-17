@@ -208,25 +208,36 @@ func (r *Repo) MarkHasBlob(ctx context.Context, jobID string) error {
 	return affectedOne(res, err)
 }
 
-// RequeueJob returns a leased job to the queue after a reported failure or an
-// expired lease, incrementing attempts. queued_at is preserved, as above.
-func (r *Repo) RequeueJob(ctx context.Context, jobID, lastErr string, now time.Time) error {
+// RequeueJob returns a failed job to the queue, spending an attempt.
+//
+// `exitCode` is nil when the failure never reached an exit status — a timeout, an
+// output-limit trip, a contract violation. It is written on BOTH failure writers
+// so a code cannot appear on one row and vanish on the next.
+func (r *Repo) RequeueJob(ctx context.Context, jobID, lastErr string, exitCode *int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
 		`UPDATE jobs SET state = 'queued', attempts = attempts + 1, worker_id = '',
-		        lease_expires_at = NULL, last_error = ?, updated_at = ?
+		        lease_expires_at = NULL, last_error = ?, exit_code = ?, updated_at = ?
 		 WHERE id = ?`,
-		lastErr, now.Unix(), jobID)
+		lastErr, nullableInt(exitCode), now.Unix(), jobID)
 	return affectedOne(res, err)
 }
 
 // FailJobDead marks a job beyond retry. It is never charged.
-func (r *Repo) FailJobDead(ctx context.Context, jobID, lastErr string, now time.Time) error {
+func (r *Repo) FailJobDead(ctx context.Context, jobID, lastErr string, exitCode *int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
 		`UPDATE jobs SET state = 'dead', attempts = attempts + 1, worker_id = '',
-		        lease_expires_at = NULL, last_error = ?, updated_at = ?
+		        lease_expires_at = NULL, last_error = ?, exit_code = ?, updated_at = ?
 		 WHERE id = ?`,
-		lastErr, now.Unix(), jobID)
+		lastErr, nullableInt(exitCode), now.Unix(), jobID)
 	return affectedOne(res, err)
+}
+
+// nullableInt keeps a nil exit code NULL in the column rather than 0.
+func nullableInt(n *int) any {
+	if n == nil {
+		return nil
+	}
+	return *n
 }
 
 // DeliverJob is the metering step: the ONLY place credits move for a job.

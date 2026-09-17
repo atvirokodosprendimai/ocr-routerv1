@@ -41,8 +41,12 @@ func TestMigrationDownDropsRawColumns(t *testing.T) {
 	if err := goose.SetDialect(gooseDialect); err != nil {
 		t.Fatalf("SetDialect: %v", err)
 	}
-	if err := goose.Down(db.Write, "migrations"); err != nil {
-		t.Fatalf("goose.Down: %v — ADR-0006's Rollback step 1 claims this works", err)
+	// ⚠ DownTo a NAMED version, not Down. `Down` rolls back exactly one
+	// migration, so a test written against "the latest" silently changes subject
+	// the moment another migration is added — which is what happened when
+	// ADR-0007 added 00004 and this test started asserting the wrong rollback.
+	if err := goose.DownTo(db.Write, "migrations", 2); err != nil {
+		t.Fatalf("goose.DownTo(2): %v — ADR-0006's Rollback step 1 claims this works", err)
 	}
 
 	if hasColumn(t, db.Write, "service_rates", "raw") {
@@ -80,8 +84,9 @@ func TestExistingServiceRowIsNotPromotedToRaw(t *testing.T) {
 	}
 
 	// Back to the pre-ADR-0006 schema.
-	if err := goose.Down(db.Write, "migrations"); err != nil {
-		t.Fatalf("goose.Down: %v", err)
+	// Down to the pre-ADR-0006 schema by VERSION, for the same reason as above.
+	if err := goose.DownTo(db.Write, "migrations", 2); err != nil {
+		t.Fatalf("goose.DownTo(2): %v", err)
 	}
 	if _, err := db.Write.Exec(
 		`INSERT INTO service_rates (label, credits_per_unit, updated_at) VALUES (?,?,?)`,
