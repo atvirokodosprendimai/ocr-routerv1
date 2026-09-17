@@ -71,6 +71,12 @@ templ generate \
 
 ## Mutation Log
 
+- 2026-09-17 · 5178e2d* · mutant killed · exit 1 · `internal/web/web.go` · the failures link stops filtering and serves the whole dashboard, so the view answers the same question badly while every row it should show is still on screen · acceptance-sha256:12a206e0b89922271facd7a39843e569977fdb404b1779a2f1f14298daf3a53f
+- 2026-09-17 · 5178e2d* · mutant killed · exit 1 · `internal/web/web.go` · a job that never exited renders as 0, so a timeout is indistinguishable on screen from a command that exited cleanly — the exact confusion the nullable column exists to prevent · acceptance-sha256:12a206e0b89922271facd7a39843e569977fdb404b1779a2f1f14298daf3a53f
+- 2026-09-17 · 5178e2d* · mutant killed · exit 1 · `internal/web/web.go` · the failures link stops filtering and serves the whole dashboard · acceptance-sha256:12a206e0b89922271facd7a39843e569977fdb404b1779a2f1f14298daf3a53f · covers:the filter selecting only failures
+- 2026-09-17 · 5178e2d* · mutant killed · exit 1 · `internal/web/web.go` · a job that never exited renders as 0, indistinguishable from a clean exit · acceptance-sha256:12a206e0b89922271facd7a39843e569977fdb404b1779a2f1f14298daf3a53f · covers:the exit code being rendered distinctly from no-exit
+- 2026-09-17 · 5178e2d* · mutant killed · exit 1 · `internal/web/web.go` · the filtered path builds its own rows and loses a field the dashboard has — the shape a second query takes, where the two views agree until they quietly do not · acceptance-sha256:12a206e0b89922271facd7a39843e569977fdb404b1779a2f1f14298daf3a53f · covers:the filter reading the same model as the dashboard
+
 ## Invariants
 
 - The failures view is a FILTER over `buildDashboard`, never a second query.
@@ -80,6 +86,24 @@ templ generate \
 - Worker-supplied text stays a TEXT NODE and never reaches a `data-*` attribute —
   the existing comment at `views.templ:69` says why, and this task renders more of
   that text than before.
+
+## Class Sweep
+
+The class: **a nullable value rendered by the web layer, where absence could be
+mistaken for a real value** — nil shown as `0`, or as an empty cell that reads
+like a blank field rather than "this never happened".
+
+Enumerated 2026-09-17, not from memory:
+
+```
+grep -rn '\*[A-Za-z]* \*int\|ExitCode\|LastHeartbeat\|\*time.Time' internal/web/ \
+  --include=*.go --include=*.templ | grep -v _templ.go | grep -v _test.go
+```
+
+Two hits, both the `ExitCode` rendering this task adds (`internal/web/web.go:201`
+and `:202`). `jobs.exit_code` is the only nullable column the dashboard reads, so
+the class has exactly one member and it is the one handled here. Nothing left
+open.
 
 ## Risks
 
@@ -105,3 +129,25 @@ owner should take, not a cap this task quietly raises.
 - Showing failure detail to the CLIENT (permanent: boundary: ADR-0001 keeps worker text out of the client's result contract).
 
 ## Verification Log
+- 2026-09-17 · 5178e2d* · exit 1 · `set -o pipefail …` · acceptance-sha256:12a206e0b89922271facd7a39843e569977fdb404b1779a2f1f14298daf3a53f · ms:2599
+  ```
+  --- last 10 line(s) of stdout (of 15 after folding 15 raw)
+      failures_test.go:90: a failure with no exit code shows nothing recognisable — the cell must say positively that there was no exit
+  --- FAIL: TestExitCodeIsShownDistinctlyFromNoExit (0.01s)
+  === RUN   TestFailuresViewUsesTheSameReadModel
+  --- PASS: TestFailuresViewUsesTheSameReadModel (0.01s)
+  === RUN   TestDetailDoesNotBreakTheTable
+      failures_test.go:131: the Detail cell carries no bounding class — a 2000-byte stream then stretches the table it lands in, which is the defect that exists today
+  --- FAIL: TestDetailDoesNotBreakTheTable (0.01s)
+  FAIL
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/web	0.615s
+  FAIL
+  --- last 2 line(s) of stderr
+  (✓) Post-generation event received, processing... [ updates=0 needsRestart=true needsBrowserReload=true ]
+  (✓) Complete [ updates=0 duration=38.744791ms ]
+  ```
+- 2026-09-17 · 5178e2d* · exit 0 · `set -o pipefail …` · acceptance-sha256:12a206e0b89922271facd7a39843e569977fdb404b1779a2f1f14298daf3a53f · ms:8179
+- 2026-09-17 · 5178e2d* · exit 0 · `set -o pipefail …` · acceptance-sha256:12a206e0b89922271facd7a39843e569977fdb404b1779a2f1f14298daf3a53f · ms:8218
+- 2026-09-17 · 5178e2d* · exit 0 · `set -o pipefail …` · acceptance-sha256:12a206e0b89922271facd7a39843e569977fdb404b1779a2f1f14298daf3a53f · ms:11296
+- 2026-09-17 · 5178e2d* · exit 0 · `set -o pipefail …` · acceptance-sha256:12a206e0b89922271facd7a39843e569977fdb404b1779a2f1f14298daf3a53f · ms:7640
+- 2026-09-17 · 5178e2d* · exit 0 · `set -o pipefail …` · acceptance-sha256:12a206e0b89922271facd7a39843e569977fdb404b1779a2f1f14298daf3a53f · ms:15817
