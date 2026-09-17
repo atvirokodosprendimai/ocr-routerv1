@@ -7,7 +7,7 @@ import "github.com/atvirokodosprendimai/ocr-router/internal/core"
 // table, all patched in over one SSE stream.
 templ Overview(d Dashboard) {
 	@Layout("Overview", `{}`) {
-		<div data-init="@get('/admin/stream')"></div>
+		<div data-init={ "@get('" + streamURL(d) + "')" }></div>
 		@Stats(d)
 		@Jobs(d)
 		@Workers(d)
@@ -45,15 +45,32 @@ templ stat(name string, n int) {
 // Jobs lists recent work.
 templ Jobs(d Dashboard) {
 	<section id="jobs">
-		<h2>Recent jobs</h2>
+		<div class="section-head">
+			if d.FailedOnly {
+				<h2>Failures</h2>
+			} else {
+				<h2>Recent jobs</h2>
+			}
+			// Links, not a form: the filter is a place on the site, so it is
+			// shareable, bookmarkable and reachable with the back button.
+			<nav class="filters" aria-label="Filter jobs">
+				<a href="/admin/" aria-current={ templ.KV("page", !d.FailedOnly) }>All</a>
+				<a href="/admin/?state=failed" aria-current={ templ.KV("page", d.FailedOnly) }>Failures</a>
+			</nav>
+		</div>
 		if len(d.Jobs) == 0 {
-			<p class="empty">No jobs yet. Upload one with a client token to see it here.</p>
+			if d.FailedOnly {
+				<p class="empty">Nothing has failed. Dead and expired jobs would be listed here.</p>
+			} else {
+				<p class="empty">No jobs yet. Upload one with a client token to see it here.</p>
+			}
 		} else {
 			<table>
 				<thead>
 					<tr>
 						<th>Job</th><th>Customer</th><th>Service</th><th>Stage</th>
-						<th>State</th><th class="num">Units</th><th class="num">Cost</th><th>Detail</th>
+						<th>State</th><th class="num">Units</th><th class="num">Cost</th>
+						<th class="num">Exit</th><th>Detail</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -66,10 +83,15 @@ templ Jobs(d Dashboard) {
 							<td><span class={ "tag", string(j.Job.State) }>{ string(j.Job.State) }</span></td>
 							<td class="num">{ fmt.Sprint(j.Job.Units) }</td>
 							<td class="num">{ fmt.Sprint(j.Job.AccruedCredits) }</td>
+							<td class="exit">{ j.Exit }</td>
 							// Stored text — a worker's stderr — as a TEXT NODE. It must
 							// never reach a data-* attribute: `@word(` inside a compiled
 							// expression throws and silently disables the element.
-							<td class="muted">{ j.Job.LastError }</td>
+							//
+							// `title` puts the whole thing one hover away, because the
+							// cell itself is clipped: stderr arrives in kilobytes and an
+							// unbounded cell stretches the table past the viewport.
+							<td class="detail" title={ j.Job.LastError }>{ j.Job.LastError }</td>
 						</tr>
 					}
 				</tbody>
@@ -428,6 +450,17 @@ templ RateSaved(label string, rate int, raw bool) {
 			<p class="muted">{ fmt.Sprintf("%s now costs %d credit(s) per unit.", label, rate) }</p>
 		}
 	</div>
+}
+
+// streamURL carries the page's job filter into the SSE subscription.
+//
+// Without it the first patch would replace a filtered table with the unfiltered
+// one, so the filter would appear to work and then undo itself a second later.
+func streamURL(d Dashboard) string {
+	if d.FailedOnly {
+		return "/admin/stream?state=failed"
+	}
+	return "/admin/stream"
 }
 
 func shortID(id string) string {

@@ -80,7 +80,7 @@ func TestFailedRawJobCostsNothing(t *testing.T) {
 		if _, err := h.svc.Claim(ctx, "w1", "convert", base); err != nil {
 			break
 		}
-		if err := h.svc.Fail(ctx, "w1", j.ID, "boom", base); err != nil {
+		if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, base); err != nil {
 			t.Fatalf("Fail: %v", err)
 		}
 	}

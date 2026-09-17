@@ -41,6 +41,11 @@ type fakeRouter struct {
 	claimRaw  string   // ?raw= seen on the claim
 	rawBodies [][]byte // octet-stream bodies, in order
 	rawJobIDs []string // ?job_id= that came with each
+
+	// ADR-0008: what the worker handed back on shutdown, and what the router
+	// answered. releaseStatus defaults to 0, read as 204.
+	released      []string
+	releaseStatus int
 }
 
 type report struct {
@@ -117,6 +122,17 @@ func (f *fakeRouter) handler() http.Handler {
 			"job_id": id, "label": "test", "has_blob": hasBlob,
 			"params": map[string]string{"n": id},
 		})
+	})
+
+	mux.HandleFunc("/release", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.released = append(f.released, r.URL.Query().Get("job_id"))
+		status := f.releaseStatus
+		f.mu.Unlock()
+		if status == 0 {
+			status = http.StatusNoContent
+		}
+		w.WriteHeader(status)
 	})
 
 	mux.HandleFunc("/files/", func(w http.ResponseWriter, r *http.Request) {

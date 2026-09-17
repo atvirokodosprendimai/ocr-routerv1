@@ -28,6 +28,14 @@ type Config struct {
 	Lease time.Duration
 	// MaxAttempts bounds retries before a job is abandoned as dead.
 	MaxAttempts int
+	// MaxReclaims bounds how many times a job's lease may be taken back from a
+	// worker that went away before the job is given up on (ADR-0008).
+	//
+	// ⚠ A SEPARATE BOUND from MaxAttempts, and it must exist. Abandonment is not
+	// the work failing, so it must not spend the retry budget — but an UNBOUNDED
+	// reclaim is worse than the defect it fixes: a job that kills every worker
+	// that touches it would be requeued forever, with no terminal state at all.
+	MaxReclaims int
 	// AgingStep is how much waiting time buys one point of effective priority.
 	// It tunes the whole queue, not one customer, which is why it is not a
 	// per-user column.
@@ -403,7 +411,7 @@ func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, worker
 		// saying why.
 		return s.failJob(ctx, job, "router",
 			fmt.Sprintf("stage %q is a units service and cannot accept a raw stage's output", next),
-			now)
+			nil, now)
 	}
 
 	src, err := s.blobs.OpenResult(job.ID)
@@ -500,7 +508,7 @@ func joinUnits(out []string) string {
 }
 
 // Fail records a worker's failure, retrying until the attempt budget is spent.
-func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, now time.Time) error {
+func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, exitCode *int, now time.Time) error {
 	job, err := s.repo.JobByID(ctx, jobID)
 	if err != nil {
 		return err
@@ -508,7 +516,7 @@ func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, now 
 	if !holdsLease(job, workerID, now) {
 		return core.ErrConflict
 	}
-	return s.failJob(ctx, job, "worker", reason, now)
+	return s.failJob(ctx, job, "worker", reason, exitCode, now)
 }
 
 // failJob retries or abandons a job.
@@ -516,35 +524,118 @@ func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, now 
 // `actor` says who caused it — a worker reporting failure, or the reaper taking
 // back an expired lease. The two are indistinguishable in the job row afterwards
 // and mean entirely different things to whoever is debugging.
-func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason string, now time.Time) error {
+func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason string, exitCode *int, now time.Time) error {
 	if job.Attempts+1 < s.cfg.MaxAttempts {
-		if err := s.repo.RequeueJob(ctx, job.ID, reason, now); err != nil {
+		if err := s.repo.RequeueJob(ctx, job.ID, reason, exitCode, now); err != nil {
 			return err
 		}
 		// The retry is the transition nothing else records: a job that succeeds
 		// on attempt 3 looks identical in the metrics to one that succeeded
 		// first time.
-		s.logTransition(job, job.State, core.JobQueued, job.UpdatedAt,
-			actor, job.WorkerID, reason, now)
+		s.logFailureTransition(job, job.State, core.JobQueued, job.UpdatedAt,
+			actor, job.WorkerID, reason, exitCode, now)
 		s.publishWork(job.Label)
 		s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 		return nil
 	}
 
 	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})
-	if err := s.repo.FailJobDead(ctx, job.ID, reason, now); err != nil {
+	if err := s.repo.FailJobDead(ctx, job.ID, reason, exitCode, now); err != nil {
 		return err
 	}
 	// The line the counter cannot give you: which job, on which worker, for what
 	// reason, at which attempt.
-	s.logTransition(job, job.State, core.JobDead, job.UpdatedAt,
-		actor, job.WorkerID, reason, now)
+	s.logFailureTransition(job, job.State, core.JobDead, job.UpdatedAt,
+		actor, job.WorkerID, reason, exitCode, now)
 	// Terminal: neither blob has any further use and nothing was charged.
 	_ = s.blobs.Delete(job.ID)
 	_ = s.blobs.DeleteResult(job.ID)
 	s.results.Drop(job.ID)
 	s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
 		Kind: bus.KindFailed, JobID: job.ID, Reason: reason,
+	})
+	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
+	return nil
+}
+
+// ReleaseLease hands a job back to the queue at the worker's own request.
+//
+// This is the COOPERATIVE case: an operator is stopping the worker, and the
+// alternative is the job sitting in `processing` until its lease lapses — up to
+// a full `--lease` of nothing happening, for a restart that took a second.
+//
+// It spends NEITHER budget. Nothing failed and nothing was abandoned; the worker
+// said so itself, which is strictly better information than the reaper's
+// inference from silence.
+//
+// ⚠ holdsLease FIRST, and this is the THIRD place that guard appears — beside
+// Complete and Fail. Without it any worker could requeue a job another one is
+// actively running, which is the same two-writer bug from the other end.
+func (s *Service) ReleaseLease(ctx context.Context, workerID, jobID string, now time.Time) error {
+	job, err := s.repo.JobByID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if !holdsLease(job, workerID, now) {
+		return core.ErrConflict
+	}
+	// RequeueJob would spend an attempt and ReclaimJob a reclaim, so neither
+	// writer fits: this is the only requeue in the system that costs the job
+	// nothing. The lease and worker_id still have to go, or the releasing
+	// worker's subprocess could land a late result on a job somebody else holds.
+	if err := s.repo.ReleaseJob(ctx, jobID, "released by its worker", now); err != nil {
+		return err
+	}
+	s.logFailureTransition(job, job.State, core.JobQueued, job.UpdatedAt,
+		"worker", workerID, "released by its worker", nil, now)
+	s.publishWork(job.Label)
+	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
+	return nil
+}
+
+// reclaimJob returns a job whose worker went away, WITHOUT spending an attempt.
+//
+// It is failJob's twin and deliberately reads like it, because the difference is
+// the whole of ADR-0008: the same job, the same requeue, a different budget. A
+// lease taken back says nothing about whether the command works — the worker was
+// restarted, killed, or lost its network — so charging it to `attempts` killed
+// healthy work after three router restarts, which is the bug M reported on
+// 2026-09-16.
+//
+// The bound is still real. A job that reliably takes its worker down with it
+// would otherwise be requeued forever, taking each worker in turn and never
+// reaching a terminal state.
+//
+// No exit code, ever: nothing exited (ADR-0007).
+func (s *Service) reclaimJob(ctx context.Context, job core.Job, reason string, now time.Time) error {
+	if job.Reclaims+1 < s.cfg.MaxReclaims {
+		if err := s.repo.ReclaimJob(ctx, job.ID, reason, now); err != nil {
+			return err
+		}
+		s.logFailureTransition(job, job.State, core.JobQueued, job.UpdatedAt,
+			"reaper", job.WorkerID, reason, nil, now)
+		s.publishWork(job.Label)
+		s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
+		return nil
+	}
+
+	// ⚠ The terminal reason names WHICH budget ran out. "abandoned too many
+	// times" and "attempts exhausted" are different facts about a job, and an
+	// operator who reads one and concludes the other goes looking for a broken
+	// command when the problem is a host that keeps losing workers.
+	dead := reason + ": abandoned too many times"
+	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})
+	if err := s.repo.FailJobDead(ctx, job.ID, dead, nil, now); err != nil {
+		return err
+	}
+	s.logFailureTransition(job, job.State, core.JobDead, job.UpdatedAt,
+		"reaper", job.WorkerID, dead, nil, now)
+	// Terminal: neither blob has any further use and nothing was charged.
+	_ = s.blobs.Delete(job.ID)
+	_ = s.blobs.DeleteResult(job.ID)
+	s.results.Drop(job.ID)
+	s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
+		Kind: bus.KindFailed, JobID: job.ID, Reason: dead,
 	})
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 	return nil

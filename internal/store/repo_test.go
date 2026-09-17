@@ -301,7 +301,7 @@ func TestRequeuePreservesQueuedAt(t *testing.T) {
 	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if err := r.RequeueJob(ctx, "j1", "boom", base); err != nil {
+	if err := r.RequeueJob(ctx, "j1", "boom", nil, base); err != nil {
 		t.Fatalf("RequeueJob: %v", err)
 	}
 	got, _ := r.JobByID(ctx, "j1")

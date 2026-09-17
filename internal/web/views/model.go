@@ -9,8 +9,14 @@ import "github.com/atvirokodosprendimai/ocr-router/internal/core"
 // patch call the same code. A view that reached for a global or the clock would
 // no longer be a function of its input, and the two callers would drift.
 type Dashboard struct {
-	Counts          map[core.JobState]int
-	Jobs            []JobRow
+	Counts map[core.JobState]int
+	Jobs   []JobRow
+	// FailedOnly says the job rows have been filtered down to failures. It is a
+	// property of the read model rather than of the request so that the SSE
+	// patch and the first paint render the same table — a stream that pushed the
+	// unfiltered list over a filtered page would undo the filter on the first
+	// event.
+	FailedOnly      bool
 	Users           []core.User
 	Services        []ServiceRow
 	Emails          map[string]string
@@ -23,6 +29,14 @@ type JobRow struct {
 	Job core.Job
 	// StageLabel reads "2/3" for a pipeline, or "—" for a single-stage job.
 	StageLabel string
+	// Exit is the forked command's status as text: "3", or "—" for a job that
+	// never exited at all — a timeout, a reclaimed lease, a job still running.
+	//
+	// ⚠ It is a string precisely so that absence cannot render as 0. 0 is the
+	// code for SUCCESS, so a timeout displayed as 0 reads as a command that
+	// finished cleanly and failed anyway, which is the confusion the nullable
+	// column exists to prevent (ADR-0007).
+	Exit string
 }
 
 // TokenList is one user's tokens, for the expandable row under the user table.

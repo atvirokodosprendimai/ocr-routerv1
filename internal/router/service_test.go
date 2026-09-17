@@ -27,7 +27,23 @@ type harness struct {
 	results *results.Store
 }
 
+// newHarness builds a service on the configuration almost every test wants.
 func newHarness(t *testing.T) *harness {
+	t.Helper()
+	return newHarnessWith(t, router.Config{
+		Lease:        5 * time.Minute,
+		MaxAttempts:  3,
+		MaxReclaims:  10, // the shipped default; see cmd/router/main.go
+		AgingStep:    time.Minute,
+		LabelGrace:   5 * time.Minute,
+		ResultTTL:    time.Hour,
+		DefaultLabel: "ocr",
+	})
+}
+
+// newHarnessWith is the same harness with the config named, for the tests whose
+// subject IS a bound — a budget you cannot vary cannot be shown to be a budget.
+func newHarnessWith(t *testing.T, cfg router.Config) *harness {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "r.db"))
@@ -50,14 +66,7 @@ func newHarness(t *testing.T) *harness {
 	// day after `base` (2026-09-15), with no code change.
 	res.SetClock(func() time.Time { return base })
 	b := bus.New()
-	svc := router.New(repo, blobs, res, b, router.Config{
-		Lease:        5 * time.Minute,
-		MaxAttempts:  3,
-		AgingStep:    time.Minute,
-		LabelGrace:   5 * time.Minute,
-		ResultTTL:    time.Hour,
-		DefaultLabel: "ocr",
-	})
+	svc := router.New(repo, blobs, res, b, cfg)
 	return &harness{svc: svc, repo: repo, bus: b, blobs: blobs, results: res}
 }
 
@@ -525,7 +534,7 @@ func TestFailRequeuesUntilMaxAttempts(t *testing.T) {
 		if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 			t.Fatalf("claim %d: %v", i, err)
 		}
-		if err := h.svc.Fail(ctx, "w1", j.ID, "boom", base); err != nil {
+		if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, base); err != nil {
 			t.Fatalf("fail %d: %v", i, err)
 		}
 		got, _ := h.repo.JobByID(ctx, j.ID)
@@ -536,7 +545,7 @@ func TestFailRequeuesUntilMaxAttempts(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("claim 3: %v", err)
 	}
-	if err := h.svc.Fail(ctx, "w1", j.ID, "boom", base); err != nil {
+	if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, base); err != nil {
 		t.Fatalf("fail 3: %v", err)
 	}
 	got, _ := h.repo.JobByID(ctx, j.ID)
@@ -568,7 +577,7 @@ func TestFailPreservesQueuedAt(t *testing.T) {
 	// Failing PAST the lease is correctly refused (TestCompleteRejectsExpiredLease),
 	// so this must stay within it.
 	later := base.Add(time.Minute)
-	if err := h.svc.Fail(ctx, "w1", j.ID, "boom", later); err != nil {
+	if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, later); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 	got, _ := h.repo.JobByID(ctx, j.ID)

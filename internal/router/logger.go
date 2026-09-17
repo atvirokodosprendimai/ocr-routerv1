@@ -43,6 +43,10 @@ type TransitionEvent struct {
 	Params map[string]string
 	// Reason is the failure text, empty on a successful transition.
 	Reason string
+	// ExitCode is the forked command's status on a failure line, nil when the
+	// failure never reached one (ADR-0007). Additive to ADR-0002's schema: it
+	// appears only when there is one, and changes no attribute already emitted.
+	ExitCode *int
 	// InState is how long the job spent in the state it just left.
 	//
 	// ⚠ Computed from the job row's stored timestamp, never from anything held
@@ -77,8 +81,22 @@ func (s *Service) SetLogger(l Logger) {
 //
 // `since` is always a STORED timestamp, never a value held in memory, so the
 // duration survives a restart.
+// logTransition records a state change that carries no exit code, which is every
+// transition but a command failure.
 func (s *Service) logTransition(job core.Job, from, to core.JobState, since time.Time,
 	actor, workerID, reason string, now time.Time,
+) {
+	s.logFailureTransition(job, from, to, since, actor, workerID, reason, nil, now)
+}
+
+// logFailureTransition is the same line plus the forked command's exit code.
+//
+// A separate entry point rather than a widened one: eleven of this service's
+// thirteen transitions have no exit code by construction, and threading a nil
+// through all of them would make the two that DO carry one indistinguishable at
+// the call site from the ones that never could.
+func (s *Service) logFailureTransition(job core.Job, from, to core.JobState, since time.Time,
+	actor, workerID, reason string, exitCode *int, now time.Time,
 ) {
 	s.logger.Transition(TransitionEvent{
 		JobID:    job.ID,
@@ -92,6 +110,7 @@ func (s *Service) logTransition(job core.Job, from, to core.JobState, since time
 		Stage:    job.Stage,
 		Params:   job.Params,
 		Reason:   reason,
+		ExitCode: exitCode,
 		InState:  now.Sub(since),
 	})
 }

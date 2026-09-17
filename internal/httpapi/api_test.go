@@ -171,6 +171,7 @@ func TestEveryRouteIsMounted(t *testing.T) {
 		"GET /sse":        false,
 		"GET /files/{id}": false,
 		"POST /claim":     false,
+		"POST /release":   false,
 		"GET /services":   false,
 	}
 	for _, rt := range e.api.Routes() {

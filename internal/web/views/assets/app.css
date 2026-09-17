@@ -48,6 +48,26 @@ th, td { text-align: left; padding: .6rem .75rem; border-bottom: 1px solid var(-
 th { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
 tr:last-child td { border-bottom: 0; }
 td.num { font-variant-numeric: tabular-nums; text-align: right; }
+/* The forked command's exit status. Right-aligned like the other numbers, but a
+   code is not a quantity — it is shown in the monospace face so 3 and 130 read
+   as identifiers, and the em dash for "never exited" is muted so it cannot be
+   mistaken for a value. */
+td.exit { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: .85rem; text-align: right; }
+/* A worker's stderr arrives in kilobytes. Unbounded, one row stretches the table
+   past the viewport and every other column becomes unreadable — so the cell is
+   clipped to a share of the width and the whole text lives in its title. */
+td.detail { color: var(--muted); max-width: 22rem; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+.section-head { display: flex; align-items: center; justify-content: space-between;
+                gap: 1rem; flex-wrap: wrap; }
+.section-head h2 { margin: 0; }
+.filters { display: flex; gap: .25rem; }
+.filters a { display: inline-flex; align-items: center; min-height: 44px;
+             padding: 0 .75rem; border: 1px solid var(--line); border-radius: 999px;
+             color: var(--muted); text-decoration: none; font-size: .8rem; }
+.filters a:hover { color: var(--text); }
+.filters a[aria-current="page"] { color: var(--text); border-color: var(--accent); }
 .tag { display: inline-block; padding: .1rem .5rem; border-radius: 999px;
        font-size: .75rem; border: 1px solid var(--line); }
 .tag.queued { color: var(--muted); }

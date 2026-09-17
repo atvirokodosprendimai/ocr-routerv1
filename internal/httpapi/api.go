@@ -153,6 +153,7 @@ func New(deps Deps) *API {
 		r.Get("/sse", a.handleSSE)
 		r.Get("/files/{id}", a.handleFile)
 		r.With(a.requireRole(roleWorker)).Post("/claim", a.handleClaim)
+		r.With(a.requireRole(roleWorker)).Post("/release", a.handleRelease)
 		r.Get("/services", a.handleServices)
 	})
 

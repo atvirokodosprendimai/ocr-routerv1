@@ -42,6 +42,39 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   still accrues a cost for reporting, since "we cannot bill it" and "we cannot see what it cost"
   are different claims, and the metrics counter at `:385` currently conflates them.
 
+- **Draining: a worker finishes its in-flight jobs before exiting, rather than releasing them.**
+  Deferred by ADR-0008 (`docs/adr/0008/0008-restart-is-not-a-failure.md`, §Out of Scope) and by its
+  task T3, 2026-09-17. That record makes a shutting-down worker hand its leases BACK, which is right
+  for a restart and wasteful for a deploy: work already half-done is thrown away and redone
+  elsewhere. Draining needs a bound (how long may a shutdown wait?), a decision about what happens
+  when it is exceeded, and an orchestrator that honours it. Worth taking up when deploys are
+  frequent enough for the redone work to matter.
+- **A metric for reclaimed jobs (`ocrr_jobs_reclaimed_total{label}`).**
+  Open follow-up on ADR-0008, 2026-09-17. A service whose workers keep vanishing is an operational
+  signal that nothing currently reports — it looks identical to a slow service. Bounded by ADR-0001
+  T11's cardinality allow-list, which is why it is a question rather than a line of code.
+- **A `job_failures` table keeping every attempt, not only the last.**
+  Deferred by ADR-0007 (`docs/adr/0007/0007-failure-detail.md`, §Alternatives and §Out of Scope),
+  2026-09-16. `jobs` keeps `attempts` and the LAST cause; a job that failed three different ways
+  shows only the third. Deferred as speculative: nobody has asked to see attempt 2 of 3, and a
+  second table is a migration, a retention policy and a join for a question nobody has posed. Take
+  it up when someone actually needs to compare attempts.
+- **Per-service failure counts on the Services table.**
+  Deferred by ADR-0007 (§Out of Scope) and by its task T4, 2026-09-16. A recent-failure count and
+  last error beside each label puts the signal next to the service that produced it. It is a good
+  SUMMARY and a poor diagnosis — it cannot show which job, or let an operator read one — so it
+  belongs beside the failures view ADR-0007 builds, not instead of it.
+- **Alerting or notification on job failures.**
+  Deferred by ADR-0007 (§Out of Scope), 2026-09-16. That ADR makes the failure data queryable —
+  exit code as a column and a log attribute — and deliberately stops there. Alerting needs a
+  destination, a threshold and a silencing story, none of which anyone has specified. ⚠ Note its
+  open follow-up first: whether `exit_code` earns a metric dimension is undecided, and T11's
+  cardinality allow-list exists to stop exactly that label being added speculatively.
+- **Metric dimension for `exit_code` (`ocrr_jobs_total{state,exit_code}`).**
+  Open follow-up on ADR-0007, 2026-09-16. Deliberately NOT added by that record: a subprocess can
+  return 256 distinct codes, and ADR-0001 T11's allow-list exists because an unbounded label value
+  is how a metrics backend falls over. Decide once there is real data about which codes actually
+  occur.
 - **Compression of a raw result in transit.**
   Deferred by ADR-0006 (`docs/adr/0006/0006-raw-passthrough.md`, §Out of Scope), 2026-09-16.
   A raw result streams uncompressed from the blob store to the client. For the outputs raw exists to

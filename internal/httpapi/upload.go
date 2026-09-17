@@ -176,6 +176,11 @@ type workerResult struct {
 	JobID string   `json:"job_id"`
 	Units []string `json:"units"`
 	Error string   `json:"error"`
+	// ExitCode is the forked command's status, ABSENT when the failure never
+	// reached one (ADR-0007). A pointer so omitted stays omitted: 0 is the code
+	// for success, and defaulting to it would make every timeout read as a job
+	// that exited cleanly and failed anyway.
+	ExitCode *int `json:"exit_code,omitempty"`
 }
 
 // resultFromWorker records a stage's outcome.
@@ -224,7 +229,7 @@ func (a *API) resultFromWorker(w http.ResponseWriter, r *http.Request) {
 	// naming its own id could complete a job leased to a different one.
 	var err error
 	if body.Error != "" {
-		err = a.deps.Router.Fail(r.Context(), p.TokenID, body.JobID, body.Error, a.deps.Now())
+		err = a.deps.Router.Fail(r.Context(), p.TokenID, body.JobID, body.Error, body.ExitCode, a.deps.Now())
 	} else {
 		err = a.deps.Router.Complete(r.Context(), p.TokenID, body.JobID, body.Units, a.deps.Now())
 	}

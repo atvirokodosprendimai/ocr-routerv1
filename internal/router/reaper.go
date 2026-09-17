@@ -33,8 +33,13 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 	// this, the grace window would only ever be refreshed by traffic.
 	s.ObserveLabels(now)
 
-	// 1. Leases whose worker went silent. The job goes back to the queue with an
-	//    attempt spent, or dies if the budget is gone.
+	// 1. Leases whose worker went silent. The job goes back to the queue with a
+	//    RECLAIM spent, or dies if the abandonment budget is gone.
+	//
+	//    ⚠ reclaimJob, not failJob, and this is the line ADR-0008 is about. The
+	//    worker vanished — restarted, killed, off the network — which says
+	//    nothing about whether its command works, so spending the retry budget
+	//    here killed jobs that had never failed once.
 	expiredLeases, err := s.repo.LeaseExpired(ctx, now)
 	if err != nil {
 		return rep, err
@@ -42,10 +47,10 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 	for _, job := range expiredLeases {
 		rep.LeasesExpired++
 		s.counter.Inc(metricReaperActions, map[string]string{"action": "lease-expired"})
-		if job.Attempts+1 >= s.cfg.MaxAttempts {
+		if job.Reclaims+1 >= s.cfg.MaxReclaims {
 			rep.JobsAbandoned++
 		}
-		if err := s.failJob(ctx, job, "reaper", "lease expired", now); err != nil {
+		if err := s.reclaimJob(ctx, job, "lease expired, reclaimed", now); err != nil {
 			return rep, err
 		}
 	}
@@ -89,7 +94,8 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		if job.State != core.JobDone {
 			continue
 		}
-		if err := s.repo.RequeueJob(ctx, jobID, "result expired before collection", now); err != nil {
+		// nil: a result swept for age never ran a command that exited.
+		if err := s.repo.RequeueJob(ctx, jobID, "result expired before collection", nil, now); err != nil {
 			return rep, err
 		}
 		s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,
@@ -110,7 +116,7 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 			rep.ResultsSwept++
 			s.counter.Inc(metricReaperActions, map[string]string{"action": "result-swept"})
 			_ = s.blobs.DeleteResult(job.ID)
-			if err := s.repo.RequeueJob(ctx, job.ID, "result expired before collection", now); err != nil {
+			if err := s.repo.RequeueJob(ctx, job.ID, "result expired before collection", nil, now); err != nil {
 				return rep, err
 			}
 			s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,

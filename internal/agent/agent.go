@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -50,6 +51,9 @@ type Agent struct {
 	cfg    Config
 	run    runner.Runner
 	client *http.Client
+	// inflight is what this worker currently holds, so shutdown can hand the
+	// leases back instead of leaving each job to wait out a full lease.
+	inflight *inflight
 	// Log is where progress goes. Injectable so tests can stay quiet.
 	Log func(format string, args ...any)
 }
@@ -67,8 +71,9 @@ func New(cfg Config, r runner.Runner) *Agent {
 		run: r,
 		// No overall timeout: this client opens the SSE stream, which is meant
 		// to stay open indefinitely. Per-request bounds come from the context.
-		client: &http.Client{},
-		Log:    func(string, ...any) {},
+		client:   &http.Client{},
+		inflight: newInflight(),
+		Log:      func(string, ...any) {},
 	}
 }
 
@@ -79,6 +84,11 @@ func New(cfg Config, r runner.Runner) *Agent {
 // restart drops EVERY worker at once, and without it the whole fleet would
 // reconnect on the same tick and do it again on the next failure.
 func (a *Agent) Run(ctx context.Context) error {
+	// ⚠ On EVERY exit, including the fatal-refusal one. A worker that stops for
+	// any reason while holding leases leaves those jobs sitting in `processing`
+	// until the lease lapses, which is exactly the delay this handover removes.
+	defer a.releaseAll()
+
 	slots := make(chan struct{}, a.cfg.Slots)
 	for range a.cfg.Slots {
 		slots <- struct{}{}
@@ -89,6 +99,16 @@ func (a *Agent) Run(ctx context.Context) error {
 		err := a.listen(ctx, slots)
 		if ctx.Err() != nil {
 			return nil
+		}
+		// ⚠ A CONFIGURATION REFUSAL IS NOT RETRIED. Reconnecting can only fix a
+		// TRANSIENT failure; a wrong label, a revoked token, the wrong role or a
+		// mode the operator did not configure are all answers that will be
+		// identical on every attempt. Looping on them turns a one-line fix into a
+		// silent forever-loop whose log says only "409 Conflict".
+		var fatal *fatalRefusal
+		if errors.As(err, &fatal) {
+			a.Log("refused by the router and NOT retrying: %v", fatal)
+			return err
 		}
 		a.Log("stream ended (%v); reconnecting in %s", err, backoff)
 
@@ -121,7 +141,12 @@ func (a *Agent) listen(ctx context.Context, slots chan struct{}) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("stream returned %s", resp.Status)
+		// Read the body: the router explains ITSELF there — which label, which
+		// mode it was asked for, which mode the operator configured — and
+		// discarding it is why a mode mismatch used to surface as a bare
+		// "409 Conflict" with nothing to act on.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return classifyStreamStatus(resp.StatusCode, resp.Status, body)
 	}
 	a.Log("connected to %s serving %q", a.cfg.RouterURL, a.cfg.Label)
 
@@ -230,6 +255,12 @@ func (a *Agent) claim(ctx context.Context) (claimResponse, bool, error) {
 // process runs one job end to end and reports the outcome.
 func (a *Agent) process(ctx context.Context, job claimResponse) {
 	a.Log("job %s (%s) started", job.ID(), job.Label)
+	// Registered BEFORE any work: a cancellation arriving one instruction later
+	// must still find this job, or the handover silently misses it.
+	a.inflight.add(job.JobID)
+	// Every exit path below has reported an outcome, and a reported job has no
+	// lease left to give back — releasing it would 409 for work that finished.
+	defer a.inflight.done(job.JobID)
 
 	inputPath, cleanup, err := a.materialise(ctx, job)
 	// ⚠ The cleanup is deferred IMMEDIATELY and unconditionally, before any
@@ -238,7 +269,8 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 	// worker fills its tmpdir with other people's documents.
 	defer cleanup()
 	if err != nil {
-		a.report(ctx, job.JobID, nil, fmt.Sprintf("fetching input: %v", err))
+		// nil: fetching the input never ran a command, so there is no exit status.
+		a.report(ctx, job.JobID, nil, fmt.Sprintf("fetching input: %v", err), nil)
 		return
 	}
 
@@ -248,7 +280,7 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 		out, runErr := a.run.RunRaw(ctx, rj)
 		if runErr != nil {
 			a.Log("job %s failed: %v", job.JobID, runErr)
-			a.report(ctx, job.JobID, nil, runErr.Error())
+			a.report(ctx, job.JobID, nil, runErr.Error(), exitCodeOf(runErr))
 			return
 		}
 		a.Log("job %s produced %d byte(s)", job.JobID, len(out))
@@ -261,12 +293,12 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 		// A failed job is reported and the agent carries on. One malformed
 		// document must not stop a worker serving every other customer.
 		a.Log("job %s failed: %v", job.JobID, runErr)
-		a.report(ctx, job.JobID, nil, runErr.Error())
+		a.report(ctx, job.JobID, nil, runErr.Error(), exitCodeOf(runErr))
 		return
 	}
 
 	a.Log("job %s produced %d unit(s)", job.JobID, len(units))
-	a.report(ctx, job.JobID, units, "")
+	a.report(ctx, job.JobID, units, "", nil)
 }
 
 // materialise downloads the job's source file, if it has one.
@@ -318,6 +350,10 @@ type resultBody struct {
 	JobID string   `json:"job_id"`
 	Units []string `json:"units,omitempty"`
 	Error string   `json:"error,omitempty"`
+	// ExitCode is omitted when the failure never reached one — a timeout, an
+	// output-limit trip, a broken output contract (ADR-0007). Omitted must stay
+	// omitted: 0 is the code for success.
+	ExitCode *int `json:"exit_code,omitempty"`
 }
 
 // rawParam renders the declared mode for a query string.
@@ -370,14 +406,14 @@ func (a *Agent) reportRaw(ctx context.Context, jobID string, out []byte) {
 }
 
 // report posts the outcome back to the router.
-func (a *Agent) report(ctx context.Context, jobID string, units []string, failure string) {
+func (a *Agent) report(ctx context.Context, jobID string, units []string, failure string, exitCode *int) {
 	// A fresh context with its own bound: the caller's may already be cancelled
 	// (a shutting-down worker), and a result that is not reported costs the
 	// customer a full lease timeout before anyone retries.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 
-	body, err := json.Marshal(resultBody{JobID: jobID, Units: units, Error: failure})
+	body, err := json.Marshal(resultBody{JobID: jobID, Units: units, Error: failure, ExitCode: exitCode})
 	if err != nil {
 		a.Log("job %s: encoding result: %v", jobID, err)
 		return

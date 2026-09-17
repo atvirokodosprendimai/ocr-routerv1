@@ -197,7 +197,11 @@ func (wb *Web) buildDashboard(ctx context.Context) (views.Dashboard, error) {
 		if len(j.Pipeline) > 1 {
 			stage = fmt.Sprintf("%d/%d", j.Stage+1, len(j.Pipeline))
 		}
-		rows = append(rows, views.JobRow{Job: j, StageLabel: stage})
+		exit := "—"
+		if j.ExitCode != nil {
+			exit = fmt.Sprint(*j.ExitCode)
+		}
+		rows = append(rows, views.JobRow{Job: j, StageLabel: stage, Exit: exit})
 	}
 
 	// The service list is the union of labels that have live workers, labels
@@ -251,11 +255,42 @@ func (wb *Web) render(w http.ResponseWriter, r *http.Request, c templ.Component)
 	}
 }
 
+// failedOnly reads the one filter the job table offers.
+//
+// A query parameter rather than a route, because the failures view is the SAME
+// page with fewer rows — a second route would be a second thing to keep correct
+// with the first, and the divergence would be invisible.
+func failedOnly(r *http.Request) bool { return r.URL.Query().Get("state") == "failed" }
+
+// filterFailures narrows the read model to jobs that ended badly.
+//
+// ⚠ A FILTER over buildDashboard, never a second query. That function is the one
+// function of the world for the page load and for every SSE patch, and a second
+// source of job rows would drift from it silently.
+//
+// The counters are deliberately left whole: they are the shape of the queue, and
+// a "dead: 2" that counted only the rows on screen would stop being a fact about
+// the system.
+func filterFailures(d views.Dashboard) views.Dashboard {
+	rows := make([]views.JobRow, 0, len(d.Jobs))
+	for _, j := range d.Jobs {
+		if j.Job.State == core.JobDead || j.Job.State == core.JobExpired {
+			rows = append(rows, j)
+		}
+	}
+	d.Jobs = rows
+	d.FailedOnly = true
+	return d
+}
+
 func (wb *Web) overview(w http.ResponseWriter, r *http.Request) {
 	d, err := wb.buildDashboard(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if failedOnly(r) {
+		d = filterFailures(d)
 	}
 	wb.render(w, r, views.Overview(d))
 }
@@ -566,7 +601,13 @@ func (wb *Web) stream(w http.ResponseWriter, r *http.Request) {
 		if err := sse.PatchElementTempl(views.Stats(d)); err != nil {
 			return false
 		}
-		if err := sse.PatchElementTempl(views.Jobs(d)); err != nil {
+		// The stream carries the page's filter so a patch cannot quietly undo it.
+		// Stats and Workers are unfiltered on purpose — see filterFailures.
+		jobs := d
+		if failedOnly(r) {
+			jobs = filterFailures(d)
+		}
+		if err := sse.PatchElementTempl(views.Jobs(jobs)); err != nil {
 			return false
 		}
 		return sse.PatchElementTempl(views.Workers(d)) == nil

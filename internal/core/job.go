@@ -39,9 +39,27 @@ type Job struct {
 	// property of the JOB rather than a lookup of the service's current mode: an
 	// administrator editing a service must not reprice work already running.
 	Raw bool
+	// ExitCode is the forked command's exit status, or nil when the failure never
+	// reached one (ADR-0007).
+	//
+	// ⚠ A POINTER, deliberately. A timeout, an output-limit trip and a contract
+	// violation all fail WITHOUT exiting, and 0 is the code for SUCCESS — so an
+	// int would make "never exited" indistinguishable from "exited cleanly", which
+	// is the one comparison an operator most wants to make.
+	ExitCode *int
 
-	State    JobState
+	State JobState
+	// Attempts is the RETRY BUDGET: how many times the work itself has failed.
 	Attempts int
+	// Reclaims is how many times the job's lease was taken back without the work
+	// failing — a router restart, a worker shutdown, a lease that timed out
+	// because the process went away (ADR-0008).
+	//
+	// ⚠ A SEPARATE COUNTER, not a second way of spending Attempts. Abandonment
+	// says nothing about whether the command works, so charging it to the retry
+	// budget kills healthy work: three router restarts and a job that never ran
+	// badly once is dead, with "lease expired" as its cause.
+	Reclaims int
 	// Units is the size of the final stage's output — pages, documents,
 	// whatever the service produced — and is what the client sees.
 	Units int

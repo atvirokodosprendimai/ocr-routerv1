@@ -208,25 +208,77 @@ func (r *Repo) MarkHasBlob(ctx context.Context, jobID string) error {
 	return affectedOne(res, err)
 }
 
-// RequeueJob returns a leased job to the queue after a reported failure or an
-// expired lease, incrementing attempts. queued_at is preserved, as above.
-func (r *Repo) RequeueJob(ctx context.Context, jobID, lastErr string, now time.Time) error {
+// RequeueJob returns a failed job to the queue, spending an attempt.
+//
+// `exitCode` is nil when the failure never reached an exit status — a timeout, an
+// output-limit trip, a contract violation. It is written on BOTH failure writers
+// so a code cannot appear on one row and vanish on the next.
+func (r *Repo) RequeueJob(ctx context.Context, jobID, lastErr string, exitCode *int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
 		`UPDATE jobs SET state = 'queued', attempts = attempts + 1, worker_id = '',
+		        lease_expires_at = NULL, last_error = ?, exit_code = ?, updated_at = ?
+		 WHERE id = ?`,
+		lastErr, nullableInt(exitCode), now.Unix(), jobID)
+	return affectedOne(res, err)
+}
+
+// ReclaimJob returns an ABANDONED job to the queue without spending an attempt.
+//
+// ⚠ IT SITS HERE, DIRECTLY BESIDE RequeueJob, ON PURPOSE. The two statements
+// differ in exactly one column — `attempts + 1` against `reclaims + 1` — and
+// that one column is the whole of ADR-0008. Separated, one of them later gains a
+// field the other forgets, and the difference stops being visible to anybody
+// reading either.
+//
+// The lease and worker_id are cleared for the same reason RequeueJob clears
+// them: the previous holder must not be able to land a late result on a job
+// another worker now owns.
+//
+// It records no exit code. A lease taken back is not a command that exited —
+// that distinction is ADR-0007's, and inventing a 0 here would undo it.
+func (r *Repo) ReclaimJob(ctx context.Context, jobID, reason string, now time.Time) error {
+	res, err := r.write.ExecContext(ctx,
+		`UPDATE jobs SET state = 'queued', reclaims = reclaims + 1, worker_id = '',
 		        lease_expires_at = NULL, last_error = ?, updated_at = ?
 		 WHERE id = ?`,
-		lastErr, now.Unix(), jobID)
+		reason, now.Unix(), jobID)
+	return affectedOne(res, err)
+}
+
+// ReleaseJob returns a job to the queue at its worker's own request, spending
+// NEITHER budget (ADR-0008).
+//
+// The third member of the family above, and the only one that costs the job
+// nothing: `RequeueJob` spends an attempt because the work failed, `ReclaimJob`
+// spends a reclaim because the worker vanished, and this one spends nothing
+// because the worker said, while still holding the lease, that it was stopping.
+//
+// The lease and worker_id are cleared for the same reason as the other two.
+func (r *Repo) ReleaseJob(ctx context.Context, jobID, reason string, now time.Time) error {
+	res, err := r.write.ExecContext(ctx,
+		`UPDATE jobs SET state = 'queued', worker_id = '',
+		        lease_expires_at = NULL, last_error = ?, updated_at = ?
+		 WHERE id = ?`,
+		reason, now.Unix(), jobID)
 	return affectedOne(res, err)
 }
 
 // FailJobDead marks a job beyond retry. It is never charged.
-func (r *Repo) FailJobDead(ctx context.Context, jobID, lastErr string, now time.Time) error {
+func (r *Repo) FailJobDead(ctx context.Context, jobID, lastErr string, exitCode *int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
 		`UPDATE jobs SET state = 'dead', attempts = attempts + 1, worker_id = '',
-		        lease_expires_at = NULL, last_error = ?, updated_at = ?
+		        lease_expires_at = NULL, last_error = ?, exit_code = ?, updated_at = ?
 		 WHERE id = ?`,
-		lastErr, now.Unix(), jobID)
+		lastErr, nullableInt(exitCode), now.Unix(), jobID)
 	return affectedOne(res, err)
+}
+
+// nullableInt keeps a nil exit code NULL in the column rather than 0.
+func nullableInt(n *int) any {
+	if n == nil {
+		return nil
+	}
+	return *n
 }
 
 // DeliverJob is the metering step: the ONLY place credits move for a job.
