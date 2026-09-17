@@ -27,7 +27,7 @@ either order is fine; T3 needs both.
 | ID | Title | Status | Covers | Acceptance |
 |----|-------|--------|--------|------------|
 | T1 | Store a failed job's exit code, nullable so "no exit" stays distinct from 0 | done | — | `go test ./internal/store -run 'TestExitCodeRoundTripsThroughTheJobRow\|…3 tests'` |
-| T2 | Keep the command's own output, both streams, and return the exit code as a value | pending | — | `go test ./internal/runner -run 'TestFailureKeepsStdout\|…'` |
+| T2 | Keep the command's own output, both streams, and return the exit code as a value | done | — | `go test ./internal/runner -run 'TestFailureKeepsStdout\|…5 tests'` |
 | T3 | Carry the exit code from the worker to the job row and the log line | pending | — | `go test ./internal/httpapi ./internal/router -run 'TestExitCodeSurvivesToTheJobRow\|…'` |
 | T4 | Give failures a place to be seen, and make the detail readable | pending | — | `templ generate && go test ./internal/web -run 'TestFailedFilterShowsOnlyFailures\|…'` |
 

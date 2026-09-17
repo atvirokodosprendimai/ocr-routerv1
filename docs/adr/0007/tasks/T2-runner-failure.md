@@ -56,7 +56,11 @@ go test ./internal/runner -run 'TestFailureKeepsStdout|TestFailureCarriesTheExit
 | `TestTimeoutHasNoExitCode` | `internal/runner/failure_test.go` | A timed-out command yields `Kind == timeout` and `ExitCode == nil` — never 0, which is the code for success | — | S4 |
 | `TestOutputLimitHasNoExitCode` | `internal/runner/failure_test.go` | An over-budget command yields `Kind == output-limit` and a nil code, for the same reason | — | S4 |
 | `TestEachStreamIsBounded` | `internal/runner/failure_test.go` | A command flooding BOTH streams produces an `Output` bounded per stream, so one chatty stream cannot crowd out the other's explanation | — | S3 |
-| `TestUnitsArmUnchanged` | `internal/runner/raw_test.go` | ADR-0006's contract error still quotes what was produced — the message an operator already relies on does not change | — | S2 |
+
+<!-- TestUnitsArmUnchanged (internal/runner/raw_test.go) is deliberately NOT a row here. It is
+ADR-0006's, it runs in this fence's REGRESSION segment, and it is not a test T2 adds. That it stays
+green IS the evidence that Failure.Error() renders what the runner rendered before — which is this
+task's first invariant — but claiming it as coverage T2 produced would be claiming someone else's. -->
 
 ## Reachability
 
@@ -68,6 +72,14 @@ go test ./internal/runner -run 'TestFailureKeepsStdout|TestFailureCarriesTheExit
 | 4 — it is used | Nothing measures this yet; T3 puts it on the wire and T4 shows it |
 
 ## Mutation Log
+
+- 2026-09-17 · d22a779* · mutant killed · exit 1 · `internal/runner/failure.go` · the command own explanation on stdout is discarded again — the exact defect ADR-0007 was opened for · acceptance-sha256:2d248f59d36ec757c0eb43c9f8f3fefdbe7cd1df717661dd1d55b0313f8ad77b · covers:stdout surviving a failure
+- 2026-09-17 · d22a779* · mutant inconclusive · exit 1 · `internal/runner/runner.go` · the one kind that HAS a code stops carrying it, so nothing downstream can filter or group by it · acceptance-sha256:2d248f59d36ec757c0eb43c9f8f3fefdbe7cd1df717661dd1d55b0313f8ad77b · covers:the exit code being a value rather than prose
+  ```
+  the fence failed on a build/parse error, not an assertion
+  ```
+- 2026-09-17 · d22a779* · mutant killed · exit 1 · `internal/runner/failure.go` · neither stream is bounded, so one chatty stream can carry an unbounded payload into the job row and the dashboard · acceptance-sha256:2d248f59d36ec757c0eb43c9f8f3fefdbe7cd1df717661dd1d55b0313f8ad77b · covers:each stream staying inside its byte budget
+- 2026-09-17 · d22a779* · mutant killed · exit 1 · `internal/runner/runner.go` · every non-zero exit is recorded as 0 — the code for SUCCESS — so the field exists, is always wrong, and reads as a clean exit · acceptance-sha256:2d248f59d36ec757c0eb43c9f8f3fefdbe7cd1df717661dd1d55b0313f8ad77b · covers:the exit code being a value rather than prose
 
 ## Invariants
 
@@ -103,3 +115,21 @@ altered.
 - Raising the byte budget (permanent: boundary: 2000 bytes per stream has been sufficient; changing it is a number, not a decision).
 
 ## Verification Log
+- 2026-09-17 · d22a779* · exit 1 · `set -o pipefail …` · acceptance-sha256:2d248f59d36ec757c0eb43c9f8f3fefdbe7cd1df717661dd1d55b0313f8ad77b · ms:438
+  ```
+  --- last 10 line(s) of stdout (of 12 after folding 12 raw)
+  internal/runner/failure_test.go:38:22: undefined: runner.FailureExit
+  internal/runner/failure_test.go:39:49: undefined: runner.FailureExit
+  internal/runner/failure_test.go:52:18: undefined: runner.AsFailure
+  internal/runner/failure_test.go:56:22: undefined: runner.FailureTimeout
+  internal/runner/failure_test.go:57:49: undefined: runner.FailureTimeout
+  internal/runner/failure_test.go:71:18: undefined: runner.AsFailure
+  internal/runner/failure_test.go:75:22: undefined: runner.FailureOutputLimit
+  internal/runner/failure_test.go:76:84: undefined: runner.FailureOutputLimit
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/runner [build failed]
+  FAIL
+  ```
+- 2026-09-17 · d22a779* · exit 0 · `set -o pipefail …` · acceptance-sha256:2d248f59d36ec757c0eb43c9f8f3fefdbe7cd1df717661dd1d55b0313f8ad77b · ms:14618
+- 2026-09-17 · d22a779* · exit 0 · `set -o pipefail …` · acceptance-sha256:2d248f59d36ec757c0eb43c9f8f3fefdbe7cd1df717661dd1d55b0313f8ad77b · ms:13928
+- 2026-09-17 · d22a779* · exit 0 · `set -o pipefail …` · acceptance-sha256:2d248f59d36ec757c0eb43c9f8f3fefdbe7cd1df717661dd1d55b0313f8ad77b · ms:13692
+- 2026-09-17 · d22a779* · exit 0 · `set -o pipefail …` · acceptance-sha256:2d248f59d36ec757c0eb43c9f8f3fefdbe7cd1df717661dd1d55b0313f8ad77b · ms:14354

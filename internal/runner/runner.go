@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -114,14 +113,24 @@ func (r Runner) exec(ctx context.Context, j Job) (stdoutBytes []byte, stderrText
 	case <-ctx.Done():
 		killGroup(cmd)
 		<-done // reap, so the process is not left a zombie
-		return nil, "", fmt.Errorf("timed out after %s", r.Timeout)
+		return nil, "", &Failure{
+			Kind:   FailureTimeout,
+			Detail: fmt.Sprintf("timed out after %s", r.Timeout),
+			Output: combineOutput(stdout.Bytes(), stderr.String()),
+		}
 
 	case err := <-done:
 		if err != nil {
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) {
-				return nil, "", fmt.Errorf("exit status %d: %s",
-					exitErr.ExitCode(), strings.TrimSpace(stderr.String()))
+				// The ONLY kind that carries a code: the command ran to
+				// completion and told us what it thought of the result.
+				code := exitErr.ExitCode()
+				return nil, "", &Failure{
+					Kind:     FailureExit,
+					ExitCode: &code,
+					Output:   combineOutput(stdout.Bytes(), stderr.String()),
+				}
 			}
 			return nil, "", err
 		}
@@ -130,7 +139,11 @@ func (r Runner) exec(ctx context.Context, j Job) (stdoutBytes []byte, stderrText
 	// Overflow is a JOB FAILURE, never a quietly shortened result. Reported after
 	// the child is reaped so the exit path stays one shape.
 	if outCap.overflowed {
-		return nil, "", fmt.Errorf("produced more than the %d byte output limit", r.MaxOutput)
+		return nil, "", &Failure{
+			Kind:   FailureOutputLimit,
+			Detail: fmt.Sprintf("produced more than the %d byte output limit", r.MaxOutput),
+			Output: combineOutput(stdout.Bytes(), stderr.String()),
+		}
 	}
 	return stdout.Bytes(), stderr.String(), nil
 }
@@ -139,7 +152,11 @@ func (r Runner) exec(ctx context.Context, j Job) (stdoutBytes []byte, stderrText
 func parseUnits(out []byte, stderrText string) ([]string, error) {
 	trimmed := bytes.TrimSpace(out)
 	if len(trimmed) == 0 {
-		return nil, fmt.Errorf("produced no output on stdout: %s", strings.TrimSpace(stderrText))
+		return nil, &Failure{
+			Kind:   FailureContract,
+			Detail: "produced no output on stdout",
+			Output: combineOutput(nil, stderrText),
+		}
 	}
 
 	var units []string
@@ -147,8 +164,15 @@ func parseUnits(out []byte, stderrText string) ([]string, error) {
 		// Deliberately quote a short prefix. Naming what WAS produced is what
 		// turns this from "it broke" into "your tool printed a log line where
 		// the JSON array should be", which is the actual mistake people make.
-		return nil, fmt.Errorf("stdout is not a JSON array of strings (got %q): %w",
-			preview(trimmed), err)
+		//
+		// ⚠ A contract failure carries NO exit code: the command may well have
+		// exited 0 and simply printed the wrong thing.
+		return nil, &Failure{
+			Kind: FailureContract,
+			Detail: fmt.Sprintf("stdout is not a JSON array of strings (got %q): %v",
+				preview(trimmed), err),
+			Output: combineOutput(nil, stderrText),
+		}
 	}
 	return units, nil
 }
