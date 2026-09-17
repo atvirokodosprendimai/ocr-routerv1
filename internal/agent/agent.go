@@ -51,6 +51,9 @@ type Agent struct {
 	cfg    Config
 	run    runner.Runner
 	client *http.Client
+	// inflight is what this worker currently holds, so shutdown can hand the
+	// leases back instead of leaving each job to wait out a full lease.
+	inflight *inflight
 	// Log is where progress goes. Injectable so tests can stay quiet.
 	Log func(format string, args ...any)
 }
@@ -68,8 +71,9 @@ func New(cfg Config, r runner.Runner) *Agent {
 		run: r,
 		// No overall timeout: this client opens the SSE stream, which is meant
 		// to stay open indefinitely. Per-request bounds come from the context.
-		client: &http.Client{},
-		Log:    func(string, ...any) {},
+		client:   &http.Client{},
+		inflight: newInflight(),
+		Log:      func(string, ...any) {},
 	}
 }
 
@@ -80,6 +84,11 @@ func New(cfg Config, r runner.Runner) *Agent {
 // restart drops EVERY worker at once, and without it the whole fleet would
 // reconnect on the same tick and do it again on the next failure.
 func (a *Agent) Run(ctx context.Context) error {
+	// ⚠ On EVERY exit, including the fatal-refusal one. A worker that stops for
+	// any reason while holding leases leaves those jobs sitting in `processing`
+	// until the lease lapses, which is exactly the delay this handover removes.
+	defer a.releaseAll()
+
 	slots := make(chan struct{}, a.cfg.Slots)
 	for range a.cfg.Slots {
 		slots <- struct{}{}
@@ -246,6 +255,12 @@ func (a *Agent) claim(ctx context.Context) (claimResponse, bool, error) {
 // process runs one job end to end and reports the outcome.
 func (a *Agent) process(ctx context.Context, job claimResponse) {
 	a.Log("job %s (%s) started", job.ID(), job.Label)
+	// Registered BEFORE any work: a cancellation arriving one instruction later
+	// must still find this job, or the handover silently misses it.
+	a.inflight.add(job.JobID)
+	// Every exit path below has reported an outcome, and a reported job has no
+	// lease left to give back — releasing it would 409 for work that finished.
+	defer a.inflight.done(job.JobID)
 
 	inputPath, cleanup, err := a.materialise(ctx, job)
 	// ⚠ The cleanup is deferred IMMEDIATELY and unconditionally, before any

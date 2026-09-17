@@ -44,7 +44,7 @@ the job nothing.
 
 ```bash
 set -o pipefail
-go test ./internal/httpapi ./internal/agent -run 'TestReleaseRequeuesWithoutSpendingEitherBudget|TestReleaseWithoutTheLeaseIsRefused|TestWorkerReleasesOnShutdown|TestReleaseFailureIsNotFatal' -count=1 -v 2>&1 | tee /tmp/acc-0008-T3.out \
+go test ./internal/httpapi ./internal/agent -run 'TestReleaseRequeuesWithoutSpendingEitherBudget|TestReleaseWithoutTheLeaseIsRefused|TestReleasedJobIsImmediatelyClaimable|TestLateResultAfterReleaseIsRefused|TestWorkerReleasesOnShutdown|TestReleaseFailureIsNotFatal' -count=1 -v 2>&1 | tee /tmp/acc-0008-T3.out \
   && ! grep -qE "no tests to run|^FAIL|^--- FAIL" /tmp/acc-0008-T3.out \
   && go test ./internal/httpapi/... ./internal/agent/... ./internal/router/... -count=1
 ```
@@ -70,6 +70,27 @@ go test ./internal/httpapi ./internal/agent -run 'TestReleaseRequeuesWithoutSpen
 | 4 — it is used | Nothing measures this yet. A released-jobs counter is the ADR's follow-up, deliberately not added here |
 
 ## Mutation Log
+
+- 2026-09-17 · a0c0d79* · mutant killed · exit 1 · `internal/router/service.go` · any worker can release a job another one is actively running, which is the two-writer bug from the other end: the holder keeps working while somebody else hands its job to a third · acceptance-sha256:70b541d6065e874b60c7f48e862ac6b89643e5f0869c34a0a97533eb63b694b2 · covers:the lease guard on the release route
+- 2026-09-17 · a0c0d79* · mutant killed · exit 1 · `internal/store/repo_write.go` · an orderly restart spends the retry budget, so stopping a worker three times kills its in-flight jobs — the defect reintroduced through the cooperative path · acceptance-sha256:70b541d6065e874b60c7f48e862ac6b89643e5f0869c34a0a97533eb63b694b2 · covers:a release spending neither budget
+- 2026-09-17 · a0c0d79* · mutant killed · exit 1 · `internal/agent/agent.go` · the worker exits still holding its leases, so every in-flight job waits out a full lease before anybody can run it — the route exists and nothing on the worker calls it · acceptance-sha256:70b541d6065e874b60c7f48e862ac6b89643e5f0869c34a0a97533eb63b694b2 · covers:the worker releasing what it holds on shutdown
+- 2026-09-17 · a0c0d79* · mutant killed · exit 1 · `internal/router/service.go` · any worker can release a job another one is actively running · acceptance-sha256:d0b1fdd991d02bc797a3b91ae9129ae983a9800951d17385fe04ce03369c4601 · covers:the lease guard on the release route
+- 2026-09-17 · a0c0d79* · mutant killed · exit 1 · `internal/store/repo_write.go` · an orderly restart spends the retry budget, reintroducing the defect through the cooperative path · acceptance-sha256:d0b1fdd991d02bc797a3b91ae9129ae983a9800951d17385fe04ce03369c4601 · covers:a release spending neither budget
+- 2026-09-17 · a0c0d79* · mutant killed · exit 1 · `internal/agent/agent.go` · the worker exits still holding its leases, so every in-flight job waits out a full lease · acceptance-sha256:d0b1fdd991d02bc797a3b91ae9129ae983a9800951d17385fe04ce03369c4601 · covers:the worker releasing what it holds on shutdown
+
+## Execution Notes (2026-09-17)
+
+- **Stop Condition, checked and not triggered.** The agent did not track its
+  in-flight job ids — `process` held each one in a goroutine local. That is a
+  ~50-line addition (`internal/agent/release.go`, one `add`/`done` pair in
+  `process`), not the larger shape the condition was guarding against, so the
+  task proceeded. `inflight` is in-memory by design: losing it costs a lease
+  expiry, which is the behaviour that existed before this task.
+- **Rung 3 names a worker README that does not exist in this repository.** The
+  route is discoverable from the mounted route table (`TestEveryRouteIsMounted`
+  now lists `POST /release`), and nothing else in the corpus documents `POST
+  /claim` either. Writing one is outside this task's Affected Files; flagged
+  rather than silently widened.
 
 ## Invariants
 
@@ -106,3 +127,23 @@ larger than this task and the owner should see the shape first.
 - A budget for releases (permanent: boundary: a release loop needs a human restarting workers repeatedly, and `jobs.expires_at` already bounds the job's lifetime).
 
 ## Verification Log
+- 2026-09-17 · a0c0d79* · exit 1 · `set -o pipefail …` · acceptance-sha256:70b541d6065e874b60c7f48e862ac6b89643e5f0869c34a0a97533eb63b694b2 · ms:5478
+  ```
+  --- last 10 line(s) of stdout (of 17 after folding 17 raw)
+  FAIL
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/httpapi	1.129s
+  === RUN   TestWorkerReleasesOnShutdown
+      release_test.go:57: timed out: the agent exited without handing its lease back — the job then waits out a full lease before anybody can run it, which is the delay this route exists to remove
+  --- FAIL: TestWorkerReleasesOnShutdown (3.23s)
+  === RUN   TestReleaseFailureIsNotFatal
+  --- PASS: TestReleaseFailureIsNotFatal (0.22s)
+  FAIL
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/agent	3.961s
+  FAIL
+  ```
+- 2026-09-17 · a0c0d79* · exit 0 · `set -o pipefail …` · acceptance-sha256:70b541d6065e874b60c7f48e862ac6b89643e5f0869c34a0a97533eb63b694b2 · ms:14475
+- 2026-09-17 · a0c0d79* · exit 0 · `set -o pipefail …` · acceptance-sha256:70b541d6065e874b60c7f48e862ac6b89643e5f0869c34a0a97533eb63b694b2 · ms:14228
+- 2026-09-17 · a0c0d79* · exit 0 · `set -o pipefail …` · acceptance-sha256:70b541d6065e874b60c7f48e862ac6b89643e5f0869c34a0a97533eb63b694b2 · ms:13803
+- 2026-09-17 · a0c0d79* · exit 0 · `set -o pipefail …` · acceptance-sha256:d0b1fdd991d02bc797a3b91ae9129ae983a9800951d17385fe04ce03369c4601 · ms:13884
+- 2026-09-17 · a0c0d79* · exit 0 · `set -o pipefail …` · acceptance-sha256:d0b1fdd991d02bc797a3b91ae9129ae983a9800951d17385fe04ce03369c4601 · ms:13343
+- 2026-09-17 · a0c0d79* · exit 0 · `set -o pipefail …` · acceptance-sha256:d0b1fdd991d02bc797a3b91ae9129ae983a9800951d17385fe04ce03369c4601 · ms:13333

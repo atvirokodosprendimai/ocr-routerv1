@@ -558,6 +558,41 @@ func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason strin
 	return nil
 }
 
+// ReleaseLease hands a job back to the queue at the worker's own request.
+//
+// This is the COOPERATIVE case: an operator is stopping the worker, and the
+// alternative is the job sitting in `processing` until its lease lapses — up to
+// a full `--lease` of nothing happening, for a restart that took a second.
+//
+// It spends NEITHER budget. Nothing failed and nothing was abandoned; the worker
+// said so itself, which is strictly better information than the reaper's
+// inference from silence.
+//
+// ⚠ holdsLease FIRST, and this is the THIRD place that guard appears — beside
+// Complete and Fail. Without it any worker could requeue a job another one is
+// actively running, which is the same two-writer bug from the other end.
+func (s *Service) ReleaseLease(ctx context.Context, workerID, jobID string, now time.Time) error {
+	job, err := s.repo.JobByID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if !holdsLease(job, workerID, now) {
+		return core.ErrConflict
+	}
+	// RequeueJob would spend an attempt and ReclaimJob a reclaim, so neither
+	// writer fits: this is the only requeue in the system that costs the job
+	// nothing. The lease and worker_id still have to go, or the releasing
+	// worker's subprocess could land a late result on a job somebody else holds.
+	if err := s.repo.ReleaseJob(ctx, jobID, "released by its worker", now); err != nil {
+		return err
+	}
+	s.logFailureTransition(job, job.State, core.JobQueued, job.UpdatedAt,
+		"worker", workerID, "released by its worker", nil, now)
+	s.publishWork(job.Label)
+	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
+	return nil
+}
+
 // reclaimJob returns a job whose worker went away, WITHOUT spending an attempt.
 //
 // It is failJob's twin and deliberately reads like it, because the difference is

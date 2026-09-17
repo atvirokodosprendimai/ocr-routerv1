@@ -245,6 +245,24 @@ func (r *Repo) ReclaimJob(ctx context.Context, jobID, reason string, now time.Ti
 	return affectedOne(res, err)
 }
 
+// ReleaseJob returns a job to the queue at its worker's own request, spending
+// NEITHER budget (ADR-0008).
+//
+// The third member of the family above, and the only one that costs the job
+// nothing: `RequeueJob` spends an attempt because the work failed, `ReclaimJob`
+// spends a reclaim because the worker vanished, and this one spends nothing
+// because the worker said, while still holding the lease, that it was stopping.
+//
+// The lease and worker_id are cleared for the same reason as the other two.
+func (r *Repo) ReleaseJob(ctx context.Context, jobID, reason string, now time.Time) error {
+	res, err := r.write.ExecContext(ctx,
+		`UPDATE jobs SET state = 'queued', worker_id = '',
+		        lease_expires_at = NULL, last_error = ?, updated_at = ?
+		 WHERE id = ?`,
+		reason, now.Unix(), jobID)
+	return affectedOne(res, err)
+}
+
 // FailJobDead marks a job beyond retry. It is never charged.
 func (r *Repo) FailJobDead(ctx context.Context, jobID, lastErr string, exitCode *int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,

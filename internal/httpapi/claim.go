@@ -71,6 +71,26 @@ func (a *API) handleClaim(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleRelease gives a lease back, and sits beside handleClaim because it is
+// the claim's inverse — the two should be read together or they drift apart.
+//
+// Worker-only, gated in the route table, and the LEASE is what authorises it:
+// the router checks that this worker's token holds the job, so a worker cannot
+// requeue work another one is running.
+func (a *API) handleRelease(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	jobID := r.URL.Query().Get("job_id")
+	if jobID == "" {
+		writeError(w, core.ErrInvalidParam)
+		return
+	}
+	if err := a.deps.Router.ReleaseLease(r.Context(), p.TokenID, jobID, a.deps.Now()); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 type servicesResponse struct {
 	Labels []string `json:"labels"`
 }
