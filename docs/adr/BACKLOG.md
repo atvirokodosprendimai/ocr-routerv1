@@ -42,6 +42,17 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   still accrues a cost for reporting, since "we cannot bill it" and "we cannot see what it cost"
   are different claims, and the metrics counter at `:385` currently conflates them.
 
+- **Draining: a worker finishes its in-flight jobs before exiting, rather than releasing them.**
+  Deferred by ADR-0008 (`docs/adr/0008/0008-restart-is-not-a-failure.md`, §Out of Scope) and by its
+  task T3, 2026-09-17. That record makes a shutting-down worker hand its leases BACK, which is right
+  for a restart and wasteful for a deploy: work already half-done is thrown away and redone
+  elsewhere. Draining needs a bound (how long may a shutdown wait?), a decision about what happens
+  when it is exceeded, and an orchestrator that honours it. Worth taking up when deploys are
+  frequent enough for the redone work to matter.
+- **A metric for reclaimed jobs (`ocrr_jobs_reclaimed_total{label}`).**
+  Open follow-up on ADR-0008, 2026-09-17. A service whose workers keep vanishing is an operational
+  signal that nothing currently reports — it looks identical to a slow service. Bounded by ADR-0001
+  T11's cardinality allow-list, which is why it is a question rather than a line of code.
 - **A `job_failures` table keeping every attempt, not only the last.**
   Deferred by ADR-0007 (`docs/adr/0007/0007-failure-detail.md`, §Alternatives and §Out of Scope),
   2026-09-16. `jobs` keeps `attempts` and the LAST cause; a job that failed three different ways
