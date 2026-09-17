@@ -45,7 +45,8 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		if job.Attempts+1 >= s.cfg.MaxAttempts {
 			rep.JobsAbandoned++
 		}
-		if err := s.failJob(ctx, job, "reaper", "lease expired", now); err != nil {
+		// nil: a lease reclaimed from a vanished worker never ran to an exit.
+		if err := s.failJob(ctx, job, "reaper", "lease expired", nil, now); err != nil {
 			return rep, err
 		}
 	}

@@ -52,9 +52,8 @@ go test ./internal/httpapi ./internal/router -run 'TestExitCodeSurvivesToTheJobR
 |-----------|------|----------|--------|-------|
 | `TestExitCodeSurvivesToTheJobRow` | `internal/httpapi/failure_test.go` | A worker reporting `exit_code: 3` leaves `*ExitCode == 3` on the persisted job — the whole point, asserted across every hop rather than at one | — | S2, S3 |
 | `TestTimeoutLeavesNoExitCode` | `internal/httpapi/failure_test.go` | A failure reported WITHOUT a code leaves the column NULL, so "exited 0" and "never exited" stay distinguishable at the far end | — | S2, S3 |
-| `TestFailureLogCarriesTheExitCode` | `internal/router/logger_test.go` | The failure line carries `exit_code` beside `reason`, and a success line carries neither | — | S4 |
-| `TestReaperRecordsNoExitCode` | `internal/router/reaper_test.go` | A lease reclaimed by the reaper leaves the column NULL — it never ran to an exit | — | S5 |
-| `TestUnitsFailureUnchanged` | `internal/httpapi/failure_test.go` | `last_error` still carries the same message it carries today; this task adds a field beside it and changes nothing that already worked | — | S3 |
+| `TestFailureLogCarriesTheExitCode` | `internal/router/exitcodelog_test.go` | The failure line carries `exit_code`, and a SUCCESS line carries none — without the negative half, an implementation that puts a code on every line passes, and every delivered job then looks like it exited 0 | — | S4 |
+| `TestReaperRecordsNoExitCode` | `internal/router/exitcodelog_test.go` | A lease reclaimed by the reaper leaves the column NULL — the worker vanished, it did not exit | — | S5 |
 
 ## Reachability
 
@@ -66,6 +65,10 @@ go test ./internal/httpapi ./internal/router -run 'TestExitCodeSurvivesToTheJobR
 | 4 — it is used | The failure log line (S4). T4 adds the human's view; no metric dimension, deliberately — the ADR's follow-up says why |
 
 ## Mutation Log
+
+- 2026-09-17 · f801c15* · mutant killed · exit 1 · `internal/httpapi/upload.go` · the wire field is sent, decoded and then dropped — a field that exists, is populated and is read by nothing · acceptance-sha256:ab537c9832ac7a00d7c8ed258421b454108dd853975beb092ad38b270ab5409d · covers:the code reaching the job row
+- 2026-09-17 · f801c15* · mutant killed · exit 1 · `internal/router/logger.go` · the failure line loses the attribute, so the code is queryable in the database and invisible in the logs an operator actually greps · acceptance-sha256:ab537c9832ac7a00d7c8ed258421b454108dd853975beb092ad38b270ab5409d · covers:the code reaching the structured log
+- 2026-09-17 · f801c15* · mutant killed · exit 1 · `internal/store/repo_write.go` · a timeout is stored as exit 0, so every codeless failure reads as a job that exited cleanly and failed anyway · acceptance-sha256:ab537c9832ac7a00d7c8ed258421b454108dd853975beb092ad38b270ab5409d · covers:an absent code staying absent
 
 ## Invariants
 
@@ -95,3 +98,6 @@ owner's call, not this task's to work around.
 - A metric dimension for the code (deferred: `docs/adr/BACKLOG.md`).
 
 ## Verification Log
+- 2026-09-17 · f801c15* · exit 0 · `set -o pipefail …` · acceptance-sha256:ab537c9832ac7a00d7c8ed258421b454108dd853975beb092ad38b270ab5409d · ms:17752
+- 2026-09-17 · f801c15* · exit 0 · `set -o pipefail …` · acceptance-sha256:ab537c9832ac7a00d7c8ed258421b454108dd853975beb092ad38b270ab5409d · ms:12997
+- 2026-09-17 · f801c15* · exit 0 · `set -o pipefail …` · acceptance-sha256:ab537c9832ac7a00d7c8ed258421b454108dd853975beb092ad38b270ab5409d · ms:16785

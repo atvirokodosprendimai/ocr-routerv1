@@ -128,6 +128,9 @@ type Transition struct {
 	Stage    int
 	Params   map[string]string
 	Reason   string
+	// ExitCode is the forked command status on a failure line, nil when the
+	// failure never reached one. Emitted only when present (ADR-0007).
+	ExitCode *int
 	InState  time.Duration
 }
 
@@ -154,6 +157,11 @@ func LogTransition(log *slog.Logger, t Transition) {
 	}
 	if t.Reason != "" {
 		attrs = append(attrs, slog.String("reason", t.Reason))
+	}
+	if t.ExitCode != nil {
+		// Only when there IS one. A missing code emitted as 0 would read as a
+		// clean exit in every log search that filters on it.
+		attrs = append(attrs, slog.Int("exit_code", *t.ExitCode))
 	}
 	log.Info("transition", attrs...)
 }

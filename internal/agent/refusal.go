@@ -5,7 +5,21 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/atvirokodosprendimai/ocr-router/internal/runner"
 )
+
+// exitCodeOf pulls the forked command exit status out of a runner failure.
+//
+// nil for every other shape — a timeout, an output-limit trip, a broken output
+// contract, or an error that is not a runner failure at all. Absent must stay
+// absent all the way to the column: 0 is the code for success (ADR-0007).
+func exitCodeOf(err error) *int {
+	if f, ok := runner.AsFailure(err); ok {
+		return f.ExitCode
+	}
+	return nil
+}
 
 // fatalRefusal is a router answer that RETRYING CANNOT CHANGE.
 //

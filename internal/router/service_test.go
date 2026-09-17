@@ -525,7 +525,7 @@ func TestFailRequeuesUntilMaxAttempts(t *testing.T) {
 		if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 			t.Fatalf("claim %d: %v", i, err)
 		}
-		if err := h.svc.Fail(ctx, "w1", j.ID, "boom", base); err != nil {
+		if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, base); err != nil {
 			t.Fatalf("fail %d: %v", i, err)
 		}
 		got, _ := h.repo.JobByID(ctx, j.ID)
@@ -536,7 +536,7 @@ func TestFailRequeuesUntilMaxAttempts(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("claim 3: %v", err)
 	}
-	if err := h.svc.Fail(ctx, "w1", j.ID, "boom", base); err != nil {
+	if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, base); err != nil {
 		t.Fatalf("fail 3: %v", err)
 	}
 	got, _ := h.repo.JobByID(ctx, j.ID)
@@ -568,7 +568,7 @@ func TestFailPreservesQueuedAt(t *testing.T) {
 	// Failing PAST the lease is correctly refused (TestCompleteRejectsExpiredLease),
 	// so this must stay within it.
 	later := base.Add(time.Minute)
-	if err := h.svc.Fail(ctx, "w1", j.ID, "boom", later); err != nil {
+	if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, later); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 	got, _ := h.repo.JobByID(ctx, j.ID)

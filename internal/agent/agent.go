@@ -254,7 +254,8 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 	// worker fills its tmpdir with other people's documents.
 	defer cleanup()
 	if err != nil {
-		a.report(ctx, job.JobID, nil, fmt.Sprintf("fetching input: %v", err))
+		// nil: fetching the input never ran a command, so there is no exit status.
+		a.report(ctx, job.JobID, nil, fmt.Sprintf("fetching input: %v", err), nil)
 		return
 	}
 
@@ -264,7 +265,7 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 		out, runErr := a.run.RunRaw(ctx, rj)
 		if runErr != nil {
 			a.Log("job %s failed: %v", job.JobID, runErr)
-			a.report(ctx, job.JobID, nil, runErr.Error())
+			a.report(ctx, job.JobID, nil, runErr.Error(), exitCodeOf(runErr))
 			return
 		}
 		a.Log("job %s produced %d byte(s)", job.JobID, len(out))
@@ -277,12 +278,12 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 		// A failed job is reported and the agent carries on. One malformed
 		// document must not stop a worker serving every other customer.
 		a.Log("job %s failed: %v", job.JobID, runErr)
-		a.report(ctx, job.JobID, nil, runErr.Error())
+		a.report(ctx, job.JobID, nil, runErr.Error(), exitCodeOf(runErr))
 		return
 	}
 
 	a.Log("job %s produced %d unit(s)", job.JobID, len(units))
-	a.report(ctx, job.JobID, units, "")
+	a.report(ctx, job.JobID, units, "", nil)
 }
 
 // materialise downloads the job's source file, if it has one.
@@ -334,6 +335,10 @@ type resultBody struct {
 	JobID string   `json:"job_id"`
 	Units []string `json:"units,omitempty"`
 	Error string   `json:"error,omitempty"`
+	// ExitCode is omitted when the failure never reached one — a timeout, an
+	// output-limit trip, a broken output contract (ADR-0007). Omitted must stay
+	// omitted: 0 is the code for success.
+	ExitCode *int `json:"exit_code,omitempty"`
 }
 
 // rawParam renders the declared mode for a query string.
@@ -386,14 +391,14 @@ func (a *Agent) reportRaw(ctx context.Context, jobID string, out []byte) {
 }
 
 // report posts the outcome back to the router.
-func (a *Agent) report(ctx context.Context, jobID string, units []string, failure string) {
+func (a *Agent) report(ctx context.Context, jobID string, units []string, failure string, exitCode *int) {
 	// A fresh context with its own bound: the caller's may already be cancelled
 	// (a shutting-down worker), and a result that is not reported costs the
 	// customer a full lease timeout before anyone retries.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 
-	body, err := json.Marshal(resultBody{JobID: jobID, Units: units, Error: failure})
+	body, err := json.Marshal(resultBody{JobID: jobID, Units: units, Error: failure, ExitCode: exitCode})
 	if err != nil {
 		a.Log("job %s: encoding result: %v", jobID, err)
 		return

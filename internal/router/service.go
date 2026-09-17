@@ -403,7 +403,7 @@ func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, worker
 		// saying why.
 		return s.failJob(ctx, job, "router",
 			fmt.Sprintf("stage %q is a units service and cannot accept a raw stage's output", next),
-			now)
+			nil, now)
 	}
 
 	src, err := s.blobs.OpenResult(job.ID)
@@ -500,7 +500,7 @@ func joinUnits(out []string) string {
 }
 
 // Fail records a worker's failure, retrying until the attempt budget is spent.
-func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, now time.Time) error {
+func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, exitCode *int, now time.Time) error {
 	job, err := s.repo.JobByID(ctx, jobID)
 	if err != nil {
 		return err
@@ -508,7 +508,7 @@ func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, now 
 	if !holdsLease(job, workerID, now) {
 		return core.ErrConflict
 	}
-	return s.failJob(ctx, job, "worker", reason, now)
+	return s.failJob(ctx, job, "worker", reason, exitCode, now)
 }
 
 // failJob retries or abandons a job.
@@ -516,29 +516,29 @@ func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, now 
 // `actor` says who caused it — a worker reporting failure, or the reaper taking
 // back an expired lease. The two are indistinguishable in the job row afterwards
 // and mean entirely different things to whoever is debugging.
-func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason string, now time.Time) error {
+func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason string, exitCode *int, now time.Time) error {
 	if job.Attempts+1 < s.cfg.MaxAttempts {
-		if err := s.repo.RequeueJob(ctx, job.ID, reason, nil, now); err != nil {
+		if err := s.repo.RequeueJob(ctx, job.ID, reason, exitCode, now); err != nil {
 			return err
 		}
 		// The retry is the transition nothing else records: a job that succeeds
 		// on attempt 3 looks identical in the metrics to one that succeeded
 		// first time.
-		s.logTransition(job, job.State, core.JobQueued, job.UpdatedAt,
-			actor, job.WorkerID, reason, now)
+		s.logFailureTransition(job, job.State, core.JobQueued, job.UpdatedAt,
+			actor, job.WorkerID, reason, exitCode, now)
 		s.publishWork(job.Label)
 		s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 		return nil
 	}
 
 	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})
-	if err := s.repo.FailJobDead(ctx, job.ID, reason, nil, now); err != nil {
+	if err := s.repo.FailJobDead(ctx, job.ID, reason, exitCode, now); err != nil {
 		return err
 	}
 	// The line the counter cannot give you: which job, on which worker, for what
 	// reason, at which attempt.
-	s.logTransition(job, job.State, core.JobDead, job.UpdatedAt,
-		actor, job.WorkerID, reason, now)
+	s.logFailureTransition(job, job.State, core.JobDead, job.UpdatedAt,
+		actor, job.WorkerID, reason, exitCode, now)
 	// Terminal: neither blob has any further use and nothing was charged.
 	_ = s.blobs.Delete(job.ID)
 	_ = s.blobs.DeleteResult(job.ID)

@@ -102,7 +102,7 @@ func TestDeadRawJobDropsItsResultBlob(t *testing.T) {
 			}
 			continue
 		}
-		if err := h.svc.Fail(ctx, "w1", j.ID, "boom", base); err != nil {
+		if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, base); err != nil {
 			t.Fatalf("Fail %d: %v", i, err)
 		}
 	}
