@@ -29,7 +29,7 @@ irritating rather than destructive.
 
 | ID | Title | Status | Covers | Acceptance |
 |----|-------|--------|--------|------------|
-| T1 | Count abandonment separately from failure | pending | — | `go test ./internal/store -run 'TestReclaimIncrementsReclaimsNotAttempts\|…'` |
+| T1 | Count abandonment separately from failure | done | — | `go test ./internal/store -run 'TestReclaimIncrementsReclaimsNotAttempts\|…'` |
 | T2 | Make the reaper spend the abandonment budget, not the failure one | pending | — | `go test ./internal/router -run 'TestReclaimDoesNotSpendAnAttempt\|…'` |
 | T3 | Let a worker hand its leases back when it is told to stop | pending | — | `go test ./internal/httpapi ./internal/agent -run 'TestReleaseRequeuesWithoutSpendingEitherBudget\|…'` |
 

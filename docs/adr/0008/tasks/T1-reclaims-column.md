@@ -63,6 +63,10 @@ go test ./internal/store -run 'TestReclaimIncrementsReclaimsNotAttempts|TestRequ
 
 ## Mutation Log
 
+- 2026-09-17 · 453b802* · mutant killed · exit 1 · `internal/store/repo_write.go` · a reclaim also spends an attempt, so three router restarts kill a job whose command never failed once — the exact defect ADR-0008 exists to remove · acceptance-sha256:cb94cf6b1c03dc86b878991f7e05f1779e51a1955586e15f5328509726558304 · covers:a reclaim leaving attempts untouched
+- 2026-09-17 · 453b802* · mutant killed · exit 1 · `internal/store/repo_write.go` · a real command failure is also counted as an abandonment, so neither number means anything and the reclaim budget T2 spends is consumed by failures · acceptance-sha256:cb94cf6b1c03dc86b878991f7e05f1779e51a1955586e15f5328509726558304 · covers:a failure leaving reclaims untouched
+- 2026-09-17 · 453b802* · mutant killed · exit 1 · `internal/store/repo.go` · the column is written but never read back, so the count is invisible to every later query — which is what "it did not survive" looks like from the outside · acceptance-sha256:cb94cf6b1c03dc86b878991f7e05f1779e51a1955586e15f5328509726558304 · covers:the count surviving a router restart
+
 ## Invariants
 
 - `ReclaimJob` never touches `attempts`; `RequeueJob` never touches `reclaims`.
@@ -92,3 +96,20 @@ changed.
 - The release route — T3.
 
 ## Verification Log
+- 2026-09-17 · 453b802* · exit 1 · `set -o pipefail …` · acceptance-sha256:cb94cf6b1c03dc86b878991f7e05f1779e51a1955586e15f5328509726558304 · ms:288
+  ```
+  --- last 10 line(s) of stdout (of 11 after folding 11 raw)
+  internal/store/reclaim_test.go:38:14: r.ReclaimJob undefined (type *"github.com/atvirokodosprendimai/ocr-router/internal/store".Repo has no field or method ReclaimJob)
+  internal/store/reclaim_test.go:45:9: got.Reclaims undefined (type core.Job has no field or method Reclaims)
+  internal/store/reclaim_test.go:45:28: before.Reclaims undefined (type core.Job has no field or method Reclaims)
+  internal/store/reclaim_test.go:47:8: got.Reclaims undefined (type core.Job has no field or method Reclaims)
+  internal/store/reclaim_test.go:47:25: before.Reclaims undefined (type core.Job has no field or method Reclaims)
+  internal/store/reclaim_test.go:77:9: got.Reclaims undefined (type core.Job has no field or method Reclaims)
+  internal/store/reclaim_test.go:79:66: got.Reclaims undefined (type core.Job has no field or method Reclaims)
+  internal/store/reclaim_test.go:92:14: r.ReclaimJob undefined (type *"github.com/atvirokodosprendimai/ocr-router/internal/store".Repo has no field or method ReclaimJob)
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/store [build failed]
+  FAIL
+  ```
+- 2026-09-17 · 453b802* · exit 0 · `set -o pipefail …` · acceptance-sha256:cb94cf6b1c03dc86b878991f7e05f1779e51a1955586e15f5328509726558304 · ms:3873
+- 2026-09-17 · 453b802* · exit 0 · `set -o pipefail …` · acceptance-sha256:cb94cf6b1c03dc86b878991f7e05f1779e51a1955586e15f5328509726558304 · ms:2802
+- 2026-09-17 · 453b802* · exit 0 · `set -o pipefail …` · acceptance-sha256:cb94cf6b1c03dc86b878991f7e05f1779e51a1955586e15f5328509726558304 · ms:3302

@@ -222,6 +222,29 @@ func (r *Repo) RequeueJob(ctx context.Context, jobID, lastErr string, exitCode *
 	return affectedOne(res, err)
 }
 
+// ReclaimJob returns an ABANDONED job to the queue without spending an attempt.
+//
+// ⚠ IT SITS HERE, DIRECTLY BESIDE RequeueJob, ON PURPOSE. The two statements
+// differ in exactly one column — `attempts + 1` against `reclaims + 1` — and
+// that one column is the whole of ADR-0008. Separated, one of them later gains a
+// field the other forgets, and the difference stops being visible to anybody
+// reading either.
+//
+// The lease and worker_id are cleared for the same reason RequeueJob clears
+// them: the previous holder must not be able to land a late result on a job
+// another worker now owns.
+//
+// It records no exit code. A lease taken back is not a command that exited —
+// that distinction is ADR-0007's, and inventing a 0 here would undo it.
+func (r *Repo) ReclaimJob(ctx context.Context, jobID, reason string, now time.Time) error {
+	res, err := r.write.ExecContext(ctx,
+		`UPDATE jobs SET state = 'queued', reclaims = reclaims + 1, worker_id = '',
+		        lease_expires_at = NULL, last_error = ?, updated_at = ?
+		 WHERE id = ?`,
+		reason, now.Unix(), jobID)
+	return affectedOne(res, err)
+}
+
 // FailJobDead marks a job beyond retry. It is never charged.
 func (r *Repo) FailJobDead(ctx context.Context, jobID, lastErr string, exitCode *int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,

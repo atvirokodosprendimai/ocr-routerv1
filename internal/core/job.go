@@ -48,8 +48,18 @@ type Job struct {
 	// is the one comparison an operator most wants to make.
 	ExitCode *int
 
-	State    JobState
+	State JobState
+	// Attempts is the RETRY BUDGET: how many times the work itself has failed.
 	Attempts int
+	// Reclaims is how many times the job's lease was taken back without the work
+	// failing — a router restart, a worker shutdown, a lease that timed out
+	// because the process went away (ADR-0008).
+	//
+	// ⚠ A SEPARATE COUNTER, not a second way of spending Attempts. Abandonment
+	// says nothing about whether the command works, so charging it to the retry
+	// budget kills healthy work: three router restarts and a job that never ran
+	// badly once is dead, with "lease expired" as its cause.
+	Reclaims int
 	// Units is the size of the final stage's output — pages, documents,
 	// whatever the service produced — and is what the client sees.
 	Units int
