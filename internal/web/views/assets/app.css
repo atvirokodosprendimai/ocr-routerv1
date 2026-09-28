@@ -30,6 +30,9 @@ header {
   display: flex; flex-wrap: wrap; gap: 1rem; align-items: baseline;
   padding: 1rem 1.25rem; border-bottom: 1px solid var(--line); background: var(--panel);
 }
+/* The sign-out control sits at the far end of the header, away from the nav, so
+   it is not one of a row of things an operator clicks through. */
+.signout { margin-left: auto; }
 header h1 { font-size: 1.05rem; margin: 0; letter-spacing: .02em; }
 nav { display: flex; gap: 1rem; }
 nav a { color: var(--muted); text-decoration: none; padding: .25rem 0; }

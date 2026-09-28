@@ -39,11 +39,41 @@ templ Layout(title string, signals string) {
 			<a class="skip" href="#main">Skip to content</a>
 			<header>
 				<h1>ocr-router</h1>
+				// ⚠ `aria-current` is DERIVED FROM `title`, which is the only thing
+				// this component knows about which page it is rendering. app.css has
+				// styled `nav a[aria-current="page"]` since the dashboard shipped and
+				// nothing ever emitted a usable value — a dead selector, and an
+				// operator with no indication of where they were.
+				//
+				// The coupling to a display string is the cost of not changing three
+				// call sites and the signature; TestTheCurrentSectionIsMarked pins all
+				// three titles, so a typo unmarks a page loudly rather than silently.
+				//
+				// ⚠ SPREAD ATTRIBUTES, never `aria-current={ templ.KV(…) }` — see
+				// currentPage in attrs.go for what that spelling actually renders.
 				<nav aria-label="Sections">
-					<a href="/admin">Overview</a>
-					<a href="/admin/users">Customers</a>
-					<a href="/admin/services">Services</a>
+					<a href="/admin" { currentPage(title == "Overview")... }>Overview</a>
+					<a href="/admin/users" { currentPage(title == "Customers")... }>Customers</a>
+					<a href="/admin/services" { currentPage(title == "Services")... }>Services</a>
 				</nav>
+				// ⚠ NOT A <form>, and the first attempt here was one — caught by
+				// TestNoFormTags, which is the house rule asserted across every view.
+				// The login page's plain form is exempt because it is not rendered
+				// through this layout; that is not a licence to add another.
+				//
+				// So: a datastar action, and `doLogout` answers it with an SSE
+				// redirect (`sse.Redirect`) rather than a 303. A 303 here would be
+				// followed by datastar's own fetch, which would then try to parse the
+				// login PAGE as an event stream and fail silently — the operator's
+				// session gone and the screen unchanged.
+				//
+				// POST rather than a link because doLogout revokes server-side, and a
+				// GET logout is reachable by any prefetch or crawler.
+				<button
+					class="secondary signout"
+					title="Ends this session everywhere, including other tabs"
+					data-on:click="@post('/admin/logout')"
+				>Sign out</button>
 			</header>
 			<main id="main">
 				{ children... }

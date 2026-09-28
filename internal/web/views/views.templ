@@ -53,9 +53,15 @@ templ Jobs(d Dashboard) {
 			}
 			// Links, not a form: the filter is a place on the site, so it is
 			// shareable, bookmarkable and reachable with the back button.
+			//
+			// ⚠ These two used `aria-current={ templ.KV("page", …) }` and had been
+			// serving `aria-current="{page true}"` and `aria-current="{page false}"`
+			// since this view shipped — both links marked, with a value no
+			// specification defines, and the CSS rule matching neither. See
+			// currentPage in attrs.go.
 			<nav class="filters" aria-label="Filter jobs">
-				<a href="/admin/" aria-current={ templ.KV("page", !d.FailedOnly) }>All</a>
-				<a href="/admin/?state=failed" aria-current={ templ.KV("page", d.FailedOnly) }>Failures</a>
+				<a href="/admin/" { currentPage(!d.FailedOnly)... }>All</a>
+				<a href="/admin/?state=failed" { currentPage(d.FailedOnly)... }>Failures</a>
 			</nav>
 		</div>
 		if len(d.Jobs) == 0 {
