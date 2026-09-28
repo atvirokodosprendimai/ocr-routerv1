@@ -24,12 +24,13 @@ import (
 type fakeRouter struct {
 	mu sync.Mutex
 
-	queued   []string          // job ids waiting to be claimed
-	blobs    map[string]string // job id -> source bytes
-	reports  []report
-	claims   atomic.Int64
-	streams  atomic.Int64
-	sendPing bool
+	queued    []string          // job ids waiting to be claimed
+	blobs     map[string]string // job id -> source bytes
+	filenames map[string]string // job id -> the client's original filename
+	reports   []report
+	claims    atomic.Int64
+	streams   atomic.Int64
+	sendPing  bool
 
 	events chan string // event names to push to the connected stream
 	drop   chan struct{}
@@ -56,18 +57,30 @@ type report struct {
 
 func newFakeRouter() *fakeRouter {
 	return &fakeRouter{
-		blobs:  map[string]string{},
-		events: make(chan string, 64),
-		drop:   make(chan struct{}),
+		blobs:     map[string]string{},
+		filenames: map[string]string{},
+		events:    make(chan string, 64),
+		drop:      make(chan struct{}),
 	}
 }
 
 func (f *fakeRouter) enqueue(id, blob string) {
+	f.enqueueNamed(id, blob, "")
+}
+
+// enqueueNamed is enqueue with the original filename the router would send on
+// claim. ⚠ The real router always sends one for a job that has a blob (it is a
+// column on the row), and it is CLIENT-SUPPLIED — which is the whole reason the
+// agent takes only an extension from it.
+func (f *fakeRouter) enqueueNamed(id, blob, filename string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.queued = append(f.queued, id)
 	if blob != "" {
 		f.blobs[id] = blob
+	}
+	if filename != "" {
+		f.filenames[id] = filename
 	}
 }
 
@@ -120,7 +133,8 @@ func (f *fakeRouter) handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"job_id": id, "label": "test", "has_blob": hasBlob,
-			"params": map[string]string{"n": id},
+			"filename": f.filenames[id],
+			"params":   map[string]string{"n": id},
 		})
 	})
 

@@ -93,6 +93,49 @@ go build -o router ./cmd/router
 ./router --db ocr.db --blobs ./blobs --addr :8080
 ```
 
+## Writing a worker command
+
+The worker forks `--cmd` once per job and **never through a shell**. Your command
+receives:
+
+```
+<cmd> -i <input-path> -o - [--<key> <value>]...
+```
+
+- `-i <input-path>` is the materialised source file, absent for a job with no
+  blob (the crawler shape, where your service fetches its own input from a
+  parameter).
+- `-o -` is always present and always `-`: the result goes to **stdout**.
+- each client-supplied query parameter becomes `--key value`, as separate argv
+  elements. Nothing is expanded, quoted or joined, so `"$@"` in a wrapper script
+  is safe and re-expanding it is not.
+
+The input path is `<tmpdir>/<job-id>.<ext>`. **The extension comes from the
+filename the customer uploaded**, and only when it is 1–16 characters of
+`[A-Za-z0-9]` — otherwise the file is the bare job id with no extension. The
+basename is never the customer's: they choose that string, and it arrives on a
+host they do not own. If your tool detects format by extension, this is the line
+that matters to you.
+
+What you write to stdout depends on the mode, and the mode is the **admin's**
+choice in `service_rates`, not yours — a worker declaring one the record
+disagrees with is refused with `409`:
+
+| mode | stdout | billing |
+|---|---|---|
+| units (default) | a JSON array of strings, one per output unit | `len(units) × rate` |
+| `--raw` | the bytes, unchanged | a flat 1 credit per job |
+
+⚠ **stderr is not part of the result.** The worker captures the last 2000 bytes
+of it for the failure record, beside the exit code, and never mixes it into
+stdout. So do not merge the two in your script: `2>&1` in a raw-mode command puts
+your tool's warnings *into the document* that gets stored, delivered and billed,
+and nothing anywhere reports it.
+
+A non-zero exit fails the job, and the exit code reaches the job row and the
+dashboard's failures view. Exceeding `--max-output` is a failure too, not a
+truncated result quietly billed as a whole one.
+
 ## The client
 
 `cmd/client` submits one document and blocks until the result lands, so a
