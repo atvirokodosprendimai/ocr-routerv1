@@ -1,0 +1,77 @@
+package views
+
+import "fmt"
+import "github.com/atvirokodosprendimai/ocr-router/internal/core"
+
+// Usage is the per-customer counter table, and a live fragment like Stats, Jobs
+// and Workers.
+//
+// ⚠ IT IS A SEPARATE FRAGMENT FROM UserTable ON PURPOSE (ADR-0010 decision 3).
+// The obvious implementation of live counters is to patch `#user-table`, which
+// carries every row's buffer-limit, priority, TTL, credit-delta and reason
+// inputs — so a patch every fifteen seconds lands under an operator who is typing
+// in one, and a known defect already has bound inputs refilling from stale
+// signals after a morph. This section holds no inputs at all, so patching it is
+// safe at any cadence.
+//
+// ⚠ Its root id must exist in the first paint: a fragment cannot be patched into
+// existence, only over something already in the document.
+templ Usage(d Dashboard) {
+	<section id="usage">
+		<h2>Usage</h2>
+		<p class="muted">
+			Each window counts the jobs PUSHED in it, and what became of those jobs —
+			so `pushed` minus the rest is how many are still in flight. The month
+			column is the previous complete calendar month, UTC; it is not the same
+			question as the rolling 31 days beside it.
+		</p>
+		if len(d.Users) == 0 {
+			<p class="empty">No customers yet.</p>
+		} else {
+			<table>
+				<thead>
+					<tr>
+						<th>Customer</th>
+						<th class="num">24h</th>
+						<th class="num">7d</th>
+						<th class="num">31d</th>
+						<th class="num">{ prevMonthLabel(d.Now) }</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, u := range d.Users {
+						<tr>
+							<td>{ u.Email }</td>
+							@usageCell(d.Usage[u.ID].Day, "the last 24 hours", u.Email)
+							@usageCell(d.Usage[u.ID].Week, "the last 7 days", u.Email)
+							@usageCell(d.Usage[u.ID].Month, "the last 31 days", u.Email)
+							@usageCell(d.Usage[u.ID].PrevMonth, prevMonthLabel(d.Now), u.Email)
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+	</section>
+}
+
+// usageCell is one customer's one window: the pushed count, then what became of
+// that cohort.
+//
+// ⚠ EVERY NUMBER IS LABELLED IN WORDS, not just positioned under a header. Four
+// windows × four buckets is sixteen numbers per row; on a narrow screen the table
+// scrolls sideways and the header leaves the viewport, and a screen reader hears
+// the cell without it either way. The `aria-label` carries the customer, the
+// window and all four values as a sentence, which is the only form that survives
+// both.
+templ usageCell(w core.Window, window, email string) {
+	<td
+		class="num usage-cell"
+		aria-label={ fmt.Sprintf("%s over %s: %d pushed, %d delivered, %d failed, %d expired",
+			email, window, w.Pushed, w.Delivered, w.Failed, w.Expired) }
+	>
+		<span class="usage-pushed">{ fmt.Sprint(w.Pushed) } pushed</span>
+		<span class="usage-detail muted">
+			{ fmt.Sprintf("%d delivered · %d failed · %d expired", w.Delivered, w.Failed, w.Expired) }
+		</span>
+	</td>
+}

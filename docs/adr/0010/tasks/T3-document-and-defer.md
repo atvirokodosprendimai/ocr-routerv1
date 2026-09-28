@@ -64,6 +64,8 @@ grep -q 'previous complete calendar month' README.md && \
 
 ## Mutation Log
 
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `README.md` · the README stops saying which month the column is, which is the one claim in this documentation a reader cannot get from the screen — the header shows "Aug 2026" and never says whether that is a complete month or a month to date · acceptance-sha256:3a55e454ac7f5e9596fe2609371986590b2269265eef362a264e4911f439e1af
+
 ## Invariants
 
 - Every `(deferred: …)` entry ADR-0010 writes exists at its destination, naming ADR-0010.
@@ -84,3 +86,8 @@ at passes every other check there is.
 - Any code change. T1 and T2 own the behaviour.
 
 ## Verification Log
+- 2026-09-28 · 08095e7* · exit 1 · `set -o pipefail …` · acceptance-sha256:3a55e454ac7f5e9596fe2609371986590b2269265eef362a264e4911f439e1af · ms:46
+  ```
+  ```
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:3a55e454ac7f5e9596fe2609371986590b2269265eef362a264e4911f439e1af · ms:1514
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:3a55e454ac7f5e9596fe2609371986590b2269265eef362a264e4911f439e1af · ms:1461

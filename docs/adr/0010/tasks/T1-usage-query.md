@@ -143,3 +143,4 @@ retention policy would make every window past the retention horizon silently wro
 - 2026-09-28 · cef5521* · exit 0 · `set -o pipefail …` · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · ms:2769
 - 2026-09-28 · cef5521* · exit 0 · `set -o pipefail …` · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · ms:2406
 - 2026-09-28 · cef5521* · exit 0 · `set -o pipefail …` · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · ms:2108
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · ms:2201

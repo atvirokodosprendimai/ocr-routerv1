@@ -151,6 +151,11 @@ templ Workers(d Dashboard) {
 // Users is the customer administration page.
 templ Users(d Dashboard) {
 	@Layout("Customers", `{"newEmail":"","newRole":"client"}`) {
+		// ⚠ The Customers page has never subscribed to the stream, so nothing on it
+		// updated itself. ADR-0010's counters are patched by that stream, and
+		// without this they would be live in a stream nobody joined — working code
+		// and a screen that never changes.
+		<div data-init={ "@get('" + streamURL(d) + "')" }></div>
 		<section>
 			<h2>Create a customer</h2>
 			// ⚠ NO <form>. Each input is bound individually, and the suffixes are
@@ -176,6 +181,10 @@ templ Users(d Dashboard) {
 			<div id="create-result"></div>
 		</section>
 		@UserTable(d)
+		// ⚠ BELOW the editable table and in its own section. The counters are live
+		// and the table above is not, deliberately: patching #user-table would
+		// re-render its inputs under an operator mid-edit (ADR-0010 decision 3).
+		@Usage(d)
 	}
 }
 

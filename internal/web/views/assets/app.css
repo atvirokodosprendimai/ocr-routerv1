@@ -165,3 +165,11 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 /* The number inputs in the table sit in narrow columns; without this they
    default to a width that forces a horizontal scroll on every viewport. */
 td.num input[type="number"] { width: 5rem; text-align: right; }
+/* Per-customer usage counters (ADR-0010). Sixteen numbers per row, so the cell
+   stacks: the pushed count readable at a glance, the breakdown under it. Left-
+   aligned despite being numbers — the breakdown is a sentence, and tabular-nums
+   right-alignment would ragged it against the label. */
+.usage-cell { text-align: left; white-space: nowrap; }
+.usage-pushed { display: block; font-variant-numeric: tabular-nums; }
+.usage-detail { display: block; font-size: .75rem; }
+#usage p.muted { max-width: 60ch; font-size: .85rem; }

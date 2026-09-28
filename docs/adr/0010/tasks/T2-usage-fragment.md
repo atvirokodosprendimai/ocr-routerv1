@@ -51,7 +51,7 @@ leaves the editable table alone while doing it.
 
 ```bash
 set -o pipefail
-templ generate && go test ./internal/web/ -run 'Usage' -count=1 2>&1 | tee /tmp/adr10t2.out && \
+templ generate && go test ./internal/web/ -run 'Usage|Stream' -count=1 2>&1 | tee /tmp/adr10t2.out && \
   ! grep -qE "no tests to run|^FAIL|^--- FAIL|warning: no tests" /tmp/adr10t2.out && \
   go test ./internal/web/... ./cmd/router/ -count=1
 ```
@@ -77,6 +77,26 @@ templ generate && go test ./internal/web/ -run 'Usage' -count=1 2>&1 | tee /tmp/
 
 ## Mutation Log
 
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `internal/web/web.go` · the usage fragment is never pushed, so the counters are rendered once and never update — the liveness M asked for, silently absent · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · covers:the fragment's own id
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `internal/web/web.go` · the stream patches the EDITABLE table instead — the obvious implementation, which re-renders every row edit input every fifteen seconds under an operator who may be typing in one · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · covers:the user table NOT being patched
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `internal/web/views/views.templ` · the stream URL goes empty, so every data-init subscribes to nothing and the counters are live in a stream nobody joined. Mutated here rather than on the Customers data-init line, which is byte-identical to the Overview one and therefore not uniquely addressable · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · covers:the Customers page subscription
+- 2026-09-28 · 08095e7* · mutant inconclusive · exit 1 · `internal/web/web.go` · the read model stops carrying the counts, so the section renders zeros for everyone — the shape of a field filled on one path and not the other · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · covers:the read model carrying usage
+  ```
+  the fence failed on a build/parse error, not an assertion
+  ```
+- 2026-09-28 · 08095e7* · mutant survived · exit 0 · `internal/web/views/usage.templ` · the breakdown is hidden, so each cell shows a bare pushed count and the delivered/failed/expired numbers are gone from the page · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · covers:the per-number labelling
+  ```
+  the fence passed with the mechanism broken; it may not materialize, compile, load, or assert on the changed path
+  ```
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `internal/web/views/usage.templ` · probe: does the strengthened test see a broken detail span · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `internal/web/views/usage.templ` · the breakdown becomes bare digits with no bucket names, which is exactly the unlabelled cell this record says sixteen numbers per row cannot afford · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · covers:the per-number labelling
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `internal/web/web.go` · the read model is filled with nothing, so every cell renders zeros while the data is in the table — the shape of a counter wired to the wrong source · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · covers:the read model carrying usage
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `internal/web/web.go` · the read model is filled with nothing, so every cell renders zeros while the data is in the table · acceptance-sha256:4dc7055fcc40db14ae24a36bcd495df05792df2149516f262f4a5adc96eb98b8 · covers:the read model carrying usage
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `internal/web/web.go` · the usage fragment is never pushed, so the counters render once and never update · acceptance-sha256:4dc7055fcc40db14ae24a36bcd495df05792df2149516f262f4a5adc96eb98b8 · covers:the fragment's own id
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `internal/web/views/views.templ` · the stream URL goes empty, so every data-init subscribes to nothing and the counters are live in a stream nobody joined · acceptance-sha256:4dc7055fcc40db14ae24a36bcd495df05792df2149516f262f4a5adc96eb98b8 · covers:the Customers page subscription
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `internal/web/web.go` · the stream patches the EDITABLE table instead — the obvious implementation, which re-renders every row edit input every fifteen seconds under an operator who may be typing in one · acceptance-sha256:4dc7055fcc40db14ae24a36bcd495df05792df2149516f262f4a5adc96eb98b8 · covers:the user table NOT being patched
+- 2026-09-28 · 08095e7* · mutant killed · exit 1 · `internal/web/views/usage.templ` · the breakdown becomes bare digits with no bucket names — the unlabelled cell sixteen numbers per row cannot afford · acceptance-sha256:4dc7055fcc40db14ae24a36bcd495df05792df2149516f262f4a5adc96eb98b8 · covers:the per-number labelling
+
 ## Invariants
 
 - `#user-table` is never patched by the stream.
@@ -87,10 +107,32 @@ templ generate && go test ./internal/web/ -run 'Usage' -count=1 2>&1 | tee /tmp/
 ## Risks
 
 - Sixteen numbers per customer is the readability risk, and a test can only pin the labelling, not the
-  legibility. S4's proof is human for that reason and says what the person checks.
+  legibility. S4's proof is human for that reason and says what the person checks; the sign-off in the
+  log records what was actually on screen.
 - Making the Customers page live is a behaviour change to a page that has never updated itself. If an
   operator relied on it being static while editing, the separate fragment is what keeps that true for
   the part they edit.
+- ★ **A MUTATION EXPOSED A WEAK TEST HERE, and the weakness was mine.** Hiding the breakdown span
+  SURVIVED the first `TestUsageNumbersAreLabelledNotBare`, because that version grepped the WHOLE PAGE
+  for "delivered", "failed" and "expired" — all three are job states and all three appear in the Stats
+  cards, so the assertion passed on text this section never produced. It now reads only the `#usage`
+  fragment and asserts the rendered SENTENCE (`0 delivered · 2 failed · 0 expired`), which nothing else
+  on the page can satisfy. ⚠ The general question: which of a test's subjects could carry the verdict
+  by itself?
+- ⚠ **The fixture cannot produce a DELIVERED job, and the test says so rather than asserting a wrong
+  number.** `Repo.CreateJob` ignores the `State` field and writes `queued` unconditionally, so
+  `seedJobs`'s job constructed as `core.JobDelivered` is not one. The delivered bucket's semantics are
+  T1's subject and are covered there against raw-seeded rows; this task's tests own the rendering.
+- One mutation attempt came back INCONCLUSIVE (`Usage: nil`, which left `usage` unused and failed to
+  compile — a skipped mutant wearing a kill's exit code). It was replaced with one that compiles and
+  empties the map instead; both rows are in the log above.
+- ⚠ **THE FENCE'S FILTER WAS WRONG AND adr-lint CAUGHT IT.** It read `-run 'Usage'`, which does not
+  select `TestTheCustomersPageSubscribesToTheStream` or `TestTheStreamDoesNotPatchTheUserTable` — so
+  the Tests table promised two tests the filtered segment never ran, and one of them is the NEGATIVE
+  this whole decision rests on. They were still executed by the second, unfiltered segment, which is
+  why nothing looked wrong. The filter is now `'Usage|Stream'`. ⚠ Changing it invalidated every pass
+  and mutation row recorded under the old digest, so all of them were re-run; the superseded rows stay
+  in the log above, bound to a digest that no longer matches, which is the mechanism working.
 
 ## Stop Condition
 
@@ -105,3 +147,34 @@ needs revisiting rather than the invariant being dropped.
 - Fixing the stale-signal defect on the row inputs — this task avoids it, it does not repair it. (deferred: `docs/adr/BACKLOG.md`)
 
 ## Verification Log
+- 2026-09-28 · 08095e7* · exit 1 · `set -o pipefail …` · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · ms:2454
+  ```
+  --- last 10 line(s) of stdout (of 14 after folding 14 raw)
+      usage_test.go:44: the usage section never says "7d", so its numbers are bare digits
+      usage_test.go:44: the usage section never says "pushed", so its numbers are bare digits
+      usage_test.go:44: the usage section never says "delivered", so its numbers are bare digits
+      usage_test.go:44: the usage section never says "failed", so its numbers are bare digits
+      usage_test.go:44: the usage section never says "expired", so its numbers are bare digits
+  --- FAIL: TestTheStreamPatchesUsage (0.07s)
+      usage_test.go:74: the stream sent no usage fragment in its first push: "event: datastar-patch-elements\ndata: elements <section id=\"stats\"><h2>Now</h2><div class=\"cards\"><div class=\"card\"><div class=\"n\">1</div><div class=\"k\">queued</div></div><div class=\"card\"><div class=\"n\">0</div><div class=\"k\">processing</div></div><div class=\"card\"><div class=\"n\">0</div><div class=\"k\">done</div></div><div class=\"card\"><div class=\"n\">0</div><div class=\"k\">delivered</div></div><div c…"
+  FAIL
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/web	0.612s
+  FAIL
+  --- last 2 line(s) of stderr
+  (✓) Post-generation event received, processing... [ updates=0 needsRestart=true needsBrowserReload=true ]
+  (✓) Complete [ updates=0 duration=28.604625ms ]
+  ```
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · ms:6391
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · ms:4800
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · ms:7073
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · ms:6454
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · ms:5970
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · ms:5141
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · ms:4755
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:d5e43895ab7d11f992ff55bc5f5012514b3a893e1bc38475e0f48a0456808a44 · ms:4930
+- 2026-09-28 · human-observed · S4 observed against a running binary on :1238: the Customers page serves <section id="usage"> with the month column headed "Aug 2026" — the previous COMPLETE calendar month, today being 28 Sep 2026 — and every cell rendering `0 pushed` over `0 delivered · 0 failed · 0 expired` plus a full aria-label naming the customer, the window and all four values ("acme@example.com over the last 24 hours: 0 pushed, 0 delivered, 0 failed, 0 expired"). A reader can say which window and which bucket every number belongs to without reaching the header
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:4dc7055fcc40db14ae24a36bcd495df05792df2149516f262f4a5adc96eb98b8 · ms:6784
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:4dc7055fcc40db14ae24a36bcd495df05792df2149516f262f4a5adc96eb98b8 · ms:5762
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:4dc7055fcc40db14ae24a36bcd495df05792df2149516f262f4a5adc96eb98b8 · ms:5728
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:4dc7055fcc40db14ae24a36bcd495df05792df2149516f262f4a5adc96eb98b8 · ms:6138
+- 2026-09-28 · 08095e7* · exit 0 · `set -o pipefail …` · acceptance-sha256:4dc7055fcc40db14ae24a36bcd495df05792df2149516f262f4a5adc96eb98b8 · ms:5977

@@ -23,8 +23,8 @@ T3 documents what both did.
 | ID | Title | Status | Covers | Acceptance |
 |----|-------|--------|--------|------------|
 | T1 | Count every customer's four windows in one query | done | — | `go test ./internal/store/ -run 'Usage' -count=1 …` |
-| T2 | Render the counters as their own live fragment, and make the Customers page live | pending | — | `templ generate && go test ./internal/web/ -run 'Usage' -count=1 …` |
-| T3 | Say what the counters mean, and file what this record deliberately did not build | pending | — | `grep -q 'previous complete calendar month' README.md && … adr-debt docs/adr` |
+| T2 | Render the counters as their own live fragment, and make the Customers page live | done | — | `templ generate && go test ./internal/web/ -run 'Usage\|Stream' -count=1 …` |
+| T3 | Say what the counters mean, and file what this record deliberately did not build | done | — | `grep -q 'previous complete calendar month' README.md && … adr-debt docs/adr` |
 
 Status: `pending` | `partial` | `blocked` | `done`.
 

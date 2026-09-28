@@ -195,6 +195,38 @@ into the adjust box is a movement of minus one credit, so it would land as
 `balance − 1` and look as though it had worked. The exemption is a separate flag
 for exactly that reason.
 
+## Usage counters
+
+The Customers page shows, per customer, how much work they pushed over four
+windows and what became of it:
+
+| column | period |
+|---|---|
+| 24h | the last 24 hours |
+| 7d | the last 7 days |
+| 31d | the last 31 days |
+| a month name | the **previous complete calendar month**, UTC |
+
+The month column is not the same question as the rolling 31 days beside it. In
+mid-September, `31d` covers mid-August to now and `Aug 2026` covers all of August
+and nothing else — the second is the one an invoice matches.
+
+**Each window counts the jobs PUSHED in it, and what became of those jobs.** That
+is a cohort, not a snapshot: a job pushed on Monday and delivered on Tuesday is
+counted in Monday's window, in both the `pushed` and the `delivered` figure. So
+the four numbers reconcile, and
+
+    pushed − delivered − failed − expired  =  still in flight
+
+`failed` is a job whose command exhausted its attempts. `expired` is separate: the
+deadline passed while the job was still queued, so nothing ever ran. They are kept
+apart because an operator acts on them differently — the first is a broken
+service, the second is a service nobody served.
+
+The counters are **live**: they update over the same SSE stream the Overview uses,
+without a reload. The editable customer table above them deliberately is not, so a
+refresh never lands under an operator who is typing in a row.
+
 ## Priority and deadlines
 
 Each customer has an integer `priority` (higher first) and an optional
