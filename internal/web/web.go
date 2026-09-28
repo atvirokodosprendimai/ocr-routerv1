@@ -138,6 +138,9 @@ func (wb *Web) Mount(r chi.Router, authenticate func(http.Handler) http.Handler,
 			r.Post("/users/{id}/settings", wb.updateSettings)
 			r.Post("/users/{id}/credits", wb.adjustCredits)
 			r.Post("/users/{id}/active", wb.setActive)
+			// ADR-0009. Beside /active and for the same reason: a toggle whose new
+			// state is read from the STORE, never from the browser.
+			r.Post("/users/{id}/unmetered", wb.setUnmetered)
 			r.Post("/rates", wb.setRate)
 		})
 	})

@@ -76,6 +76,11 @@ templ generate && go test ./internal/web/ -run 'Unmeter' -count=1 2>&1 | tee /tm
 
 ## Mutation Log
 
+- 2026-09-28 · 6d9422a* · mutant killed · exit 1 · `internal/web/settings.go` · the toggle stops inverting, so it can never be turned ON — kills TestAdminTogglesUnmetered · acceptance-sha256:abe29a727a00e4ce335dd3bc45ce7b2aa969a578a42d962dcd77024178a8a2b8 · covers:the server-side inversion
+- 2026-09-28 · 6d9422a* · mutant killed · exit 1 · `internal/web/web.go` · the route is not mounted, so the handler is finished, tested and reachable by nothing — the defect this codebase has already shipped three times · acceptance-sha256:abe29a727a00e4ce335dd3bc45ce7b2aa969a578a42d962dcd77024178a8a2b8 · covers:the route's presence in the authenticated group
+- 2026-09-28 · 6d9422a* · mutant killed · exit 1 · `internal/identity/service.go` · the service trusts its caller, so the only capability that makes work free is guarded by an HTTP middleware in another package and by nothing else · acceptance-sha256:abe29a727a00e4ce335dd3bc45ce7b2aa969a578a42d962dcd77024178a8a2b8 · covers:the admin gate
+- 2026-09-28 · 6d9422a* · mutant killed · exit 1 · `internal/web/views/views.templ` · the exempt state is stored and invisible: the Credits cell shows a number an operator has no reason to distrust, which is how a customer stays free by accident · acceptance-sha256:abe29a727a00e4ce335dd3bc45ce7b2aa969a578a42d962dcd77024178a8a2b8 · covers:the visible state
+
 ## Invariants
 
 - The route stays inside the authenticated + admin + same-origin group; the count of unauthenticated
@@ -107,3 +112,24 @@ outside the authenticated group, which is a defect and not a test to update.
 - Showing the credit ledger so a balance can be explained. (deferred: `docs/adr/BACKLOG.md`)
 
 ## Verification Log
+- 2026-09-28 · 6d9422a* · exit 1 · `set -o pipefail …` · acceptance-sha256:abe29a727a00e4ce335dd3bc45ce7b2aa969a578a42d962dcd77024178a8a2b8 · ms:2398
+  ```
+  --- last 10 line(s) of stdout (of 15 after folding 15 raw)
+  --- FAIL: TestUnmeteredRouteIgnoresAPostedValue (0.01s)
+      unmetered_test.go:71: POST unmetered = 404, want 200
+  --- FAIL: TestTheCreditsCellReadsUnlimitedWhenUnmetered (0.01s)
+      unmetered_test.go:114: the Credits cell does not say `unlimited` for an unmetered customer — the state is stored and invisible, which is how a customer stays free by accident
+  --- FAIL: TestTheUnmeterToggleButtonNamesTheDirection (0.01s)
+      unmetered_test.go:134: no `Unmeter` button on a metered row — the capability is unreachable from the page an operator is looking at
+      unmetered_test.go:149: the button still offers to Unmeter a customer that already is — the label is reporting state rather than naming what the click does
+  FAIL
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/web	0.377s
+  FAIL
+  --- last 2 line(s) of stderr
+  (✓) Post-generation event received, processing... [ updates=0 needsRestart=true needsBrowserReload=true ]
+  (✓) Complete [ updates=0 duration=26.714833ms ]
+  ```
+- 2026-09-28 · 6d9422a* · exit 0 · `set -o pipefail …` · acceptance-sha256:abe29a727a00e4ce335dd3bc45ce7b2aa969a578a42d962dcd77024178a8a2b8 · ms:7790
+- 2026-09-28 · 6d9422a* · exit 0 · `set -o pipefail …` · acceptance-sha256:abe29a727a00e4ce335dd3bc45ce7b2aa969a578a42d962dcd77024178a8a2b8 · ms:5701
+- 2026-09-28 · 6d9422a* · exit 0 · `set -o pipefail …` · acceptance-sha256:abe29a727a00e4ce335dd3bc45ce7b2aa969a578a42d962dcd77024178a8a2b8 · ms:6332
+- 2026-09-28 · 6d9422a* · exit 0 · `set -o pipefail …` · acceptance-sha256:abe29a727a00e4ce335dd3bc45ce7b2aa969a578a42d962dcd77024178a8a2b8 · ms:5828

@@ -228,8 +228,17 @@ templ UserTable(d Dashboard) {
 								<br/>
 								<span class="muted">{ string(u.Role) }</span>
 							</td>
+							// ⚠ `unlimited`, never `-1`. M asked for "-1 credits means
+							// unlimited" and -1 is stored nowhere (ADR-0009): a cell
+							// showing it would invite an operator to type it into the
+							// adjust box below, where it is a MOVEMENT and would land as
+							// balance − 1 while looking like it had worked.
 							<td class="num">
-								{ fmt.Sprint(u.Credits) }
+								if u.Unmetered {
+									<span class="tag raw" title="Exempt from the balance: this customer's jobs are not charged">unlimited</span>
+								} else {
+									{ fmt.Sprint(u.Credits) }
+								}
 							</td>
 							<td class="num">
 								<input
@@ -285,6 +294,20 @@ templ UserTable(d Dashboard) {
 										Disable
 									} else {
 										Enable
+									}
+								</button>
+								// ADR-0009. The label names the ACTION, not the state: on a
+								// row of five near-identical buttons, "Unmetered" reads as a
+								// status and "Unmeter" reads as something about to happen.
+								<button
+									class="secondary"
+									title="Stops charging this customer for anything, until it is turned back on"
+									data-on:click={ fmt.Sprintf("@post('/admin/users/%s/unmetered')", u.ID) }
+								>
+									if u.Unmetered {
+										Meter
+									} else {
+										Unmeter
 									}
 								</button>
 							</td>
