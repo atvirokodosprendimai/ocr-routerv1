@@ -211,9 +211,59 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   `SetActive`, a `router admin activate` command, or both.
 
 - **Charts and historical analytics on the admin dashboard.**
-  Deferred by ADR-0001 task T10 (§Out of Scope).
+  Deferred by ADR-0001 task T10 (§Out of Scope). ⚠ **PARTLY TAKEN UP by ADR-0010** on 2026-09-28 —
+  the COUNTING half only.
   T10 ships current state. Nothing retains a time series, so "was it like this yesterday" has no
   answer; T11's metrics are the intended source if this is ever built.
+  What ADR-0010 changed about this entry: a COUNT over a window turned out to need no retained series
+  at all, because nothing deletes job rows — the reaper removes blobs and results, never rows. So
+  per-customer counts for 24h / 7d / 31d / the previous calendar month are one indexed query. A CHART
+  is still a series of counts at retained resolution and still has no source, so this entry stays open
+  for exactly that: resolution, retention, and what happens to the numbers once a row is old.
+
+- **A `job_stats` rollup table, updated on every job transition.**
+  Deferred by ADR-0010 (`docs/adr/0010/0010-per-customer-usage-counters.md`, §Alternatives and
+  §Out of Scope) and by its task T1, 2026-09-28, WITH THE CONDITION THAT TRIGGERS IT: take this up when
+  the window scan is measurably slow, not before. ADR-0010 counts by scanning the job rows newer than
+  the oldest window floor — about 62 days' worth — on every SSE push, which is bounded and cheap now
+  and grows with traffic. A rollup is the answer then, and it is a second source of truth for numbers
+  that are currently one query away: it needs a backfill and it can drift from `jobs` with nothing
+  reporting the drift.
+
+- **`GET /usage` — a customer reading its OWN counters over the API.**
+  Deferred by ADR-0010 (§Alternatives, §Out of Scope), 2026-09-28. M chose dashboard-only when asked.
+  Not rejected on merit: it is the endpoint a customer would reconcile their own invoice against, and
+  the counting is already done. It is a new PUBLIC contract, so it needs its own shape, its scoping
+  (a client must see only its own), and a rate-limit decision — ADR-0002's per-role limits were not
+  tuned for an endpoint that runs an aggregate.
+
+- **Bytes and credits per window, beside the counts.**
+  Deferred by ADR-0010 (§Out of Scope) and by its task T1, 2026-09-28. `jobs.size_byte` and
+  `jobs.accrued_credits` are already on every row and already inside the window the query scans, so
+  this is two more conditional sums rather than new data. It was left out to keep the first version's
+  table readable: four windows × four counts is already sixteen numbers per customer.
+
+- **Per-service breakdown of a customer's usage.**
+  Deferred by ADR-0010 (§Out of Scope), 2026-09-28. `jobs.label` is in the same rows. The reason it is
+  not free: it multiplies the cells by the number of labels, so it is a different VIEW rather than more
+  columns — probably a per-customer drill-down, which is the same UI question as showing a customer's
+  credit ledger.
+
+- **Sorting or filtering the usage table.**
+  Deferred by ADR-0010 task T2 (§Out of Scope), 2026-09-28. "Who pushed the most this week" is the
+  obvious next question and the table answers it only by eye. Sorting a live fragment needs a decision
+  about where the sort lives, since a patch re-renders it: a query parameter like the jobs filter
+  (shareable, survives the patch) or a client-side signal (cheaper, lost on every push).
+
+- **The per-row edit inputs refill from a stale signal after an SSE patch.**
+  Found 2026-09-28 during the dashboard audit; deferred by ADR-0010 task T2 (§Out of Scope) because
+  that task AVOIDS it rather than repairing it — the usage counters got their own fragment specifically
+  so the editable table is never patched. ⚠ The defect itself stands: datastar's `data-bind` initialises
+  its signal only when missing (`{ifMissing:!0}` in the vendored bundle) and then an effect pushes the
+  SIGNAL into the element, so after `refreshUsers` morphs `#user-table` the server's fresh empty inputs
+  are refilled from the stale signal. The credit-adjust boxes are therefore NOT cleared after a
+  successful adjustment, and a second click credits again. ⚠ Reasoned from the bundle, NOT observed in a
+  browser — confirm it there before designing the fix.
 
 - **Encryption at rest for source files and results.**
   Deferred by ADR-0001 task T4 (§Out of Scope).
