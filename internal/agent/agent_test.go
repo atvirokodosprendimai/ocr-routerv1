@@ -194,6 +194,13 @@ func script(t *testing.T, body string) string {
 }
 
 func startAgent(t *testing.T, f *fakeRouter, cmd string, slots int) (*agent.Agent, string, context.CancelFunc) {
+	return startAgentWithLog(t, f, cmd, slots, nil)
+}
+
+// startAgentWithLog is startAgent with the worker's log captured, for the tests
+// whose subject IS what an operator sees.
+func startAgentWithLog(t *testing.T, f *fakeRouter, cmd string, slots int,
+	logFn func(string, ...any)) (*agent.Agent, string, context.CancelFunc) {
 	t.Helper()
 	srv := httptest.NewServer(f.handler())
 	t.Cleanup(srv.Close)
@@ -205,6 +212,11 @@ func startAgent(t *testing.T, f *fakeRouter, cmd string, slots int) (*agent.Agen
 		Cmd: cmd, Timeout: 10 * time.Second, MaxOutput: 1 << 20,
 		Env: []string{"PATH=/usr/bin:/bin"},
 	})
+	// Log lives on the Agent, not on Config, and New installs a no-op. Replace it
+	// BEFORE Run starts, or the first lines race the assignment.
+	if logFn != nil {
+		a.Log = logFn
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = a.Run(ctx) }()

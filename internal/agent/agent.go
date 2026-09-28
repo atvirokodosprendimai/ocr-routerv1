@@ -274,6 +274,29 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 		return
 	}
 
+	// ⚠ LOG THE PATH WE BUILT, NEVER THE NAME THE CUSTOMER CHOSE. The path is a
+	// job id the router gave us plus an extension validated to [A-Za-z0-9]; the
+	// filename is arbitrary bytes a customer typed, and this line goes to an
+	// operator's terminal or journal, where a newline forges a log entry and an
+	// ANSI escape rewrites what a human sees. ADR-0002 holds the same line for
+	// job parameters: keys reach the log, values never do.
+	//
+	// It exists because its absence cost a real debugging session on 2026-09-28:
+	// a tool reported that it could not read its input, and nothing anywhere
+	// said what path the tool had been handed.
+	if inputPath != "" {
+		if filepath.Ext(inputPath) == "" {
+			// ⚠ The interesting case must not be the silent one. A bare path is
+			// the failure mode for every tool that sniffs by extension, so say
+			// that the filename offered nothing usable rather than leaving the
+			// operator to wonder whether this log simply does not print it.
+			a.Log("job %s input %s (no usable extension in the uploaded filename)",
+				job.JobID, inputPath)
+		} else {
+			a.Log("job %s input %s", job.JobID, inputPath)
+		}
+	}
+
 	rj := runner.Job{ID: job.JobID, InputPath: inputPath, Params: job.Params}
 
 	if a.cfg.Raw {
