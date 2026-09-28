@@ -395,6 +395,25 @@ func (a *Agent) materialise(ctx context.Context, job claimResponse) (string, fun
 	// O_EXCL so a stale file from a previous run can never be silently reused as
 	// though it were this job's input.
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	// ⚠ A STALE FILE MUST NOT BRICK THE JOB, and before this it did. A worker
+	// killed mid-job leaves this exact path behind — the router re-queues the
+	// lease, the next attempt finds the file, O_EXCL refuses, and the job fails
+	// with `file exists` for a reason that has nothing to do with the job. Three
+	// attempts and it is dead, curable only by a human deleting a file. Reported
+	// from a live worker on 2026-09-28 after a ^C.
+	//
+	// Discarding it satisfies the intent the O_EXCL was for: the stale bytes are
+	// never READ, they are removed and the download starts clean. The retry keeps
+	// O_EXCL, so if anything recreates the path in between we still refuse rather
+	// than clobber.
+	if errors.Is(err, os.ErrExist) {
+		a.Log("job %s discarding a stale input at %s — a previous attempt did not clean up, "+
+			"which means a worker died holding this job", job.JobID, path)
+		if rmErr := os.Remove(path); rmErr != nil {
+			return "", noop, fmt.Errorf("removing a stale input %s: %w", path, rmErr)
+		}
+		f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	}
 	if err != nil {
 		return "", noop, err
 	}
