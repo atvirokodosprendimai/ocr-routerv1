@@ -33,6 +33,10 @@ type Runner struct {
 	Env []string
 }
 
+// waitDelay bounds how long Wait may spend after the process has exited, waiting
+// for a grandchild to stop holding its I/O pipes. See exec in this file.
+const waitDelay = 2 * time.Second
+
 // stderrTail is how much of stderr is kept for the failure reason. Enough to
 // carry a real message; short enough that a chatty tool cannot fill the database.
 const stderrTail = 2000
@@ -97,6 +101,23 @@ func (r Runner) exec(ctx context.Context, j Job) (stdoutBytes []byte, stderrText
 	// error, which is worse than the slow command it was trying to bound.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
+	// ⚠ BOUND THE WAIT, NOT ONLY THE COMMAND. cmd.Wait() returns when every
+	// holder of the stdout pipe's write end has closed it — NOT when the direct
+	// child exits. A launcher that starts a background process and exits (soffice
+	// is exactly this) leaves that process holding our pipe, so a command that
+	// finished in two seconds sat until the timeout above and was then reported
+	// as a TIMEOUT. Measured on a live worker 2026-09-28: three attempts at five
+	// minutes each, fifteen minutes to learn nothing.
+	//
+	// WaitDelay bounds the gap between the process exiting and its pipes closing.
+	// When it elapses, Wait closes them and returns exec.ErrWaitDelay — which is
+	// NOT a failure of the command and is handled as such below.
+	//
+	// Two seconds because the only thing being waited for is a write already in
+	// flight; output the command had produced before exiting is already in the
+	// buffers.
+	cmd.WaitDelay = waitDelay
+
 	var stdout, stderr bytes.Buffer
 	outCap := &limitedWriter{w: &stdout, remaining: r.MaxOutput}
 	cmd.Stdout = outCap
@@ -131,6 +152,20 @@ func (r Runner) exec(ctx context.Context, j Job) (stdoutBytes []byte, stderrText
 					ExitCode: &code,
 					Output:   combineOutput(stdout.Bytes(), stderr.String()),
 				}
+			}
+			// ⚠ ErrWaitDelay IS NOT A FAILURE OF THE COMMAND, and treating it as
+			// one is the trap in this fix: the process exited SUCCESSFULLY and
+			// only its pipes lingered, held by something it left running. The
+			// exit-code check above runs first, so a genuine non-zero exit still
+			// reports its code; reaching here means status 0 with a slow pipe.
+			//
+			// The group is killed on the way out. We put the child in its own
+			// process group precisely so we own its tree, and a grandchild whose
+			// pipe we have just closed has nowhere to write — leaving one per job
+			// on a busy worker is a leak, not politeness.
+			if errors.Is(err, exec.ErrWaitDelay) {
+				killGroup(cmd)
+				break
 			}
 			return nil, "", err
 		}
