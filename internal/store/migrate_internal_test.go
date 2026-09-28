@@ -112,6 +112,90 @@ func TestExistingServiceRowIsNotPromotedToRaw(t *testing.T) {
 	}
 }
 
+// TestMigrationDownDropsUnmetered makes ADR-0009's Rollback executable rather
+// than asserted, on the same reasoning as TestMigrationDownDropsRawColumns
+// above: SQLite can only drop a column when nothing depends on it, so a Down
+// that "looks" reversible can still fail on a real file.
+func TestMigrationDownDropsUnmetered(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "down9.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if !hasColumn(t, db.Write, "users", "unmetered") {
+		t.Fatal("users.unmetered is absent after migrating up — 00006 did not apply")
+	}
+
+	goose.SetBaseFS(migrationsFS)
+	goose.SetLogger(goose.NopLogger())
+	if err := goose.SetDialect(gooseDialect); err != nil {
+		t.Fatalf("SetDialect: %v", err)
+	}
+	// DownTo a NAMED version, for the reason the sibling test above records: a
+	// bare `Down` silently changes subject the next time a migration is added.
+	if err := goose.DownTo(db.Write, "migrations", 5); err != nil {
+		t.Fatalf("goose.DownTo(5): %v — ADR-0009's Rollback claims this works", err)
+	}
+	if hasColumn(t, db.Write, "users", "unmetered") {
+		t.Error("users.unmetered survived the down migration")
+	}
+}
+
+// TestAnExistingUserIsNotPromotedToUnmetered proves the column DEFAULT, which is
+// the safety property ADR-0009 rests on: every customer already in the database
+// must come back METERED.
+//
+// ⚠ It uses the down → insert → up shape because the OBVIOUS test cannot cover
+// this, and ADR-0006 learned that the expensive way — flipping its `DEFAULT 0`
+// to `DEFAULT 1` left the whole suite green. A default only ever applies to a
+// row that ALREADY EXISTS when the migration runs, which is the shape every real
+// deployment has and no ordinary test produces: CreateUser writes the column
+// explicitly, so it never consults the default at all.
+func TestAnExistingUserIsNotPromotedToUnmetered(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy9.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	goose.SetBaseFS(migrationsFS)
+	goose.SetLogger(goose.NopLogger())
+	if err := goose.SetDialect(gooseDialect); err != nil {
+		t.Fatalf("SetDialect: %v", err)
+	}
+
+	// Back to the pre-ADR-0009 schema, by version.
+	if err := goose.DownTo(db.Write, "migrations", 5); err != nil {
+		t.Fatalf("goose.DownTo(5): %v", err)
+	}
+	if _, err := db.Write.Exec(
+		`INSERT INTO users (id, email, role, credits, buffer_limit, priority, job_ttl_secs, active, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?)`,
+		"legacy-user", "legacy@example.com", "client", 100, 4, 0, 0, 1, 0); err != nil {
+		t.Fatalf("seeding a pre-migration user: %v", err)
+	}
+
+	// Forward again: 00006 adds the column to a table that already has a row.
+	if err := goose.Up(db.Write, "migrations"); err != nil {
+		t.Fatalf("goose.Up: %v", err)
+	}
+
+	u, err := NewRepo(db).UserByID(context.Background(), "legacy-user")
+	if err != nil {
+		t.Fatalf("UserByID: %v", err)
+	}
+	if u.Unmetered {
+		t.Error("a customer that existed before the migration came back UNMETERED — every " +
+			"already-deployed customer would stop being billed, and nothing would report it")
+	}
+	if u.Credits != 100 {
+		t.Errorf("credits = %d, want 100 — the migration disturbed an existing balance", u.Credits)
+	}
+}
+
 // hasColumn asks SQLite's own schema rather than parsing the migration text.
 // A test that greps the .sql file proves what was written, never what applied.
 func hasColumn(t *testing.T, db *sql.DB, table, column string) bool {

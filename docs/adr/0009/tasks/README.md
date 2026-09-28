@@ -25,7 +25,7 @@ observable soonest, which is admission before pricing before the control.
 
 | ID | Title | Status | Covers | Acceptance |
 |----|-------|--------|--------|------------|
-| T1 | Carry an `unmetered` flag on the user, read and written with the user row | pending | — | `go test ./internal/store/ -run 'Unmetered\|Migrat' -count=1 …` |
+| T1 | Carry an `unmetered` flag on the user, read and written with the user row | done | — | `go test ./internal/store/ -run 'Unmetered' -count=1 …` |
 | T2 | Admit an unmetered customer whose balance is not positive | pending | — | `go test ./internal/router/ -run 'Unmetered' -count=1 …` |
 | T3 | Waive the charge on an unmetered delivery, and count what was waived | pending | — | `go test ./internal/router/ -run 'Unmetered\|Waiv' -count=1 …` |
 | T4 | Give an administrator the toggle, and make the state visible on the table | pending | — | `templ generate && go test ./internal/web/... -run 'Unmeter' -count=1 …` |

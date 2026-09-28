@@ -1,6 +1,6 @@
 # ADR-0009: Let a customer be unmetered by a flag on the user, not by a sentinel in the balance
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-28
 **Owner:** M
 **Spec:** None — no spec stage

@@ -21,7 +21,7 @@ as it is, and record what they did not charge on `ocrr_credits_waived_total`.
 |------|--------|-----|
 | `internal/router/service.go` | edit | both delivery paths select the charge from the owner's `Unmetered`; both already hold `job.UserID` and neither reads the user yet |
 | `internal/router/metrics.go` | edit | `metricCreditsWaived` — the local copy the service increments |
-| `internal/monitor/registry.go` | edit | `MetricCreditsWaived` — this is what SELECTS the series for `/metrics`; the pair is pinned by T11's test, so adding one end alone fails that test |
+| `internal/monitor/registry.go` | edit | `MetricCreditsWaived` — where this process's metric names are documented for an operator. ⚠ It is NOT a functional requirement: `Registry` validates LABEL names against an allow-list and does not validate metric names at all, which is why `ocrr_raw_jobs_total` has lived in `internal/router/metrics.go` alone since ADR-0006 with nothing pinning it. T3 writes the pinning test rather than inheriting one |
 | `internal/router/unmetered_test.go` | edit | the delivery half of the record's central claim |
 
 ## Ordered Steps
@@ -56,6 +56,8 @@ as it is, and record what they did not charge on `ocrr_credits_waived_total`.
 set -o pipefail
 go test ./internal/router/ -run 'Unmetered|Waiv' -count=1 2>&1 | tee /tmp/adr9t3a.out && \
   ! grep -qE "no tests to run|^FAIL|^--- FAIL|warning: no tests" /tmp/adr9t3a.out && \
+  go test ./internal/monitor/ -run 'Waived' -count=1 2>&1 | tee /tmp/adr9t3b.out && \
+  ! grep -qE "no tests to run|^FAIL|^--- FAIL|warning: no tests" /tmp/adr9t3b.out && \
   go test ./internal/router/ ./internal/monitor/ ./internal/store/ -count=1
 ```
 
@@ -65,10 +67,10 @@ go test ./internal/router/ -run 'Unmetered|Waiv' -count=1 2>&1 | tee /tmp/adr9t3
 |-----------|------|----------|--------|-------|
 | `TestAnUnmeteredDeliveryDebitsNothingAndStillAccrues` | `internal/router/unmetered_test.go` | the record's central claim, asserted on BOTH tables: `users.credits` unchanged, `jobs.accrued_credits` equal to the real cost | — | S1, S3 |
 | `TestAnUnmeteredDeliveryWritesNoLedgerRow` | `internal/router/unmetered_test.go` | `credit_entries` has no row for that job — a zero-delta row would keep the balance right and make the audit lie | — | S3 |
-| `TestAMeteredDeliveryStillDebits` | `internal/router/unmetered_test.go` | the waiver is conditional; red if the charge becomes 0 for everyone | — | S1, S3 |
+| `TestUnmeteredDoesNotWaiveAMeteredDelivery` | `internal/router/unmetered_test.go` | the waiver is conditional; red if the charge becomes 0 for everyone | — | S1, S3 |
 | `TestAnUnmeteredRawDeliveryWaivesTheFlatCredit` | `internal/router/unmetered_test.go` | the raw path too, asserted as the number 1 waived and 0 debited | — | S5 |
 | `TestWaivedAndDebitedAreNeverBothCounted` | `internal/router/unmetered_test.go` | one delivery moves exactly one of the two counters, by the same amount the other did not get | — | S4 |
-| `TestEveryRouterMetricNameExistsInTheRegistry` | `internal/monitor/monitor_test.go` | the existing pairing assertion covers the new name — red if only one end was added | — | S2 |
+| `TestWaivedMetricNameIsTheSameOnBothSides` | `internal/monitor/monitor_test.go` | `monitor.MetricCreditsWaived` is the literal the router test reads the counter by — ⚠ THERE IS NO EXISTING PAIRING ASSERTION in this corpus (checked 2026-09-28: `ocrr_raw_jobs_total` is declared in `internal/router/metrics.go` alone and nothing pins it), so this row WRITES the check rather than leaning on one | — | S2 |
 
 ## Reachability
 
@@ -76,7 +78,7 @@ go test ./internal/router/ -run 'Unmetered|Waiv' -count=1 2>&1 | tee /tmp/adr9t3
 |------|------------------------|
 | 1 — exists | `TestAnUnmeteredDeliveryDebitsNothingAndStillAccrues` |
 | 2 — something selects it | the charge selection in `Deliver` and `DeliverRaw` — the only two callers of `Repo.DeliverJob`; the mutation replaces the conditional charge with `job.AccruedCredits` and `TestAnUnmeteredDeliveryDebitsNothingAndStillAccrues` must go red |
-| 3 — the caller can discover it | `ocrr_credits_waived_total` appears in `/metrics` output, asserted by the registry pairing test |
+| 3 — the caller can discover it | `ocrr_credits_waived_total` appears in `/metrics` output; `TestWaivedMetricNameIsTheSameOnBothSides` is what stops the two spellings drifting, and it exists because nothing in the registry would notice |
 | 4 — it is used | the counter is the measurement: an operator can see what unmetered work costs without it being billed |
 
 ## Mutation Log

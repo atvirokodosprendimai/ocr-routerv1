@@ -49,8 +49,10 @@ grep -q 'unmetered' README.md && \
   grep -q 'ocrr_credits_waived_total' README.md && \
   grep -q 'ocrr_credits_debited_total' README.md && \
   grep -q 'ADR-0009' docs/adr/BACKLOG.md && \
-  ! grep -A2 '^## Open' docs/adr/BACKLOG.md | grep -q 'Unmetered customers' && \
-  "$(git rev-parse --show-toplevel)/../quality-harness/plugin/bin/adr-debt" docs/adr
+  taken=$(grep -n 'Unmetered customers' docs/adr/BACKLOG.md | head -1 | cut -d: -f1) && \
+  open=$(grep -n '^## Open' docs/adr/BACKLOG.md | head -1 | cut -d: -f1) && \
+  [ -n "$taken" ] && [ -n "$open" ] && [ "$taken" -lt "$open" ] && \
+  adr-debt docs/adr
 ```
 
 ## Tests

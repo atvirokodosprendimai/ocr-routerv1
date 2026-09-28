@@ -48,7 +48,7 @@ go test ./internal/router/ -run 'Unmetered' -count=1 2>&1 | tee /tmp/adr9t2a.out
 | Test name | File | Verifies | Covers | Steps |
 |-----------|------|----------|--------|-------|
 | `TestAnUnmeteredCustomerUploadsWithNoCredits` | `internal/router/unmetered_test.go` | balance 0 and `Unmetered` true is admitted | — | S1, S2 |
-| `TestAMeteredCustomerIsStillRefusedWithNoCredits` | `internal/router/unmetered_test.go` | the exemption did not become unconditional — red if the `!u.Unmetered` term is dropped | — | S1, S2 |
+| `TestUnmeteredDoesNotExemptAMeteredCustomer` | `internal/router/unmetered_test.go` | the exemption did not become unconditional — red if the `!u.Unmetered` term is dropped | — | S1, S2 |
 | `TestAnUnmeteredCustomerIsStillRefusedWhenInactive` | `internal/router/unmetered_test.go` | `ErrForbidden` still wins; red if the exemption is placed above the `Active` check | — | S3 |
 | `TestAnUnmeteredCustomerIsStillBoundedByItsBufferLimit` | `internal/router/unmetered_test.go` | `ErrBufferFull` still applies — unmetered is about price, not about how much work may be in flight | — | S3 |
 
@@ -57,7 +57,7 @@ go test ./internal/router/ -run 'Unmetered' -count=1 2>&1 | tee /tmp/adr9t2a.out
 | Rung | How this task shows it |
 |------|------------------------|
 | 1 — exists | `TestAnUnmeteredCustomerUploadsWithNoCredits` |
-| 2 — something selects it | the condition in `Upload`, which every upload runs; the mutation for this task deletes the `!u.Unmetered` term and `TestAMeteredCustomerIsStillRefusedWithNoCredits` must go red |
+| 2 — something selects it | the condition in `Upload`, which every upload runs; the mutation for this task deletes the `!u.Unmetered` term and `TestUnmeteredDoesNotExemptAMeteredCustomer` must go red |
 | 3 — the caller can discover it | n/a: no declared interface — a client sees a `201` instead of a `402` and needs to know nothing |
 | 4 — it is used | `ocrr_jobs_total{state="queued"}` already counts admitted work; nothing distinguishes an unmetered upload, and nothing needs to |
 

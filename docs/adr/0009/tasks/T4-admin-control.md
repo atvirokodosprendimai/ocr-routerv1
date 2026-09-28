@@ -49,7 +49,7 @@ customers are unmetered without clicking anything.
 
 ```bash
 set -o pipefail
-templ generate && go test ./internal/web/... -run 'Unmeter' -count=1 2>&1 | tee /tmp/adr9t4a.out && \
+templ generate && go test ./internal/web/ -run 'Unmeter' -count=1 2>&1 | tee /tmp/adr9t4a.out && \
   ! grep -qE "no tests to run|^FAIL|^--- FAIL|warning: no tests" /tmp/adr9t4a.out && \
   go test ./internal/web/... ./internal/identity/ ./cmd/router/ -count=1
 ```
@@ -61,8 +61,8 @@ templ generate && go test ./internal/web/... -run 'Unmeter' -count=1 2>&1 | tee 
 | `TestAdminTogglesUnmetered` | `internal/web/unmetered_test.go` | the route flips the stored flag, and flips it back on a second call | — | S1, S3, S4 |
 | `TestUnmeteredRouteRefusesANonAdmin` | `internal/web/unmetered_test.go` | a client and a worker token both get 403 — the gate, not the handler, and red if the route is mounted outside `requireAdmin` | — | S2, S4 |
 | `TestUnmeteredRouteIgnoresAPostedValue` | `internal/web/unmetered_test.go` | posting `{"unmetered":false}` at an already-metered customer still turns it ON; the browser's opinion is not consulted | — | S3 |
-| `TestTheCreditsCellReadsUnlimited` | `internal/web/unmetered_test.go` | the rendered page says `unlimited` for an unmetered customer and the number for a metered one — red if the state is stored and invisible | — | S1, S5 |
-| `TestTheToggleButtonNamesTheDirection` | `internal/web/unmetered_test.go` | the button reads `Unmeter` on a metered row and `Meter` on an unmetered one, so the label is the action rather than the state | — | S5 |
+| `TestTheCreditsCellReadsUnlimitedWhenUnmetered` | `internal/web/unmetered_test.go` | the rendered page says `unlimited` for an unmetered customer and the number for a metered one — red if the state is stored and invisible | — | S1, S5 |
+| `TestTheUnmeterToggleButtonNamesTheDirection` | `internal/web/unmetered_test.go` | the button reads `Unmeter` on a metered row and `Meter` on an unmetered one, so the label is the action rather than the state | — | S5 |
 | `TestSetUnmeteredRefusesANonAdminActor` | `internal/identity/settings_test.go` | the service refuses below the HTTP layer too, which is what makes the API route safe as well as the dashboard | — | S2 |
 
 ## Reachability
@@ -71,7 +71,7 @@ templ generate && go test ./internal/web/... -run 'Unmeter' -count=1 2>&1 | tee 
 |------|------------------------|
 | 1 — exists | `TestSetUnmeteredRefusesANonAdminActor` |
 | 2 — something selects it | the `r.Post` in `web.Mount`; `TestAdminTogglesUnmetered` goes red if that line is deleted, which is the defect this codebase has shipped three times (`identity.ListTokens`, `identity.SetActive`, `identity.UpdateSettings`) |
-| 3 — the caller can discover it | the button is on the page the operator is already looking at, asserted by `TestTheToggleButtonNamesTheDirection`; the Credits cell advertises the state |
+| 3 — the caller can discover it | the button is on the page the operator is already looking at, asserted by `TestTheUnmeterToggleButtonNamesTheDirection`; the Credits cell advertises the state |
 | 4 — it is used | ADR-0002's request log records the call. Nothing counts how many customers are unmetered, and nothing needs to yet |
 
 ## Mutation Log
