@@ -177,6 +177,24 @@ delivered, taking the balance negative by at most that one job.
 Uploads are refused with `402` when your balance is not positive, and with `429`
 when you already have `buffer_limit` jobs in flight.
 
+### Unmetered customers
+
+An administrator can mark a customer **unmetered** from the Customers table. Their
+uploads are never refused for want of credits and their deliveries debit nothing;
+the Credits column reads `unlimited` instead of a number, and the row's button
+reads `Unmeter` / `Meter`.
+
+Everything else still applies. Deactivating the account still stops every token
+it holds, the `buffer_limit` still bounds how many jobs it may have in flight, and
+the cost of each job is still recorded on the job row — what is waived is the
+charge, not the measurement.
+
+⚠ **`-1` is not stored anywhere**, although that is how the feature was asked for.
+`credits` is a balance whose only control is *adjust*, never *set*: a `-1` typed
+into the adjust box is a movement of minus one credit, so it would land as
+`balance − 1` and look as though it had worked. The exemption is a separate flag
+for exactly that reason.
+
 ## Priority and deadlines
 
 Each customer has an integer `priority` (higher first) and an optional
@@ -319,7 +337,8 @@ deliberate act in your proxy.
 | `ocrr_jobs_total{state}` | counter | terminal outcomes |
 | `ocrr_stage_advances_total` | counter | pipeline movement; a pipeline that stopped advancing looks exactly like a slow one |
 | `ocrr_reaper_actions_total{action}` | counter | requeues, expiries and sweeps — a reaper that silently stopped is otherwise invisible |
-| `ocrr_credits_debited_total` | counter | should agree with the ledger |
+| `ocrr_credits_debited_total` | counter | credits actually taken from a balance; should agree with the ledger |
+| `ocrr_credits_waived_total` | counter | what an **unmetered** customer's deliveries would have cost — never counted as debited, because no ledger row exists for a movement that did not happen |
 
 Metric label **names** are restricted in code to `label`, `state` and `action`.
 A user id or email would be unbounded, and unbounded label values are how a

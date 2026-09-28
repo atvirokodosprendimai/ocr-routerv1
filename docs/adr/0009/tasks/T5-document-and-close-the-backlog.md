@@ -72,6 +72,8 @@ grep -q 'unmetered' README.md && \
 
 ## Mutation Log
 
+- 2026-09-28 · 4fa57ad* · mutant killed · exit 1 · `docs/adr/BACKLOG.md` · the entry leaves the Taken up section, so the fence stops finding it above the ## Open line — proves the position check is real and not satisfied by the words being anywhere in the file · acceptance-sha256:ef9e92c2903445f74bc7a751b25b7dbcaecd3f0852de0e50affe56e4a01d7a77
+
 ## Invariants
 
 - Every `(deferred: …)` entry this ADR writes exists at its destination, naming ADR-0009.
@@ -82,6 +84,12 @@ grep -q 'unmetered' README.md && \
 - A grep-based fence passes on the presence of a word rather than on the quality of a sentence. That
   is what it can check; the sentences are a review matter and are named in the steps so a reviewer
   knows what to read for.
+- ⚠ THIS TASK'S VERIFICATION LOG HAS NO RED ENTRY, and that is a real gap rather than a tidy one:
+  the fence was first run AFTER the documentation was written, so nothing recorded it failing on the
+  tree that lacked it. The killed mutant below is what stands in — it moves the backlog entry out of
+  the `## Taken up` section and the fence goes red, which proves the position check is real and not
+  merely satisfied by those words appearing somewhere in the file. Falsifiability is demonstrated;
+  the TDD ordering was not followed here and is not claimed.
 
 ## Stop Condition
 
@@ -93,3 +101,5 @@ without the entry it points at, which is the failure the deferral grammar exists
 - Any code change. T1–T4 own the behaviour.
 
 ## Verification Log
+- 2026-09-28 · 4fa57ad* · exit 0 · `set -o pipefail …` · acceptance-sha256:ef9e92c2903445f74bc7a751b25b7dbcaecd3f0852de0e50affe56e4a01d7a77 · ms:1208
+- 2026-09-28 · 4fa57ad* · exit 0 · `set -o pipefail …` · acceptance-sha256:ef9e92c2903445f74bc7a751b25b7dbcaecd3f0852de0e50affe56e4a01d7a77 · ms:1164

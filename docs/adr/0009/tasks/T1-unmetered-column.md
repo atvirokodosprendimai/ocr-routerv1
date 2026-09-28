@@ -78,6 +78,7 @@ go test ./internal/store/ -run 'Unmetered' -count=1 2>&1 | tee /tmp/adr9t1a.out 
 
 - 2026-09-28 · ca2211c* · mutant killed · exit 1 · `internal/store/repo_write.go` · UpdateUser stops writing the column, so the flag can be set and is silently not stored — the exact defect the round-trip test exists for · acceptance-sha256:c604161c317e8272a350538ff74864bc649d69416ecf3a0293c742dff909445d
 - 2026-09-28 · ca2211c* · mutant killed · exit 1 · `internal/store/migrations/00006_unmetered.sql` · every customer already in the database comes back UNMETERED and stops being billed — the mutation ADR-0006 proved survives any suite that does not migrate down, insert, and migrate back up · acceptance-sha256:c604161c317e8272a350538ff74864bc649d69416ecf3a0293c742dff909445d · covers:the column default
+- 2026-09-28 · 4fa57ad* · mutant killed · exit 1 · `internal/store/repo_write.go` · UpdateUser stores the INVERSE, so the round trip returns the opposite of what was set — the mechanism this task names, bound · acceptance-sha256:c604161c317e8272a350538ff74864bc649d69416ecf3a0293c742dff909445d · covers:the round trip through UpdateUser
 
 ## Invariants
 
@@ -111,3 +112,4 @@ list — that would be a second place to keep in step, and it needs a decision r
   ```
 - 2026-09-28 · ca2211c* · exit 0 · `set -o pipefail …` · acceptance-sha256:c604161c317e8272a350538ff74864bc649d69416ecf3a0293c742dff909445d · ms:4081
 - 2026-09-28 · ca2211c* · exit 0 · `set -o pipefail …` · acceptance-sha256:c604161c317e8272a350538ff74864bc649d69416ecf3a0293c742dff909445d · ms:2413
+- 2026-09-28 · 4fa57ad* · exit 0 · `set -o pipefail …` · acceptance-sha256:c604161c317e8272a350538ff74864bc649d69416ecf3a0293c742dff909445d · ms:3788

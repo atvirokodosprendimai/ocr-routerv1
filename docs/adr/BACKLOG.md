@@ -24,23 +24,22 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   Not previously deferred — it was a gap nobody had recorded, found on 2026-09-15 when the
   dashboard turned out to be reachable only by `curl`. **Taken up by ADR-0003**
   (`docs/adr/0003/0003-admin-password-login.md`).
+- **Unmetered customers — "`-1` credits means infinite".**
+  Requested by M 2026-09-15; **taken up by ADR-0009**
+  (`docs/adr/0009/0009-unmetered-customers.md`), after M settled its two open questions on
+  2026-09-28. Both of this entry's questions were the right ones and both are answered there: a
+  SEPARATE `unmetered` flag on the user rather than a sentinel in the balance column, and an
+  unmetered job still ACCRUES its cost while debiting nothing, with `ocrr_credits_waived_total`
+  added beside `ocrr_credits_debited_total` so the conflation this entry named is gone.
+  What the entry did NOT anticipate is that the store needed no change at all: `Repo.DeliverJob`
+  already guards both the balance decrement and the `credit_entries` insert with `charge != 0`, so
+  the router passes 0 and the ledger correctly records nothing.
+  ⚠ It also assumed `-1` would survive "as the display and wire spelling". It does not survive
+  anywhere: the dashboard renders `unlimited`, the control is a toggle, and there is no wire surface
+  carrying a balance at all. ADR-0009 marks that as its one deviation from the literal request, with
+  M's ruling still outstanding as the record's only follow-up.
 
 ## Open
-
-- **Unmetered customers — "`-1` credits means infinite".** (requested by M, 2026-09-15; not yet
-  deferred by any ADR, so this entry is the only record of it)
-  Admission is `u.Credits <= 0` (`internal/router/service.go:111`) and every completed stage debits
-  `len(out) * rate` (`:244`, charged at `:375`). A customer who should never be refused has to be
-  topped up by hand for ever.
-  **What an ADR has to decide**, because the request and the existing design conflict: credits are
-  an APPEND-ONLY LEDGER and the only control is *adjust*, never *set* — ADR-0004 made that explicit
-  and `TestCreditsAreNeverSetDirectly` pins it. `-1` is a SENTINEL, not a balance, and adjusting a
-  sentinel is meaningless: `-1 + 50` is `49`, not "infinite plus fifty". So the record must choose
-  between a sentinel in the balance column (cheap, and it puts a non-balance in a ledger) and a
-  separate `unmetered` flag on the user (honest, and it is a schema change plus its own control),
-  with `-1` kept only as the display and wire spelling. It must also say whether an unmetered job
-  still accrues a cost for reporting, since "we cannot bill it" and "we cannot see what it cost"
-  are different claims, and the metrics counter at `:385` currently conflates them.
 
 - **Draining: a worker finishes its in-flight jobs before exiting, rather than releasing them.**
   Deferred by ADR-0008 (`docs/adr/0008/0008-restart-is-not-a-failure.md`, §Out of Scope) and by its
