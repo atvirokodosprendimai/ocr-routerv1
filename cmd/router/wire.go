@@ -253,8 +253,10 @@ func buildApp(cfg Config) (*App, error) {
 	// orchestrator probe cannot hold a bearer token.
 	mux.Get("/healthz", mon.HealthHandler)
 	// The dashboard is mounted behind the API's own authenticator, so there is
-	// one authentication path in the process rather than two.
-	dash.Mount(mux, api.Authenticator(), api.RequestLogger())
+	// one authentication path in the process rather than two — carrying the
+	// dashboard's own refusal, so a browser that is not signed in lands on the
+	// login page instead of on the API's JSON 401 (ADR-0003 task T3, criterion 3).
+	dash.Mount(mux, api.AuthenticatorFor(dash.Unauthorized()), api.RequestLogger())
 	mux.Mount("/", api)
 
 	return &App{
