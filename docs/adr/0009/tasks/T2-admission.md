@@ -63,6 +63,9 @@ go test ./internal/router/ -run 'Unmetered' -count=1 2>&1 | tee /tmp/adr9t2a.out
 
 ## Mutation Log
 
+- 2026-09-28 · ebde216* · mutant killed · exit 1 · `internal/router/service.go` · the exemption term is dropped, so an unmetered customer is refused again — kills TestAnUnmeteredCustomerUploadsWithNoCredits · acceptance-sha256:e16ac51638c00e0713734ecf3cbfc1e34a2dcf44b449a6ad4f1ed0cf407c41fe · covers:the unmetered exemption
+- 2026-09-28 · ebde216* · mutant killed · exit 1 · `internal/router/service.go` · the exemption is written one line too high, so being unmetered walks past deactivation — the failure the position of this term exists to prevent · acceptance-sha256:e16ac51638c00e0713734ecf3cbfc1e34a2dcf44b449a6ad4f1ed0cf407c41fe · covers:the Active check that is NOT exempted
+
 ## Invariants
 
 - `!u.Active` still refuses before credits are considered.
@@ -86,3 +89,16 @@ be in two places, and two places is a decision about where admission lives.
 - Any cap on how much an unmetered customer may consume. (deferred: `docs/adr/BACKLOG.md`)
 
 ## Verification Log
+- 2026-09-28 · ebde216* · exit 1 · `set -o pipefail …` · acceptance-sha256:e16ac51638c00e0713734ecf3cbfc1e34a2dcf44b449a6ad4f1ed0cf407c41fe · ms:1763
+  ```
+  --- last 7 line(s) of stdout
+  --- FAIL: TestAnUnmeteredCustomerUploadsWithNoCredits (0.01s)
+      unmetered_test.go:38: Upload for an unmetered customer with 0 credits = no credits, want success
+  --- FAIL: TestAnUnmeteredCustomerIsStillBoundedByItsBufferLimit (0.00s)
+      unmetered_test.go:102: Upload: no credits
+  FAIL
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/router	0.478s
+  FAIL
+  ```
+- 2026-09-28 · ebde216* · exit 0 · `set -o pipefail …` · acceptance-sha256:e16ac51638c00e0713734ecf3cbfc1e34a2dcf44b449a6ad4f1ed0cf407c41fe · ms:3068
+- 2026-09-28 · ebde216* · exit 0 · `set -o pipefail …` · acceptance-sha256:e16ac51638c00e0713734ecf3cbfc1e34a2dcf44b449a6ad4f1ed0cf407c41fe · ms:1881

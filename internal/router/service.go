@@ -131,7 +131,14 @@ func (s *Service) Upload(ctx context.Context, userID string, in UploadInput, now
 
 	// Admission is gated on having ANY credit, not on the eventual cost: the
 	// size of a result is unknowable before the work runs.
-	if u.Credits <= 0 {
+	//
+	// ⚠ AN UNMETERED CUSTOMER HAS NO BALANCE TO GATE ON (ADR-0009), so the
+	// exemption is a term in this condition and not a branch above it. Its
+	// position matters twice over: the `!u.Active` check above still refuses a
+	// deactivated customer whatever their metering, and the buffer limit below
+	// still bounds how much of the worker pool one customer holds. Unmetered is a
+	// statement about PRICE, and paying nothing buys no claim on either.
+	if !u.Unmetered && u.Credits <= 0 {
 		return core.Job{}, core.ErrNoCredits
 	}
 
