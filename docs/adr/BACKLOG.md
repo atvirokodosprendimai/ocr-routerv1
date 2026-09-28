@@ -87,7 +87,9 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   Deferred by ADR-0006 task T8 (`docs/adr/0006/tasks/T8-admin-raw-control.md`, §Out of Scope),
   2026-09-16. T8 adds a per-row control. Bulk editing across rows is the same shape already
   deferred for customer settings by ADR-0004, and should be decided once for both rather than
-  twice differently.
+  twice differently. ADR-0009 task T4 adds a THIRD instance on 2026-09-28 — marking several
+  customers unmetered in one action — which settles the argument for deciding it once: three
+  per-row controls have now each deferred the same feature separately.
 
 - **OpenTelemetry / OTLP export for the router.**
   Deferred by ADR-0001 (§Alternatives), by task T11 (§Out of Scope), and **re-deferred by ADR-0002**
@@ -171,6 +173,43 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   Deferred by ADR-0003 (§Out of Scope).
   ADR-0002's request log records that a login happened. It is not tamper-evident and not separable
   from operational noise, which is what an audit trail has to be.
+
+- **A quota or cap on an unmetered customer — "unlimited, but not more than N per month".**
+  Deferred by ADR-0009 (`docs/adr/0009/0009-unmetered-customers.md`, §Out of Scope) and by its task
+  T2, 2026-09-28. That record makes a customer exempt from the balance entirely, which is what was
+  asked for and is also the whole of the bound: nothing caps what an unmetered customer consumes.
+  Needs a decision about what a cap means when there is no balance to subtract from — a monthly
+  accrual ceiling read from `jobs.accrued_credits`, refusing admission past it, is the obvious shape
+  and it reintroduces a refusal for exactly the customers the flag exists to stop refusing.
+
+- **An audit trail of who marked a customer unmetered, and when.**
+  Deferred by ADR-0009 (§Out of Scope), 2026-09-28. ADR-0002's request log records that an admin
+  called the endpoint; it is not tamper-evident and not separable from operational noise. This is the
+  same shape as the two audit entries above and should be decided once for all administrative
+  actions rather than three times — making work free is simply the one with money attached.
+
+- **Showing a customer's credit ledger in the dashboard.**
+  Deferred by ADR-0009 (§Out of Scope) and by its task T4, 2026-09-28; found while auditing the
+  dashboard on the same day. `Repo.Ledger` exists, is tested, and is called by nothing — the fourth
+  instance of that defect in this codebase — so the Credits column shows a number that cannot be
+  explained. An operator asking "why is this 37" has to open SQLite. The UI decision is where it
+  lives: a row expansion like the token list, or its own view.
+
+- **A confirmation step on the destructive row actions in the Customers table.**
+  Deferred by ADR-0009 task T4 (§Out of Scope), 2026-09-28. `Mint`, `Disable` and the unmetered
+  toggle fire on one click, from a row of visually identical secondary buttons, on rows that differ
+  only by an email address. Needs a decision about which actions earn a confirmation — one on every
+  action trains an operator to dismiss it, which is worse than none.
+
+- **Refusing self-deactivation, and the lockout it currently causes.**
+  Found 2026-09-28 while auditing the dashboard; deferred by ADR-0009 task T4 (§Out of Scope) because
+  it is not about metering. ⚠ An administrator can click `Disable` on their own row.
+  `identity.SetActive` checks only that the ACTOR is an admin, and both `ResolveSession` and `Login`
+  refuse an inactive user — so the live session dies on the next request and the same credentials are
+  refused afterwards. `router admin` has only `bootstrap` (refused once any admin exists) and
+  `set-password`, so **there is no recovery path in the binary**. Needs a decision on whether an
+  admin may disable another admin at all, and whether the fix is a server-side refusal in
+  `SetActive`, a `router admin activate` command, or both.
 
 - **Charts and historical analytics on the admin dashboard.**
   Deferred by ADR-0001 task T10 (§Out of Scope).
