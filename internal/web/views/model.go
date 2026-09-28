@@ -1,6 +1,10 @@
 package views
 
-import "github.com/atvirokodosprendimai/ocr-router/internal/core"
+import (
+	"time"
+
+	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+)
 
 // Dashboard is the read model the views render.
 //
@@ -21,6 +25,29 @@ type Dashboard struct {
 	Services        []ServiceRow
 	Emails          map[string]string
 	ResultsInMemory int
+	// Usage is each customer's counts over the four windows, keyed by user id
+	// (ADR-0010). A customer with no jobs is absent from the map rather than
+	// present with zeros, and the zero value renders as zeros, so the view needs
+	// no branch for it.
+	Usage map[string]core.Usage
+	// Now is the instant the read model was built. The usage windows were
+	// computed from it, so the view labels its month column from the SAME value
+	// rather than reading the clock again — a header that disagreed with the
+	// numbers beneath it would be worse than no header.
+	Now time.Time
+}
+
+// prevMonthLabel names the previous complete calendar month, UTC — "Aug 2026"
+// when `now` is in September 2026.
+//
+// It takes `now` rather than reading the clock so it cannot disagree with the
+// counts it heads, and it derives the month the same way the query does: subtract
+// one from the month number and let time.Date normalise, which handles January →
+// December of the previous year without a special case.
+func prevMonthLabel(now time.Time) string {
+	utc := now.UTC()
+	prev := time.Date(utc.Year(), utc.Month()-1, 1, 0, 0, 0, 0, time.UTC)
+	return prev.Format("Jan 2006")
 }
 
 // JobRow is one row of the job table, with the display-only bits precomputed so

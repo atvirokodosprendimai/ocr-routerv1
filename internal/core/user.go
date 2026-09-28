@@ -19,6 +19,16 @@ type User struct {
 	// and refusing to hand over finished work the customer already paid for in
 	// worker time would be worse.
 	Credits int
+	// Unmetered exempts this customer from the balance entirely: admission does
+	// not require a positive one and a delivery debits nothing.
+	//
+	// ⚠ IT IS NOT A BALANCE, AND THAT IS THE WHOLE REASON IT IS A SEPARATE FIELD
+	// (ADR-0009). M asked for "-1 credits means unlimited"; `credits` is a ledger
+	// column whose only control is adjust-never-set, so `-1 + 50` would be `49`
+	// rather than "infinite plus fifty", and the delivery debit would subtract
+	// from the sentinel while behaving correctly. The cost of the work is still
+	// accrued onto the job — what is waived is the charge, not the measurement.
+	Unmetered bool
 	// BufferLimit caps in-flight jobs — queued, processing and done together —
 	// so one customer cannot monopolise the worker pool, while still keeping
 	// enough queued that workers never idle waiting for them.

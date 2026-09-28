@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/a-h/templ"
+	"github.com/starfederation/datastar-go/datastar"
 
 	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
 	"github.com/atvirokodosprendimai/ocr-router/internal/ratelimit"
@@ -116,6 +117,15 @@ func (wb *Web) loginFailed(w http.ResponseWriter, r *http.Request) {
 }
 
 // doLogout revokes the session and clears the cookie.
+//
+// ⚠ IT ANSWERS IN TWO DIALECTS, keyed on Accept, for the same reason
+// Web.Unauthorized does: the dashboard's control is a datastar action and a
+// browser navigation is not, and neither can use the other's answer. A 303 to a
+// datastar fetch is followed by that fetch, which then parses the login PAGE as an
+// event stream and fails silently — session gone, screen unchanged.
+//
+// The revoke and the Set-Cookie are identical on both paths and happen BEFORE
+// either response is started, because datastar.NewSSE flushes the headers.
 func (wb *Web) doLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(SessionCookie); err == nil {
 		// ⚠ Revoke FIRST, server-side. Clearing the cookie alone leaves a live
@@ -136,7 +146,12 @@ func (wb *Web) doLogout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})
-	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		sse := datastar.NewSSE(w, r)
+		_ = sse.Redirect(loginPath)
+		return
+	}
+	http.Redirect(w, r, loginPath, http.StatusSeeOther)
 }
 
 // requireSameOrigin refuses a cross-site state-changing request.

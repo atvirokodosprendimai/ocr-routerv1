@@ -36,6 +36,13 @@ const (
 	metricRawJobs        = "ocrr_raw_jobs_total"
 	metricReaperActions  = "ocrr_reaper_actions_total"
 	metricCreditsDebited = "ocrr_credits_debited_total"
+	// metricCreditsWaived is what an UNMETERED delivery would have charged
+	// (ADR-0009). It is a SECOND series rather than a widening of the one above,
+	// because that one means "credits actually taken from a balance" and has to
+	// keep meaning exactly that — it is what reconciles against credit_entries.
+	// Together they answer the two different questions "what may we bill" and
+	// "what did the work cost". No labels, so no cardinality.
+	metricCreditsWaived = "ocrr_credits_waived_total"
 )
 
 // SetCounter attaches a metrics registry to the service.

@@ -1,0 +1,241 @@
+# ocr-router — an example compose file. Copy it and edit:
+#
+#   cp compose.yml.example compose.yml
+#
+# ⚠ THIS FILE IS SHAPED FOR LOCAL DEVELOPMENT ON http://localhost:1234, and it
+# says so in one place that matters: `--insecure-cookies`. Read the TLS note
+# under the router service before deploying any of this anywhere.
+#
+# First run, in order:
+#
+#   docker compose build
+#   docker compose run --rm bootstrap        # prompts for a password, prints a token
+#   docker compose up -d router
+#   open http://localhost:1234/admin
+#
+# The worker is commented out because it cannot start until you have given it a
+# token and a `--cmd`. Both are explained in its block.
+
+services:
+  router:
+    build:
+      context: .
+      target: router
+    image: ocr-router:local
+    restart: unless-stopped
+    ports:
+      # host:container. The API and the dashboard share this port.
+      - "1234:1234"
+    volumes:
+      # ⚠ NAMED VOLUMES, NOT BIND MOUNTS, and the difference is not cosmetic:
+      # Docker chowns a fresh named volume to the container's user (uid 65532),
+      # and does NOT chown a bind mount. A `./data:/data` bind here fails to
+      # open the database with a permission error on most hosts unless you chown
+      # the host directory to 65532 yourself.
+      - router-data:/data
+    command:
+      - "--addr"
+      - ":1234"
+      - "--db"
+      - "/data/router.db"
+      - "--blobs"
+      - "/data/blobs"
+      # ⚠⚠ READ THIS BEFORE COPYING IT ANYWHERE REAL.
+      #
+      # The dashboard's session cookie is marked `Secure`, so a browser DISCARDS
+      # it over plain HTTP — and rather than let a sign-in appear to succeed and
+      # then fail for ever, the login handler REFUSES over plain HTTP with a
+      # message naming TLS. `--insecure-cookies` drops `Secure` so that the
+      # dashboard is usable on http://localhost, and the binary prints a loud
+      # warning on every boot while it is set.
+      #
+      # It also means the session cookie travels in clear text. For anything
+      # reachable from a network: DELETE THIS FLAG and put TLS in front. The
+      # router does not terminate TLS itself and has no flags for it — it reads
+      # `X-Forwarded-Proto`, so a reverse proxy is the intended shape. There is a
+      # commented `proxy` service at the bottom of this file.
+      - "--insecure-cookies"
+      # Rates are per TOKEN, per second, with a burst. The shipped defaults are
+      # 10 client / 30 worker / 30 admin; zero disables limiting for that role,
+      # which is ADR-0002's operational rollback.
+      - "--rate-client"
+      - "10"
+      - "--log-format"
+      - "json"
+      - "--log-level"
+      - "info"
+    # ⚠ NO HEALTHCHECK HERE, AND THAT IS THE HONEST ANSWER RATHER THAN A GAP.
+    #
+    # `/healthz` is exactly the right endpoint — it is one of the five routes
+    # that answer without a credential, and it exists because a probe cannot
+    # hold a bearer token. It also deliberately ignores whether any worker is
+    # connected, because a router with no workers is idle, not broken.
+    #
+    # The problem is reaching it. This image is distroless: no shell, no curl,
+    # no wget, so `CMD-SHELL` never runs and `CMD ["curl", …]` names a binary
+    # that is not there. The obvious workaround — `test: ["CMD", "/router",
+    # "--help"]` — is worse than nothing: it exits 0 whenever the image is
+    # intact, so it reports HEALTHY while the listener is wedged. A check that
+    # cannot fail is not a check; it is a green light with nothing behind it.
+    #
+    # Two ways to get a real one, both of which probe the endpoint:
+    #
+    #   - let the reverse proxy do it. Caddy and nginx both fail their own
+    #     health when the upstream stops answering, and the proxy is what
+    #     production needs anyway (see the commented `proxy` service below).
+    #
+    #   - add a sidecar that can speak HTTP and share this container's network
+    #     namespace, the same trick the metrics note at the bottom uses:
+    #
+    #       probe:
+    #         image: curlimages/curl:latest
+    #         network_mode: "service:router"
+    #         command: ["sh", "-c", "while curl -fsS localhost:1234/healthz >/dev/null; do sleep 15; done; exit 1"]
+    #
+    # If you would rather have the check inside this container, the change is to
+    # the BINARY, not to this file: a `router healthz` subcommand that exits
+    # non-zero when the endpoint does not answer. It does not exist today.
+
+  # A one-shot, not a service. `profiles` keeps it out of `docker compose up`.
+  #
+  #   docker compose run --rm bootstrap
+  #
+  # ⚠ RUN IT WITH `run --rm`, NOT `up`: it needs a TTY to prompt for the
+  # password. Passing `--password` on the command line would put the
+  # administrator's password into your shell history, into `ps` on the host, and
+  # into this file if you edited it in — the binary's own help says so.
+  #
+  # It is refused once any administrator exists, deliberately: it is the only
+  # unauthenticated write in the system and must not become a standing way to
+  # mint administrators. It prints a bearer token ONCE; the router stores only a
+  # hash and cannot produce it again.
+  bootstrap:
+    build:
+      context: .
+      target: router
+    image: ocr-router:local
+    profiles: ["tools"]
+    volumes:
+      - router-data:/data
+    entrypoint: ["/router", "admin", "bootstrap"]
+    command:
+      - "--db"
+      - "/data/router.db"
+      - "--blobs"
+      - "/data/blobs"
+      - "--email"
+      - "admin@example.com"
+    stdin_open: true
+    tty: true
+
+  # ⚠ COMMENTED OUT ON PURPOSE. A worker cannot start without two things only
+  # you can supply, and a worker that starts with neither would fail in a loop.
+  #
+  #   1. A WORKER TOKEN. Create a worker customer in the dashboard, mint a token
+  #      on its row, and put it in a `.env` beside this file:
+  #
+  #        OCR_WORKER_TOKEN=ocr_w_…
+  #
+  #      ⚠ A worker token is NOT a client token and must never be one: workers
+  #      run on hosts you may not control, and client rights would let a leaked
+  #      worker token create jobs and spend any customer's credits.
+  #
+  #   2. A `--cmd`. The worker forks it per job, with no shell: the router passes
+  #      each parameter as its own argv element. Your command receives
+  #      `-i <input> -o -` and must write its result to stdout as a JSON array of
+  #      strings — one element per output unit, because units are what gets
+  #      billed. With `--raw` it writes bytes instead and the job costs a flat
+  #      credit.
+  #
+  #      The worker image ships NO tooling. Build a stage on top of it (see the
+  #      Dockerfile's worker target) or mount a script.
+  #
+  # worker:
+  #   build:
+  #     context: .
+  #     target: worker
+  #   image: ocr-worker:local
+  #   restart: unless-stopped
+  #   depends_on:
+  #     router:
+  #       condition: service_started
+  #   environment:
+  #     # The worker reads its token from the environment so it is not in argv,
+  #     # where `ps` on the host would show it.
+  #     OCR_WORKER_TOKEN: "${OCR_WORKER_TOKEN:?set OCR_WORKER_TOKEN in .env}"
+  #   volumes:
+  #     - ./my-wrapper.sh:/usr/local/bin/my-wrapper:ro
+  #   command:
+  #     # Service-to-service over the compose network, so this one stays http://
+  #     # — it never leaves the host. A worker reaching a router across a network
+  #     # must use https:// and the router must be behind TLS.
+  #     - "--router"
+  #     - "http://router:1234"
+  #     - "--label"
+  #     - "ocr"
+  #     - "--cmd"
+  #     - "/usr/local/bin/my-wrapper"
+  #     # How many jobs this worker runs at once. It claims one per free slot.
+  #     - "--slots"
+  #     - "2"
+  #     # A job that outruns this is failed and retried, not left leased.
+  #     - "--timeout"
+  #     - "5m"
+  #     # A hard ceiling on what one job may print. Output past it is a failure,
+  #     # not a truncated result silently billed as a whole one.
+  #     - "--max-output"
+  #     - "67108864"
+
+  # ⚠ ALSO COMMENTED OUT, and this is the block to enable before anything is
+  # reachable from a network. It replaces `--insecure-cookies` rather than
+  # accompanying it: with TLS in front and `X-Forwarded-Proto: https` set, the
+  # session cookie can keep its `Secure` attribute, which is the point.
+  #
+  # Remove the router's `ports:` when you add this — the proxy should be the only
+  # thing published, or the plain-HTTP port stays open beside the TLS one.
+  #
+  # proxy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "443:443"
+  #     - "80:80"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy-data:/data
+  #   depends_on:
+  #     - router
+  #
+  # A Caddyfile that sets the header the router reads:
+  #
+  #   your-host.example.com {
+  #       reverse_proxy router:1234
+  #   }
+  #
+  # Caddy sets X-Forwarded-Proto itself, which is what `isSecure` checks.
+
+  # ⚠ SCRAPING /metrics: DO NOT MOVE THE LISTENER. It binds to 127.0.0.1 by
+  # decision (ADR-0001 task T11) because queue depths and throughput say how much
+  # work a customer pushes, and the main listener faces the internet. Setting
+  # `--metrics-addr 0.0.0.0:9090` and publishing it undoes that.
+  #
+  # Put the scraper in the router's OWN network namespace instead, where
+  # 127.0.0.1 means the router:
+  #
+  # metrics-scraper:
+  #   image: prom/prometheus:latest
+  #   network_mode: "service:router"
+  #   volumes:
+  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #
+  # …with `targets: ["127.0.0.1:9090"]` in prometheus.yml. No metric carries a
+  # user id, job id or email: the allow-list is enforced in code AND asserted by
+  # a test that parses the rendered output, because per-customer visibility
+  # belongs on the authenticated dashboard.
+
+volumes:
+  # ⚠ THIS VOLUME IS THE SYSTEM. It holds the customers, the tokens, the credit
+  # ledger and every uploaded file. `docker compose down -v` destroys it, and the
+  # ledger cannot be reconstructed from anything else. Back it up.
+  router-data:
+  # caddy-data:

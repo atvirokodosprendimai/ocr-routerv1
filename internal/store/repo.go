@@ -31,16 +31,20 @@ func NewRepo(db *DB) *Repo { return &Repo{read: db.Read, write: db.Write} }
 
 // ---------- reads ----------
 
-const userColumns = `id, email, role, credits, buffer_limit, priority, job_ttl_secs, active, created_at`
+const userColumns = `id, email, role, credits, buffer_limit, priority, job_ttl_secs, active, unmetered, created_at`
 
 func scanUser(row interface{ Scan(...any) error }) (core.User, error) {
 	var (
-		u      core.User
-		active int
-		create int64
+		u         core.User
+		active    int
+		unmetered int
+		create    int64
 	)
+	// ⚠ This list and userColumns above move TOGETHER. A column added to one and
+	// not the other is not a compile error — it is a runtime scan error on every
+	// user read, which is every authenticated request in the process.
 	err := row.Scan(&u.ID, &u.Email, &u.Role, &u.Credits, &u.BufferLimit,
-		&u.Priority, &u.JobTTLSecs, &active, &create)
+		&u.Priority, &u.JobTTLSecs, &active, &unmetered, &create)
 	if errors.Is(err, sql.ErrNoRows) {
 		return core.User{}, core.ErrNotFound
 	}
@@ -48,6 +52,7 @@ func scanUser(row interface{ Scan(...any) error }) (core.User, error) {
 		return core.User{}, err
 	}
 	u.Active = active == 1
+	u.Unmetered = unmetered == 1
 	u.CreatedAt = time.Unix(create, 0).UTC()
 	return u, nil
 }

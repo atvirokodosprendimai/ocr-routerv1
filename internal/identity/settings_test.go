@@ -223,6 +223,52 @@ func TestUpdateSettingsRequiresAdmin(t *testing.T) {
 	}
 }
 
+// TestSetUnmeteredRefusesANonAdminActor is what makes the capability safe at the
+// API as well as on the dashboard.
+//
+// ⚠ The HTTP route is gated by `requireAdmin`, and that gate is in a DIFFERENT
+// package. A service method that trusted its caller would be correct today and
+// wrong the first time anything else calls it — and making a customer's own work
+// free is the one capability in this system that costs money directly.
+func TestSetUnmeteredRefusesANonAdminActor(t *testing.T) {
+	f := newSettingsFixture(t)
+	ctx := context.Background()
+
+	for name, actor := range map[string]core.Principal{
+		"client": f.client,
+		"worker": {UserID: f.customer.ID, Role: core.RoleWorker, TokenID: "w"},
+		"zero":   {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := f.svc.SetUnmetered(ctx, actor, f.customer.ID, true); !errors.Is(err, core.ErrForbidden) {
+				t.Errorf("err = %v, want core.ErrForbidden", err)
+			}
+			if got := f.reload(t); got.Unmetered {
+				t.Error("a non-admin made a customer unmetered")
+			}
+		})
+	}
+}
+
+// TestSetUnmeteredDoesNotTouchCredits keeps the two ideas apart at the layer that
+// owns them: being exempt from the balance must never CHANGE the balance.
+func TestSetUnmeteredDoesNotTouchCredits(t *testing.T) {
+	f := newSettingsFixture(t)
+	ctx := context.Background()
+
+	if err := f.svc.SetUnmetered(ctx, f.admin, f.customer.ID, true); err != nil {
+		t.Fatalf("SetUnmetered: %v", err)
+	}
+	got := f.reload(t)
+	if !got.Unmetered {
+		t.Fatal("the flag did not persist, so the balance assertion below proves nothing")
+	}
+	if got.Credits != 100 {
+		t.Errorf("credits = %d, want 100 — marking a customer unmetered moved their balance, "+
+			"which would be a movement with no ledger entry behind it", got.Credits)
+	}
+}
+
 // TestAdjustCreditsMovesBalanceAndWritesEntry asserts BOTH halves.
 //
 // ⚠ Checking only the balance passes against a direct write that skips the

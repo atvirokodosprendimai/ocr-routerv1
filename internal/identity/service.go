@@ -215,6 +215,29 @@ func (s *Service) SetActive(ctx context.Context, actor core.Principal, userID st
 	return s.repo.UpdateUser(ctx, u)
 }
 
+// SetUnmetered exempts a customer from the balance, or puts them back on it.
+//
+// ⚠ IT TAKES THE NEW STATE AS AN ARGUMENT AND STILL READS THE USER, exactly like
+// SetActive: the caller decides the direction, this decides nothing about the
+// balance. `unmetered` is written through UpdateUser, which never touches
+// `credits` — that separation is the whole of ADR-0009, and it is why the request
+// for "-1 credits means unlimited" became a flag instead of a value.
+//
+// This is the only capability in the system that makes work free, so the admin
+// check is here as well as on the HTTP route: the route's gate lives in another
+// package and cannot cover a second caller.
+func (s *Service) SetUnmetered(ctx context.Context, actor core.Principal, userID string, unmetered bool) error {
+	if !actor.IsAdmin() {
+		return core.ErrForbidden
+	}
+	u, err := s.repo.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	u.Unmetered = unmetered
+	return s.repo.UpdateUser(ctx, u)
+}
+
 // Bootstrap creates the FIRST administrator and returns its token.
 //
 // This is the only unauthenticated write in the system, and it exists because

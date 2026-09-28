@@ -102,6 +102,29 @@ func (wb *Web) setActive(w http.ResponseWriter, r *http.Request) {
 	wb.refreshUsers(w, r)
 }
 
+// setUnmetered exempts a customer from the balance, or puts them back on it.
+//
+// ⚠ A TOGGLE, and the new state is the inverse of the STORED one — read here,
+// never posted. This is `setActive`'s reasoning and it matters more for this
+// control: a tab left open overnight posting a stale `false` would silently put a
+// customer back on the meter, or a stale `true` would make their work free again,
+// and the request would look like an ordinary click either way.
+func (wb *Web) setUnmetered(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "id")
+
+	user, err := wb.deps.Repo.UserByID(r.Context(), userID)
+	if err != nil {
+		wb.patch(w, r, views.CreateError(friendly(err)))
+		return
+	}
+
+	if err := wb.deps.Identity.SetUnmetered(r.Context(), principal(r), userID, !user.Unmetered); err != nil {
+		wb.patch(w, r, views.CreateError(friendly(err)))
+		return
+	}
+	wb.refreshUsers(w, r)
+}
+
 // refreshUsers re-renders the customer table with current data.
 //
 // Every successful edit ends here, so the operator sees the result in place —

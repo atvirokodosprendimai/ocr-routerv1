@@ -53,9 +53,15 @@ templ Jobs(d Dashboard) {
 			}
 			// Links, not a form: the filter is a place on the site, so it is
 			// shareable, bookmarkable and reachable with the back button.
+			//
+			// ⚠ These two used `aria-current={ templ.KV("page", …) }` and had been
+			// serving `aria-current="{page true}"` and `aria-current="{page false}"`
+			// since this view shipped — both links marked, with a value no
+			// specification defines, and the CSS rule matching neither. See
+			// currentPage in attrs.go.
 			<nav class="filters" aria-label="Filter jobs">
-				<a href="/admin/" aria-current={ templ.KV("page", !d.FailedOnly) }>All</a>
-				<a href="/admin/?state=failed" aria-current={ templ.KV("page", d.FailedOnly) }>Failures</a>
+				<a href="/admin/" { currentPage(!d.FailedOnly)... }>All</a>
+				<a href="/admin/?state=failed" { currentPage(d.FailedOnly)... }>Failures</a>
 			</nav>
 		</div>
 		if len(d.Jobs) == 0 {
@@ -145,6 +151,11 @@ templ Workers(d Dashboard) {
 // Users is the customer administration page.
 templ Users(d Dashboard) {
 	@Layout("Customers", `{"newEmail":"","newRole":"client"}`) {
+		// ⚠ The Customers page has never subscribed to the stream, so nothing on it
+		// updated itself. ADR-0010's counters are patched by that stream, and
+		// without this they would be live in a stream nobody joined — working code
+		// and a screen that never changes.
+		<div data-init={ "@get('" + streamURL(d) + "')" }></div>
 		<section>
 			<h2>Create a customer</h2>
 			// ⚠ NO <form>. Each input is bound individually, and the suffixes are
@@ -170,6 +181,10 @@ templ Users(d Dashboard) {
 			<div id="create-result"></div>
 		</section>
 		@UserTable(d)
+		// ⚠ BELOW the editable table and in its own section. The counters are live
+		// and the table above is not, deliberately: patching #user-table would
+		// re-render its inputs under an operator mid-edit (ADR-0010 decision 3).
+		@Usage(d)
 	}
 }
 
@@ -228,8 +243,17 @@ templ UserTable(d Dashboard) {
 								<br/>
 								<span class="muted">{ string(u.Role) }</span>
 							</td>
+							// ⚠ `unlimited`, never `-1`. M asked for "-1 credits means
+							// unlimited" and -1 is stored nowhere (ADR-0009): a cell
+							// showing it would invite an operator to type it into the
+							// adjust box below, where it is a MOVEMENT and would land as
+							// balance − 1 while looking like it had worked.
 							<td class="num">
-								{ fmt.Sprint(u.Credits) }
+								if u.Unmetered {
+									<span class="tag raw" title="Exempt from the balance: this customer's jobs are not charged">unlimited</span>
+								} else {
+									{ fmt.Sprint(u.Credits) }
+								}
 							</td>
 							<td class="num">
 								<input
@@ -285,6 +309,20 @@ templ UserTable(d Dashboard) {
 										Disable
 									} else {
 										Enable
+									}
+								</button>
+								// ADR-0009. The label names the ACTION, not the state: on a
+								// row of five near-identical buttons, "Unmetered" reads as a
+								// status and "Unmeter" reads as something about to happen.
+								<button
+									class="secondary"
+									title="Stops charging this customer for anything, until it is turned back on"
+									data-on:click={ fmt.Sprintf("@post('/admin/users/%s/unmetered')", u.ID) }
+								>
+									if u.Unmetered {
+										Meter
+									} else {
+										Unmeter
 									}
 								</button>
 							</td>

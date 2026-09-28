@@ -24,23 +24,22 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   Not previously deferred — it was a gap nobody had recorded, found on 2026-09-15 when the
   dashboard turned out to be reachable only by `curl`. **Taken up by ADR-0003**
   (`docs/adr/0003/0003-admin-password-login.md`).
+- **Unmetered customers — "`-1` credits means infinite".**
+  Requested by M 2026-09-15; **taken up by ADR-0009**
+  (`docs/adr/0009/0009-unmetered-customers.md`), after M settled its two open questions on
+  2026-09-28. Both of this entry's questions were the right ones and both are answered there: a
+  SEPARATE `unmetered` flag on the user rather than a sentinel in the balance column, and an
+  unmetered job still ACCRUES its cost while debiting nothing, with `ocrr_credits_waived_total`
+  added beside `ocrr_credits_debited_total` so the conflation this entry named is gone.
+  What the entry did NOT anticipate is that the store needed no change at all: `Repo.DeliverJob`
+  already guards both the balance decrement and the `credit_entries` insert with `charge != 0`, so
+  the router passes 0 and the ledger correctly records nothing.
+  ⚠ It also assumed `-1` would survive "as the display and wire spelling". It does not survive
+  anywhere: the dashboard renders `unlimited`, the control is a toggle, and there is no wire surface
+  carrying a balance at all. ADR-0009 marks that as its one deviation from the literal request, with
+  M's ruling still outstanding as the record's only follow-up.
 
 ## Open
-
-- **Unmetered customers — "`-1` credits means infinite".** (requested by M, 2026-09-15; not yet
-  deferred by any ADR, so this entry is the only record of it)
-  Admission is `u.Credits <= 0` (`internal/router/service.go:111`) and every completed stage debits
-  `len(out) * rate` (`:244`, charged at `:375`). A customer who should never be refused has to be
-  topped up by hand for ever.
-  **What an ADR has to decide**, because the request and the existing design conflict: credits are
-  an APPEND-ONLY LEDGER and the only control is *adjust*, never *set* — ADR-0004 made that explicit
-  and `TestCreditsAreNeverSetDirectly` pins it. `-1` is a SENTINEL, not a balance, and adjusting a
-  sentinel is meaningless: `-1 + 50` is `49`, not "infinite plus fifty". So the record must choose
-  between a sentinel in the balance column (cheap, and it puts a non-balance in a ledger) and a
-  separate `unmetered` flag on the user (honest, and it is a schema change plus its own control),
-  with `-1` kept only as the display and wire spelling. It must also say whether an unmetered job
-  still accrues a cost for reporting, since "we cannot bill it" and "we cannot see what it cost"
-  are different claims, and the metrics counter at `:385` currently conflates them.
 
 - **Draining: a worker finishes its in-flight jobs before exiting, rather than releasing them.**
   Deferred by ADR-0008 (`docs/adr/0008/0008-restart-is-not-a-failure.md`, §Out of Scope) and by its
@@ -87,7 +86,9 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   Deferred by ADR-0006 task T8 (`docs/adr/0006/tasks/T8-admin-raw-control.md`, §Out of Scope),
   2026-09-16. T8 adds a per-row control. Bulk editing across rows is the same shape already
   deferred for customer settings by ADR-0004, and should be decided once for both rather than
-  twice differently.
+  twice differently. ADR-0009 task T4 adds a THIRD instance on 2026-09-28 — marking several
+  customers unmetered in one action — which settles the argument for deciding it once: three
+  per-row controls have now each deferred the same feature separately.
 
 - **OpenTelemetry / OTLP export for the router.**
   Deferred by ADR-0001 (§Alternatives), by task T11 (§Out of Scope), and **re-deferred by ADR-0002**
@@ -172,10 +173,97 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   ADR-0002's request log records that a login happened. It is not tamper-evident and not separable
   from operational noise, which is what an audit trail has to be.
 
+- **A quota or cap on an unmetered customer — "unlimited, but not more than N per month".**
+  Deferred by ADR-0009 (`docs/adr/0009/0009-unmetered-customers.md`, §Out of Scope) and by its task
+  T2, 2026-09-28. That record makes a customer exempt from the balance entirely, which is what was
+  asked for and is also the whole of the bound: nothing caps what an unmetered customer consumes.
+  Needs a decision about what a cap means when there is no balance to subtract from — a monthly
+  accrual ceiling read from `jobs.accrued_credits`, refusing admission past it, is the obvious shape
+  and it reintroduces a refusal for exactly the customers the flag exists to stop refusing.
+
+- **An audit trail of who marked a customer unmetered, and when.**
+  Deferred by ADR-0009 (§Out of Scope), 2026-09-28. ADR-0002's request log records that an admin
+  called the endpoint; it is not tamper-evident and not separable from operational noise. This is the
+  same shape as the two audit entries above and should be decided once for all administrative
+  actions rather than three times — making work free is simply the one with money attached.
+
+- **Showing a customer's credit ledger in the dashboard.**
+  Deferred by ADR-0009 (§Out of Scope) and by its task T4, 2026-09-28; found while auditing the
+  dashboard on the same day. `Repo.Ledger` exists, is tested, and is called by nothing — the fourth
+  instance of that defect in this codebase — so the Credits column shows a number that cannot be
+  explained. An operator asking "why is this 37" has to open SQLite. The UI decision is where it
+  lives: a row expansion like the token list, or its own view.
+
+- **A confirmation step on the destructive row actions in the Customers table.**
+  Deferred by ADR-0009 task T4 (§Out of Scope), 2026-09-28. `Mint`, `Disable` and the unmetered
+  toggle fire on one click, from a row of visually identical secondary buttons, on rows that differ
+  only by an email address. Needs a decision about which actions earn a confirmation — one on every
+  action trains an operator to dismiss it, which is worse than none.
+
+- **Refusing self-deactivation, and the lockout it currently causes.**
+  Found 2026-09-28 while auditing the dashboard; deferred by ADR-0009 task T4 (§Out of Scope) because
+  it is not about metering. ⚠ An administrator can click `Disable` on their own row.
+  `identity.SetActive` checks only that the ACTOR is an admin, and both `ResolveSession` and `Login`
+  refuse an inactive user — so the live session dies on the next request and the same credentials are
+  refused afterwards. `router admin` has only `bootstrap` (refused once any admin exists) and
+  `set-password`, so **there is no recovery path in the binary**. Needs a decision on whether an
+  admin may disable another admin at all, and whether the fix is a server-side refusal in
+  `SetActive`, a `router admin activate` command, or both.
+
 - **Charts and historical analytics on the admin dashboard.**
-  Deferred by ADR-0001 task T10 (§Out of Scope).
+  Deferred by ADR-0001 task T10 (§Out of Scope). ⚠ **PARTLY TAKEN UP by ADR-0010** on 2026-09-28 —
+  the COUNTING half only.
   T10 ships current state. Nothing retains a time series, so "was it like this yesterday" has no
   answer; T11's metrics are the intended source if this is ever built.
+  What ADR-0010 changed about this entry: a COUNT over a window turned out to need no retained series
+  at all, because nothing deletes job rows — the reaper removes blobs and results, never rows. So
+  per-customer counts for 24h / 7d / 31d / the previous calendar month are one indexed query. A CHART
+  is still a series of counts at retained resolution and still has no source, so this entry stays open
+  for exactly that: resolution, retention, and what happens to the numbers once a row is old.
+
+- **A `job_stats` rollup table, updated on every job transition.**
+  Deferred by ADR-0010 (`docs/adr/0010/0010-per-customer-usage-counters.md`, §Alternatives and
+  §Out of Scope) and by its task T1, 2026-09-28, WITH THE CONDITION THAT TRIGGERS IT: take this up when
+  the window scan is measurably slow, not before. ADR-0010 counts by scanning the job rows newer than
+  the oldest window floor — about 62 days' worth — on every SSE push, which is bounded and cheap now
+  and grows with traffic. A rollup is the answer then, and it is a second source of truth for numbers
+  that are currently one query away: it needs a backfill and it can drift from `jobs` with nothing
+  reporting the drift.
+
+- **`GET /usage` — a customer reading its OWN counters over the API.**
+  Deferred by ADR-0010 (§Alternatives, §Out of Scope), 2026-09-28. M chose dashboard-only when asked.
+  Not rejected on merit: it is the endpoint a customer would reconcile their own invoice against, and
+  the counting is already done. It is a new PUBLIC contract, so it needs its own shape, its scoping
+  (a client must see only its own), and a rate-limit decision — ADR-0002's per-role limits were not
+  tuned for an endpoint that runs an aggregate.
+
+- **Bytes and credits per window, beside the counts.**
+  Deferred by ADR-0010 (§Out of Scope) and by its task T1, 2026-09-28. `jobs.size_byte` and
+  `jobs.accrued_credits` are already on every row and already inside the window the query scans, so
+  this is two more conditional sums rather than new data. It was left out to keep the first version's
+  table readable: four windows × four counts is already sixteen numbers per customer.
+
+- **Per-service breakdown of a customer's usage.**
+  Deferred by ADR-0010 (§Out of Scope), 2026-09-28. `jobs.label` is in the same rows. The reason it is
+  not free: it multiplies the cells by the number of labels, so it is a different VIEW rather than more
+  columns — probably a per-customer drill-down, which is the same UI question as showing a customer's
+  credit ledger.
+
+- **Sorting or filtering the usage table.**
+  Deferred by ADR-0010 task T2 (§Out of Scope), 2026-09-28. "Who pushed the most this week" is the
+  obvious next question and the table answers it only by eye. Sorting a live fragment needs a decision
+  about where the sort lives, since a patch re-renders it: a query parameter like the jobs filter
+  (shareable, survives the patch) or a client-side signal (cheaper, lost on every push).
+
+- **The per-row edit inputs refill from a stale signal after an SSE patch.**
+  Found 2026-09-28 during the dashboard audit; deferred by ADR-0010 task T2 (§Out of Scope) because
+  that task AVOIDS it rather than repairing it — the usage counters got their own fragment specifically
+  so the editable table is never patched. ⚠ The defect itself stands: datastar's `data-bind` initialises
+  its signal only when missing (`{ifMissing:!0}` in the vendored bundle) and then an effect pushes the
+  SIGNAL into the element, so after `refreshUsers` morphs `#user-table` the server's fresh empty inputs
+  are refilled from the stale signal. The credit-adjust boxes are therefore NOT cleared after a
+  successful adjustment, and a second click credits again. ⚠ Reasoned from the bundle, NOT observed in a
+  browser — confirm it there before designing the fix.
 
 - **Encryption at rest for source files and results.**
   Deferred by ADR-0001 task T4 (§Out of Scope).
@@ -183,8 +271,30 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   key custody before anything else.
 
 - **Packaging: systemd units, containers, release artefacts.**
-  Deferred by ADR-0001 task T8 (§Out of Scope).
+  Deferred by ADR-0001 task T8 (§Out of Scope). ⚠ **PARTLY DONE 2026-09-28** — containers only, and
+  by direct request rather than by a record.
   The binaries build and run; nothing ships them.
+  What exists now: a multi-target `Dockerfile` (router and client on distroless/static, worker on
+  debian-slim because its whole job is to fork a command an operator installs) and
+  `compose.yml.example`. `CGO_ENABLED=0` works because the SQLite driver is pure Go, and the
+  generated `*_templ.go` files are committed, so the image needs neither a libc nor a `templ` step.
+  ⚠ **NOT decided, and still open:** systemd units, published release artefacts, and any image
+  registry or tagging scheme. Nor is there an ADR for the container decisions — the consequential
+  ones are volumes (`/data` holds the credit ledger), TLS termination (the session cookie is
+  `Secure`, so the example carries `--insecure-cookies` for localhost and a proxy block for
+  anything else) and NOT publishing `/metrics` (ADR-0001 T11 binds it to loopback on purpose;
+  container-local loopback preserves that, and the example shows a namespace-sharing sidecar rather
+  than moving the listener). Those are pinned by tests in `cmd/router/packaging_test.go` instead of
+  by a record, which is weaker: a test catches a change, a record explains why.
+
+- **A `router healthz` subcommand, so a container can probe itself.**
+  Found 2026-09-28 while writing `compose.yml.example`. The router image is distroless — no shell, no
+  curl, no wget — so a compose `healthcheck` has nothing to reach `/healthz` with, and the obvious
+  workaround (`test: ["CMD", "/router", "--help"]`) exits 0 whenever the image is intact and would
+  report HEALTHY while the listener is wedged. That is a check that cannot fail. The example ships
+  NO healthcheck and explains why, offering the reverse proxy or a sidecar sharing the network
+  namespace instead. A tiny `router healthz` that GETs the endpoint and exits non-zero would close
+  it properly; it needs a decision about which address it assumes.
 
 - **Sandboxing the worker subprocess with containers or seccomp.**
   Deferred by ADR-0001 task T9 (§Out of Scope).

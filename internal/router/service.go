@@ -131,7 +131,14 @@ func (s *Service) Upload(ctx context.Context, userID string, in UploadInput, now
 
 	// Admission is gated on having ANY credit, not on the eventual cost: the
 	// size of a result is unknowable before the work runs.
-	if u.Credits <= 0 {
+	//
+	// ⚠ AN UNMETERED CUSTOMER HAS NO BALANCE TO GATE ON (ADR-0009), so the
+	// exemption is a term in this condition and not a branch above it. Its
+	// position matters twice over: the `!u.Active` check above still refuses a
+	// deactivated customer whatever their metering, and the buffer limit below
+	// still bounds how much of the worker pool one customer holds. Unmetered is a
+	// statement about PRICE, and paying nothing buys no claim on either.
+	if !u.Unmetered && u.Credits <= 0 {
 		return core.Job{}, core.ErrNoCredits
 	}
 
@@ -464,6 +471,14 @@ func (s *Service) DeliverRaw(ctx context.Context, userID, jobID string, now time
 		return nil, core.ErrNotFound
 	}
 
+	// ⚠ READ THE OWNER BEFORE OPENING THE RESULT. A failed read after the open
+	// would leak the handle, and a waiver decided by a failed read is a waiver
+	// nobody chose — so this error propagates rather than defaulting either way.
+	u, err := s.repo.UserByID(ctx, job.UserID)
+	if err != nil {
+		return nil, err
+	}
+
 	f, err := s.blobs.OpenResult(jobID)
 	if err != nil {
 		return nil, err
@@ -474,15 +489,25 @@ func (s *Service) DeliverRaw(ctx context.Context, userID, jobID string, now time
 	// per-unit total charges ZERO — a failure in the customer's favour that
 	// nothing anywhere would report. The MOMENT is unchanged: on delivery, in
 	// this transaction, exactly as a units job.
+	//
+	// ⚠ AN UNMETERED OWNER IS CHARGED 0 (ADR-0009), which looks exactly like the
+	// accident described above — so the waived counter below is what tells
+	// "waived on purpose" from "priced at nothing by mistake". Repo.DeliverJob
+	// already skips both the decrement and the ledger insert on a zero charge, so
+	// nothing in the store needs a branch for this.
 	const rawCost = 1
-	if err := s.repo.DeliverJob(ctx, jobID, userID, rawCost, now); err != nil {
+	charge := rawCost
+	if u.Unmetered {
+		charge = 0
+	}
+	if err := s.repo.DeliverJob(ctx, jobID, userID, charge, now); err != nil {
 		_ = f.Close()
 		return nil, err
 	}
 
 	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDelivered)})
 	s.counter.Inc(metricRawJobs, map[string]string{"label": job.Label})
-	s.counter.Add(metricCreditsDebited, nil, int64(rawCost))
+	s.countCredits(u, rawCost, charge)
 	s.logTransition(job, job.State, core.JobDelivered, job.UpdatedAt, "client", "", "", now)
 	_ = s.blobs.Delete(jobID)
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: jobID})
@@ -659,12 +684,27 @@ func (s *Service) Deliver(ctx context.Context, userID, jobID string, now time.Ti
 		return core.Result{}, core.ErrNotFound
 	}
 
+	// ⚠ BEFORE results.Take, which CONSUMES the result. A read that failed after
+	// it would lose the finished work outright, and this is the only new way this
+	// function can fail.
+	u, err := s.repo.UserByID(ctx, job.UserID)
+	if err != nil {
+		return core.Result{}, err
+	}
+
 	res, err := s.results.Take(jobID)
 	if err != nil {
 		return core.Result{}, err
 	}
 
-	if err := s.repo.DeliverJob(ctx, jobID, userID, job.AccruedCredits, now); err != nil {
+	// ⚠ THE CHARGE, NOT THE COST. job.AccruedCredits stays exactly what it was —
+	// what the work cost — whatever is billed for it, so an unmetered customer's
+	// usage remains answerable from the job row (ADR-0009).
+	charge := job.AccruedCredits
+	if u.Unmetered {
+		charge = 0
+	}
+	if err := s.repo.DeliverJob(ctx, jobID, userID, charge, now); err != nil {
 		// Put it back: the charge did not happen, so the result must remain
 		// collectable rather than vanishing along with the failed transaction.
 		s.results.Put(jobID, res.Units)
@@ -674,12 +714,30 @@ func (s *Service) Deliver(ctx context.Context, userID, jobID string, now time.Ti
 	// Only after the transaction commits. An orphan blob is recoverable; a
 	// delivered job whose blob was deleted before a failed commit is not.
 	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDelivered)})
-	s.counter.Add(metricCreditsDebited, nil, int64(job.AccruedCredits))
+	s.countCredits(u, job.AccruedCredits, charge)
 	s.logTransition(job, job.State, core.JobDelivered, job.UpdatedAt,
 		"client", "", "", now)
 	_ = s.blobs.Delete(jobID)
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: jobID})
 	return res, nil
+}
+
+// countCredits records one delivery's money on exactly ONE of the two series.
+//
+// `cost` is what the work came to and `charge` is what was actually taken from a
+// balance; they differ only for an unmetered customer, where charge is 0.
+//
+// ⚠ NEVER BOTH, and never the cost on the debited series. That counter is the one
+// an operator reconciles against credit_entries, and an unmetered delivery writes
+// no ledger row — so reporting its cost as debited would make the metric disagree
+// with the books by design. The two call sites are the only two callers of
+// Repo.DeliverJob, which is why this is a method and not a line copied twice.
+func (s *Service) countCredits(u core.User, cost, charge int) {
+	if u.Unmetered {
+		s.counter.Add(metricCreditsWaived, nil, int64(cost))
+		return
+	}
+	s.counter.Add(metricCreditsDebited, nil, int64(charge))
 }
 
 // BacklogItem is one finished job waiting for its owner.

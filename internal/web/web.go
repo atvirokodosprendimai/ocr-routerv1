@@ -138,6 +138,9 @@ func (wb *Web) Mount(r chi.Router, authenticate func(http.Handler) http.Handler,
 			r.Post("/users/{id}/settings", wb.updateSettings)
 			r.Post("/users/{id}/credits", wb.adjustCredits)
 			r.Post("/users/{id}/active", wb.setActive)
+			// ADR-0009. Beside /active and for the same reason: a toggle whose new
+			// state is read from the STORE, never from the browser.
+			r.Post("/users/{id}/unmetered", wb.setUnmetered)
 			r.Post("/rates", wb.setRate)
 		})
 	})
@@ -182,6 +185,17 @@ func (wb *Web) buildDashboard(ctx context.Context) (views.Dashboard, error) {
 		return views.Dashboard{}, err
 	}
 	rates, err := wb.deps.Repo.ListRates(ctx)
+	if err != nil {
+		return views.Dashboard{}, err
+	}
+	// ⚠ ON THE PUSH PATH. buildDashboard is called by the first paint AND by every
+	// SSE push, so this aggregate runs every fifteen seconds per connected
+	// administrator — M's choice, recorded in ADR-0010's Alternatives against the
+	// recommendation of page-load-only. It is ONE statement bounded by
+	// idx_jobs_created_at to the oldest window (~62 days of rows), which is what
+	// makes that affordable; a loop over customers here would be 16N.
+	now := wb.deps.Now()
+	usage, err := wb.deps.Repo.UsageByUser(ctx, now)
 	if err != nil {
 		return views.Dashboard{}, err
 	}
@@ -245,6 +259,10 @@ func (wb *Web) buildDashboard(ctx context.Context) (views.Dashboard, error) {
 		Services:        services,
 		Emails:          emails,
 		ResultsInMemory: wb.deps.Results.Len(),
+		Usage:           usage,
+		// The SAME instant the windows were computed from, so the month column's
+		// heading cannot disagree with the numbers under it.
+		Now: now,
 	}, nil
 }
 
@@ -608,6 +626,14 @@ func (wb *Web) stream(w http.ResponseWriter, r *http.Request) {
 			jobs = filterFailures(d)
 		}
 		if err := sse.PatchElementTempl(views.Jobs(jobs)); err != nil {
+			return false
+		}
+		// ⚠ USAGE, NOT UserTable. #user-table carries every row's edit inputs, and
+		// patching it here would re-render them every fifteen seconds under an
+		// operator who may be typing in one — ADR-0010 decision 3, and
+		// TestTheStreamDoesNotPatchTheUserTable is the guard. The usage fragment
+		// holds no inputs, so it is safe to patch at any cadence.
+		if err := sse.PatchElementTempl(views.Usage(d)); err != nil {
 			return false
 		}
 		return sse.PatchElementTempl(views.Workers(d)) == nil

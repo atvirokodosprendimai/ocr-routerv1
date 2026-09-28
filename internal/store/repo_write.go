@@ -22,20 +22,25 @@ import (
 // driver upgrade and cannot tell one unique index from another.
 func (r *Repo) CreateUser(ctx context.Context, u core.User) error {
 	_, err := r.write.ExecContext(ctx,
-		`INSERT INTO users (id, email, role, credits, buffer_limit, priority, job_ttl_secs, active, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?)`,
+		`INSERT INTO users (id, email, role, credits, buffer_limit, priority, job_ttl_secs, active, unmetered, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		u.ID, u.Email, u.Role, u.Credits, u.BufferLimit, u.Priority, u.JobTTLSecs,
-		boolToInt(u.Active), u.CreatedAt.Unix())
+		boolToInt(u.Active), boolToInt(u.Unmetered), u.CreatedAt.Unix())
 	return mapConstraint(err)
 }
 
 // UpdateUser writes the admin-settable knobs. It never touches credits, which
 // move only through the ledger transaction in DeliverJob.
+//
+// ⚠ `unmetered` belongs here BECAUSE it is an admin-settable knob and NOT a
+// balance (ADR-0009). Adding it changed nothing about the sentence above, and
+// that is the property to preserve: a column added to this UPDATE must never be
+// `credits`, however convenient a caller finds it.
 func (r *Repo) UpdateUser(ctx context.Context, u core.User) error {
 	res, err := r.write.ExecContext(ctx,
-		`UPDATE users SET buffer_limit = ?, priority = ?, job_ttl_secs = ?, active = ?
+		`UPDATE users SET buffer_limit = ?, priority = ?, job_ttl_secs = ?, active = ?, unmetered = ?
 		 WHERE id = ?`,
-		u.BufferLimit, u.Priority, u.JobTTLSecs, boolToInt(u.Active), u.ID)
+		u.BufferLimit, u.Priority, u.JobTTLSecs, boolToInt(u.Active), boolToInt(u.Unmetered), u.ID)
 	return affectedOne(res, err)
 }
 

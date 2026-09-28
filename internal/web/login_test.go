@@ -108,7 +108,7 @@ func newEnvWith(t *testing.T, opts webOptions) *tlsEnv {
 	})
 
 	mux := chi.NewRouter()
-	dash.Mount(mux, api.Authenticator())
+	dash.Mount(mux, api.AuthenticatorFor(dash.Unauthorized()))
 	mux.Mount("/", api)
 
 	srv := httptest.NewUnstartedServer(mux)

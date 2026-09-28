@@ -10,6 +10,27 @@ the command's stdout back. `ocr` is simply the label it serves by default.
 The design and its reasoning are in
 [`docs/adr/0001-ocr-router-architecture.md`](docs/adr/0001-ocr-router-architecture.md).
 
+## Containers
+
+```bash
+cp compose.yml.example compose.yml
+docker compose build
+docker compose run --rm bootstrap    # prompts for a password, prints a token once
+docker compose up -d router
+```
+
+`Dockerfile` has three targets — `router` and `client` on distroless/static,
+`worker` on debian-slim. The worker's is the odd one and deliberately so: its
+whole job is to fork whatever `--cmd` names, so it needs a base you can install
+that command onto, and it ships **no OCR tooling** of its own. OCR is this
+system's default label, not its purpose.
+
+⚠ Read the comments in `compose.yml.example` before deploying any of it. Two
+lines matter more than the rest: `/data` must stay on a volume because it holds
+the credit ledger, and `--insecure-cookies` is there so the dashboard works on
+`http://localhost` — it means the session cookie travels in clear text, and
+anything reachable from a network wants TLS in front instead.
+
 ## First run
 
 ```bash
@@ -177,6 +198,56 @@ delivered, taking the balance negative by at most that one job.
 Uploads are refused with `402` when your balance is not positive, and with `429`
 when you already have `buffer_limit` jobs in flight.
 
+### Unmetered customers
+
+An administrator can mark a customer **unmetered** from the Customers table. Their
+uploads are never refused for want of credits and their deliveries debit nothing;
+the Credits column reads `unlimited` instead of a number, and the row's button
+reads `Unmeter` / `Meter`.
+
+Everything else still applies. Deactivating the account still stops every token
+it holds, the `buffer_limit` still bounds how many jobs it may have in flight, and
+the cost of each job is still recorded on the job row — what is waived is the
+charge, not the measurement.
+
+⚠ **`-1` is not stored anywhere**, although that is how the feature was asked for.
+`credits` is a balance whose only control is *adjust*, never *set*: a `-1` typed
+into the adjust box is a movement of minus one credit, so it would land as
+`balance − 1` and look as though it had worked. The exemption is a separate flag
+for exactly that reason.
+
+## Usage counters
+
+The Customers page shows, per customer, how much work they pushed over four
+windows and what became of it:
+
+| column | period |
+|---|---|
+| 24h | the last 24 hours |
+| 7d | the last 7 days |
+| 31d | the last 31 days |
+| a month name | the **previous complete calendar month**, UTC |
+
+The month column is not the same question as the rolling 31 days beside it. In
+mid-September, `31d` covers mid-August to now and `Aug 2026` covers all of August
+and nothing else — the second is the one an invoice matches.
+
+**Each window counts the jobs PUSHED in it, and what became of those jobs.** That
+is a cohort, not a snapshot: a job pushed on Monday and delivered on Tuesday is
+counted in Monday's window, in both the `pushed` and the `delivered` figure. So
+the four numbers reconcile, and
+
+    pushed − delivered − failed − expired  =  still in flight
+
+`failed` is a job whose command exhausted its attempts. `expired` is separate: the
+deadline passed while the job was still queued, so nothing ever ran. They are kept
+apart because an operator acts on them differently — the first is a broken
+service, the second is a service nobody served.
+
+The counters are **live**: they update over the same SSE stream the Overview uses,
+without a reload. The editable customer table above them deliberately is not, so a
+refresh never lands under an operator who is typing in a row.
+
 ## Priority and deadlines
 
 Each customer has an integer `priority` (higher first) and an optional
@@ -319,7 +390,8 @@ deliberate act in your proxy.
 | `ocrr_jobs_total{state}` | counter | terminal outcomes |
 | `ocrr_stage_advances_total` | counter | pipeline movement; a pipeline that stopped advancing looks exactly like a slow one |
 | `ocrr_reaper_actions_total{action}` | counter | requeues, expiries and sweeps — a reaper that silently stopped is otherwise invisible |
-| `ocrr_credits_debited_total` | counter | should agree with the ledger |
+| `ocrr_credits_debited_total` | counter | credits actually taken from a balance; should agree with the ledger |
+| `ocrr_credits_waived_total` | counter | what an **unmetered** customer's deliveries would have cost — never counted as debited, because no ledger row exists for a movement that did not happen |
 
 Metric label **names** are restricted in code to `label`, `state` and `action`.
 A user id or email would be unbounded, and unbounded label values are how a

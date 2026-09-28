@@ -40,25 +40,60 @@ const (
 // It is applied to the whole group in New rather than per-route, so adding a
 // route cannot accidentally add an unauthenticated one.
 func (a *API) authenticate(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, err := a.resolveCaller(r)
-		if err != nil {
-			// The challenge header is what tells a well-behaved client HOW to
-			// authenticate rather than merely that it failed.
-			w.Header().Set("WWW-Authenticate", `Bearer realm="ocr-router"`)
-			writeError(w, core.ErrUnauthorized)
-			return
-		}
-		// Publish to the outer request logger too. The logger runs OUTSIDE this
-		// middleware, so it holds the original *http.Request and can never see the
-		// context created below — the derived request only travels downward.
-		// Filling a slot the logger placed on the way in is what lets one log line
-		// carry both the 401s (which have no principal) and the principal.
-		if slot, ok := r.Context().Value(principalSlotKey).(*core.Principal); ok {
-			*slot = p
-		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, p)))
-	})
+	return a.authenticateWith(nil)(next)
+}
+
+// authenticateWith is authenticate with a caller-supplied refusal.
+//
+// ⚠ THE DECISION STAYS HERE; ONLY THE PRESENTATION VARIES. resolveCaller is still
+// the one authentication path in the process, which is ADR-0003's central
+// constraint. What a caller may replace is the RESPONSE to a refusal — and it has
+// to be replaceable, because the two audiences cannot use each other's answer: a
+// browser handed `{"error":"unauthorized"}` has no way to proceed at all. That is
+// the gap ADR-0003 was written to close, and its task T3 lists the criterion
+// outright — "a browser hitting /admin unauthenticated is redirected to
+// /admin/login" — while the dashboard went on serving this package's 401 to
+// browsers, because it borrowed the authenticator whole.
+//
+// A nil handler means this package's own JSON refusal, so the API's behaviour is
+// what you get by not thinking about it.
+func (a *API) authenticateWith(unauthorized http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p, err := a.resolveCaller(r)
+			if err != nil {
+				if unauthorized != nil {
+					unauthorized.ServeHTTP(w, r)
+					return
+				}
+				WriteUnauthorized(w)
+				return
+			}
+			// Publish to the outer request logger too. The logger runs OUTSIDE this
+			// middleware, so it holds the original *http.Request and can never see the
+			// context created below — the derived request only travels downward.
+			// Filling a slot the logger placed on the way in is what lets one log line
+			// carry both the 401s (which have no principal) and the principal.
+			if slot, ok := r.Context().Value(principalSlotKey).(*core.Principal); ok {
+				*slot = p
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, p)))
+		})
+	}
+}
+
+// WriteUnauthorized writes this package's refusal for a caller that did not
+// authenticate: the challenge header and the JSON error body.
+//
+// Exported because a subtree mounted OUTSIDE this package wants the API's answer
+// for everything except a browser navigation, and it must not spell the body out
+// a second time — two spellings of one refusal is how the challenge header
+// quietly goes missing from one of them.
+func WriteUnauthorized(w http.ResponseWriter) {
+	// The challenge header is what tells a well-behaved client HOW to
+	// authenticate rather than merely that it failed.
+	w.Header().Set("WWW-Authenticate", `Bearer realm="ocr-router"`)
+	writeError(w, core.ErrUnauthorized)
 }
 
 // requireRole gates a route to one role.
@@ -255,6 +290,17 @@ func PrincipalFrom(r *http.Request) core.Principal { return principal(r) }
 // Authenticator exposes the auth middleware so the dashboard can sit behind the
 // same one rather than growing a second login.
 func (a *API) Authenticator() func(http.Handler) http.Handler { return a.authenticate }
+
+// AuthenticatorFor is Authenticator with a different answer for a request that
+// fails authentication.
+//
+// ⚠ It weakens nothing: the caller cannot change WHO is authenticated, only what
+// a refusal looks like. The dashboard uses it to send a browser to the login page
+// instead of a JSON body it cannot act on. Pass nil and you get this package's
+// own refusal, unchanged.
+func (a *API) AuthenticatorFor(unauthorized http.Handler) func(http.Handler) http.Handler {
+	return a.authenticateWith(unauthorized)
+}
 
 // RequestLogger exposes the request-logging middleware for subtrees mounted
 // OUTSIDE this package's router.
