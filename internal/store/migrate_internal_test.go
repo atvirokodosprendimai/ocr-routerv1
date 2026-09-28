@@ -196,6 +196,55 @@ func TestAnExistingUserIsNotPromotedToUnmetered(t *testing.T) {
 	}
 }
 
+// TestMigrationDownDropsUsageIndex asserts BOTH halves, and the first half is the
+// one that matters day to day.
+//
+// The index is what bounds UsageByUser's scan on the SSE push path, so its
+// PRESENCE after `goose up` is a live requirement rather than a rollback detail —
+// a migration that failed to create it leaves the counters correct and unboundedly
+// slow, which is the shape nothing complains about until the job table is large.
+func TestMigrationDownDropsUsageIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "down10.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if !hasIndex(t, db.Write, "idx_jobs_created_at") {
+		t.Fatal("idx_jobs_created_at is absent after migrating up — 00007 did not apply, and " +
+			"UsageByUser is scanning every job row the system has ever accepted")
+	}
+
+	goose.SetBaseFS(migrationsFS)
+	goose.SetLogger(goose.NopLogger())
+	if err := goose.SetDialect(gooseDialect); err != nil {
+		t.Fatalf("SetDialect: %v", err)
+	}
+	if err := goose.DownTo(db.Write, "migrations", 6); err != nil {
+		t.Fatalf("goose.DownTo(6): %v — ADR-0010's Rollback claims this works", err)
+	}
+	if hasIndex(t, db.Write, "idx_jobs_created_at") {
+		t.Error("idx_jobs_created_at survived the down migration")
+	}
+}
+
+// hasIndex asks SQLite's own schema, for the same reason hasColumn does: a test
+// that greps the .sql file proves what was written, never what applied.
+func hasIndex(t *testing.T, db *sql.DB, name string) bool {
+	t.Helper()
+	var got string
+	err := db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, name).Scan(&got)
+	if err == sql.ErrNoRows {
+		return false
+	}
+	if err != nil {
+		t.Fatalf("querying sqlite_master for %s: %v", name, err)
+	}
+	return got == name
+}
+
 // hasColumn asks SQLite's own schema rather than parsing the migration text.
 // A test that greps the .sql file proves what was written, never what applied.
 func hasColumn(t *testing.T, db *sql.DB, table, column string) bool {

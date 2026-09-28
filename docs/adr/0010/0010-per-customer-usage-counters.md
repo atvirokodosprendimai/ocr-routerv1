@@ -1,6 +1,6 @@
 # ADR-0010: Count each customer's work over four windows, from the job rows already kept
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-28
 **Owner:** M
 **Spec:** None — no spec stage

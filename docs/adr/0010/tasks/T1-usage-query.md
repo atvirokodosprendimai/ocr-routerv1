@@ -22,7 +22,7 @@
 | `internal/core/usage.go` | add | `Usage` and `Window`: the four windows × four counts, with the cohort rule in the doc comment |
 | `internal/store/migrations/00007_usage_index.sql` | add | `idx_jobs_created_at` — this is what bounds the scan to recent rows, and without it the query reads all history on every SSE push |
 | `internal/store/usage.go` | add | `UsageByUser`, and `previousMonth` beside it because the boundary arithmetic is the part worth reading |
-| `internal/store/usage_test.go` | add | the boundaries, the grouping, and the reconciliation |
+| `internal/store/usage_internal_test.go` | add | the boundaries, the grouping, and the reconciliation. ⚠ `package store`, not `store_test`: seeding a delivered / dead / expired job at a CHOSEN timestamp needs raw SQL, because `CreateJob` hardcodes `state = queued`. The alternative — exporting a SetJobState for a test to call — would widen production surface for a test's benefit, which is the reasoning `migrate_internal_test.go` already records |
 | `internal/store/migrate_internal_test.go` | edit | a Down test for the index, mirroring the two already there |
 
 ## Ordered Steps
@@ -58,13 +58,13 @@ go test ./internal/store/ -run 'Usage' -count=1 2>&1 | tee /tmp/adr10t1.out && \
 
 | Test name | File | Verifies | Covers | Steps |
 |-----------|------|----------|--------|-------|
-| `TestUsageCountsOnlyTheWindowAndOnlyTheOwner` | `internal/store/usage_test.go` | the record's central claim, with TWO customers whose jobs overlap in time — a single-customer fixture cannot see a grouping defect | — | S1, S5 |
-| `TestUsageWindowFloorsAreInclusive` | `internal/store/usage_test.go` | a job exactly ON each floor counts and one second older does not; the off-by-one this shape invites | — | S1, S5 |
-| `TestUsagePreviousMonthIsTheCompletedMonth` | `internal/store/usage_test.go` | with `now` in September, August's jobs are in the month column and September's are not | — | S4 |
-| `TestUsagePreviousMonthCrossesTheYear` | `internal/store/usage_test.go` | with `now` in January, December of the PREVIOUS YEAR is the month column — red for any implementation that subtracts days or forgets the year | — | S4 |
-| `TestUsageBucketsReconcile` | `internal/store/usage_test.go` | `Delivered + Failed + Expired <= Pushed` in every window, with a job left in flight so the inequality is strict rather than vacuous | — | S2, S5 |
-| `TestUsageSeparatesFailedFromExpired` | `internal/store/usage_test.go` | a `dead` job and an `expired` job land in different buckets — the distinction an operator acts on | — | S5 |
-| `TestUsageIsOneStatement` | `internal/store/usage_test.go` | the query count for one call is 1, read from SQLite's own counter, so the cost cannot silently become 16N | — | S5 |
+| `TestUsageCountsOnlyTheWindowAndOnlyTheOwner` | `internal/store/usage_internal_test.go` | the record's central claim, with TWO customers whose jobs overlap in time — a single-customer fixture cannot see a grouping defect | — | S1, S5 |
+| `TestUsageWindowFloorsAreInclusive` | `internal/store/usage_internal_test.go` | a job exactly ON each floor counts and one second older does not; the off-by-one this shape invites | — | S1, S5 |
+| `TestUsagePreviousMonthIsTheCompletedMonth` | `internal/store/usage_internal_test.go` | with `now` in September, August's jobs are in the month column and September's are not | — | S4 |
+| `TestUsagePreviousMonthCrossesTheYear` | `internal/store/usage_internal_test.go` | with `now` in January, December of the PREVIOUS YEAR is the month column — red for any implementation that subtracts days or forgets the year | — | S4 |
+| `TestUsageBucketsReconcile` | `internal/store/usage_internal_test.go` | `Delivered + Failed + Expired <= Pushed` in every window, with a job left in flight so the inequality is strict rather than vacuous | — | S2, S5 |
+| `TestUsageSeparatesFailedFromExpired` | `internal/store/usage_internal_test.go` | a `dead` job and an `expired` job land in different buckets — the distinction an operator acts on | — | S5 |
+| `TestUsageIsOneStatement` | `internal/store/usage_internal_test.go` | ⚠ asserts the SOURCE holds exactly one query call, NOT a runtime statement count — this driver exposes no per-connection statement counter, which is the fallback T1's Risks pre-registered. It proves the shape cannot silently become 16N; it does not prove what SQLite executed | — | S5 |
 | `TestMigrationDownDropsUsageIndex` | `internal/store/migrate_internal_test.go` | the index EXISTS after `goose up` and is gone after the Down — both halves, so the Rollback section is real and the thing that bounds the scan is present | — | S3, S6 |
 
 ## Reachability
@@ -77,6 +77,15 @@ go test ./internal/store/ -run 'Usage' -count=1 2>&1 | tee /tmp/adr10t1.out && \
 | 4 — it is used | nothing measures whether an operator reads the numbers |
 
 ## Mutation Log
+
+- 2026-09-28 · cef5521* · mutant killed · exit 1 · `internal/store/usage.go` · the scan floor becomes now-31d instead of the oldest window, so the previous-month column is silently truncated in the first weeks of any month — plausible numbers, wrong ones · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · covers:the window floors
+- 2026-09-28 · cef5521* · mutant survived · exit 0 · `internal/store/usage.go` · a day-subtracting previous-month boundary: wrong for every month that is not 31 days long, and it drags December of the wrong year into a January window · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · covers:the previous-month boundary
+  ```
+  the fence passed with the mechanism broken; it may not materialize, compile, load, or assert on the changed path
+  ```
+- 2026-09-28 · cef5521* · mutant killed · exit 1 · `internal/store/usage.go` · a day-subtracting previous-month boundary. It SURVIVED the first attempt because every month test used a 31-day month; TestUsagePreviousMonthHandlesAShortMonth is the fixture that can produce the failure · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · covers:the previous-month boundary
+- 2026-09-28 · cef5521* · mutant killed · exit 1 · `internal/store/usage.go` · the grouping collapses, so every customer is charged with every other customer's jobs — the defect a single-customer fixture cannot see · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · covers:the per-owner grouping
+- 2026-09-28 · cef5521* · mutant killed · exit 1 · `internal/store/usage.go` · a second database call appears, which is what a per-window or per-customer loop looks like as it creeps in · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · covers:the single statement
 
 ## Invariants
 
@@ -91,10 +100,18 @@ go test ./internal/store/ -run 'Usage' -count=1 2>&1 | tee /tmp/adr10t1.out && \
 - `time.Date` with `m-1` is correct across a year boundary and day arithmetic is not;
   `TestUsagePreviousMonthCrossesTheYear` is the guard, and it is why that test exists rather than being
   left to review.
-- Counting the query statements depends on a SQLite counter rather than on the code's shape. If that
-  turns out not to be readable through this driver, say so in the task and assert the single statement
-  by reading `internal/store/usage.go` for exactly one `QueryContext` instead — and record which of the
-  two the test does, because they prove different things.
+- ★ **A MUTANT SURVIVED HERE AND THE FIXTURE WAS THE REASON.** The day-subtracting boundary
+  (`firstOfThisMonth.AddDate(0, 0, -31)`) passed both month tests on the first attempt, because August
+  and December both have 31 days — so subtracting 31 days from the 1st lands exactly on the 1st of the
+  previous month and the two implementations are indistinguishable. Neither assertion was weak; the
+  DATA could not exhibit the defect. `TestUsagePreviousMonthHandlesAShortMonth` uses February, where 1
+  March minus 31 days is 29 January, and the mutant is killed. The survived row is left in the log
+  above. ⚠ The general form is worth carrying: before trusting a kill, ask whether the fixture could
+  have produced the failure at all.
+- Counting the query statements reads the SOURCE, not a runtime counter — this driver exposes no
+  per-connection statement count, which is the fallback this section pre-registered. It proves the
+  shape cannot silently become 16N and proves nothing about what SQLite executed; the task's Tests
+  table says so on that row rather than leaving the stronger reading available.
 
 ## Stop Condition
 
@@ -108,3 +125,21 @@ retention policy would make every window past the retention horizon silently wro
 - A rollup table. (deferred: `docs/adr/BACKLOG.md`)
 
 ## Verification Log
+- 2026-09-28 · cef5521* · exit 1 · `set -o pipefail …` · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · ms:188
+  ```
+  --- last 9 line(s) of stdout
+  # github.com/atvirokodosprendimai/ocr-router/internal/store [github.com/atvirokodosprendimai/ocr-router/internal/store.test]
+  internal/store/usage_internal_test.go:86:21: f.repo.UsageByUser undefined (type *Repo has no field or method UsageByUser)
+  internal/store/usage_internal_test.go:130:21: f.repo.UsageByUser undefined (type *Repo has no field or method UsageByUser)
+  internal/store/usage_internal_test.go:159:21: f.repo.UsageByUser undefined (type *Repo has no field or method UsageByUser)
+  internal/store/usage_internal_test.go:186:21: f.repo.UsageByUser undefined (type *Repo has no field or method UsageByUser)
+  internal/store/usage_internal_test.go:213:21: f.repo.UsageByUser undefined (type *Repo has no field or method UsageByUser)
+  internal/store/usage_internal_test.go:241:21: f.repo.UsageByUser undefined (type *Repo has no field or method UsageByUser)
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/store [build failed]
+  FAIL
+  ```
+- 2026-09-28 · cef5521* · exit 0 · `set -o pipefail …` · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · ms:3643
+- 2026-09-28 · cef5521* · exit 0 · `set -o pipefail …` · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · ms:2047
+- 2026-09-28 · cef5521* · exit 0 · `set -o pipefail …` · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · ms:2769
+- 2026-09-28 · cef5521* · exit 0 · `set -o pipefail …` · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · ms:2406
+- 2026-09-28 · cef5521* · exit 0 · `set -o pipefail …` · acceptance-sha256:03b2aa193640a7a2aa75d3227ae12dd7e556c3f7b1d50d102b16fd79e154c06d · ms:2108
