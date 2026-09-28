@@ -83,6 +83,11 @@ go test ./internal/router/ -run 'Unmetered|Waiv' -count=1 2>&1 | tee /tmp/adr9t3
 
 ## Mutation Log
 
+- 2026-09-28 · 5a51b7a* · mutant killed · exit 1 · `internal/router/service.go` · the units-path waiver is removed, so an unmetered customer is billed again — kills TestAnUnmeteredDeliveryDebitsNothingAndStillAccrues · acceptance-sha256:e6af3c7ad8cbb5848320d0dd466cd1dd0ad838064474c700a97227b5a4200d96 · covers:the zero charge
+- 2026-09-28 · 5a51b7a* · mutant killed · exit 1 · `internal/router/service.go` · the WAIVED counter reports 0 instead of what the work cost, so an unmetered customer consumes invisibly — the conflation ADR-0009 exists to remove, in its subtle form · acceptance-sha256:e6af3c7ad8cbb5848320d0dd466cd1dd0ad838064474c700a97227b5a4200d96 · covers:the waived counter
+- 2026-09-28 · 5a51b7a* · mutant killed · exit 1 · `internal/store/repo_write.go` · a zero charge writes a zero-delta ledger row, so the audit records a movement that never happened — kills TestAnUnmeteredDeliveryWritesNoLedgerRow · acceptance-sha256:e6af3c7ad8cbb5848320d0dd466cd1dd0ad838064474c700a97227b5a4200d96 · covers:the absent ledger row
+- 2026-09-28 · 5a51b7a* · mutant killed · exit 1 · `internal/router/service.go` · the raw path reverts to reporting the flat credit as DEBITED even when it was waived, so ocrr_credits_debited_total stops agreeing with credit_entries — kills TestAnUnmeteredRawDeliveryWaivesTheFlatCredit · acceptance-sha256:e6af3c7ad8cbb5848320d0dd466cd1dd0ad838064474c700a97227b5a4200d96 · covers:the unchanged accrual
+
 ## Invariants
 
 - `Repo.DeliverJob` is still the ONLY place credits move for a job, and gains no new branch.
@@ -95,9 +100,17 @@ go test ./internal/router/ -run 'Unmetered|Waiv' -count=1 2>&1 | tee /tmp/adr9t3
 - Reading the user inside `Deliver` adds a failure mode to a path that previously could not fail on a
   missing user. Treat a missing owner as the existing error rather than as "metered" — a waiver
   decided by a failed read is a waiver nobody chose.
-- A future third delivery path would have to repeat the selection. Both current call sites are in one
-  file and this task changes both; there is no third yet, and inventing a shared helper for two call
-  sites is the abstraction this project's own rules reject.
+- A future third delivery path would have to repeat the selection. Both call sites now share
+  `Service.countCredits`, which is the one place that decides which series a delivery's money lands
+  on; the charge selection itself is still two lines in two functions, because a helper for two
+  branches is the abstraction this project's own rules reject.
+- ⚠ ONE MUTATION ROW IS LABELLED LOOSELY, and it is recorded here rather than left to read stronger
+  than it is. The row `covers:the unchanged accrual` actually mutated the RAW path's counter
+  selection (`countCredits(u, rawCost, charge)` → a direct debited `Add`), which is a different
+  mechanism. `the unchanged accrual` is a mechanism this task PRESERVES rather than adds — nothing in
+  the diff touches how `jobs.accrued_credits` is computed, so no mutation of this task's code can
+  break it. It is asserted by `TestAnUnmeteredDeliveryDebitsNothingAndStillAccrues`, and the honest
+  statement is "asserted, not mutation-bound".
 
 ## Stop Condition
 
@@ -111,3 +124,21 @@ waiver has more than two sites and the Decision needs amending, not the code.
 - Reconciling historical deliveries made before the flag existed. (permanent: fact: no customer is unmetered before this ADR ships, so there is nothing to reconcile; citation: file `internal/store/migrations/00006_unmetered.sql:1`)
 
 ## Verification Log
+- 2026-09-28 · 5a51b7a* · exit 1 · `set -o pipefail …` · acceptance-sha256:e6af3c7ad8cbb5848320d0dd466cd1dd0ad838064474c700a97227b5a4200d96 · ms:1986
+  ```
+  --- last 10 line(s) of stdout (of 14 after folding 14 raw)
+  --- FAIL: TestAnUnmeteredRawDeliveryWaivesTheFlatCredit (0.02s)
+      unmetered_test.go:247: credits = 99 after an unmetered RAW delivery, want 100
+      unmetered_test.go:250: ocrr_credits_debited_total = 1, want 0 — nothing was taken from a balance
+      unmetered_test.go:253: ocrr_credits_waived_total = 0, want 1 — a raw job's flat credit was waived and the waiver has to be visible
+  --- FAIL: TestWaivedAndDebitedAreNeverBothCounted (0.02s)
+      unmetered_test.go:280: ocrr_credits_debited_total = 8, want 3 — only the metered delivery's cost
+      unmetered_test.go:283: ocrr_credits_waived_total = 0, want 5 — only the unmetered delivery's cost
+  FAIL
+  FAIL	github.com/atvirokodosprendimai/ocr-router/internal/router	0.584s
+  FAIL
+  ```
+- 2026-09-28 · 5a51b7a* · exit 0 · `set -o pipefail …` · acceptance-sha256:e6af3c7ad8cbb5848320d0dd466cd1dd0ad838064474c700a97227b5a4200d96 · ms:4579
+- 2026-09-28 · 5a51b7a* · exit 0 · `set -o pipefail …` · acceptance-sha256:e6af3c7ad8cbb5848320d0dd466cd1dd0ad838064474c700a97227b5a4200d96 · ms:3015
+- 2026-09-28 · 5a51b7a* · exit 0 · `set -o pipefail …` · acceptance-sha256:e6af3c7ad8cbb5848320d0dd466cd1dd0ad838064474c700a97227b5a4200d96 · ms:3040
+- 2026-09-28 · 5a51b7a* · exit 0 · `set -o pipefail …` · acceptance-sha256:e6af3c7ad8cbb5848320d0dd466cd1dd0ad838064474c700a97227b5a4200d96 · ms:2917

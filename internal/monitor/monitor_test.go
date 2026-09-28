@@ -294,6 +294,38 @@ func TestRoleIsAnAllowedMetricLabel(t *testing.T) {
 	}
 }
 
+// TestWaivedMetricNameIsTheSameOnBothSides pins ADR-0009's new series to the
+// literal `internal/router` increments it by.
+//
+// ⚠ THERE WAS NO SUCH CHECK FOR ANY OTHER METRIC, despite a comment in
+// `internal/router/metrics.go` saying the pair is pinned by a test: checked
+// 2026-09-28, `ocrr_raw_jobs_total` is declared in that file alone, appears
+// nowhere in this package, and nothing compares the two. The Registry validates
+// LABEL names against an allow-list and does not validate metric names at all, so
+// a router-side rename is silent — the series simply stops being the one the
+// operator's dashboard queries.
+//
+// router cannot import monitor (that would invert the dependency) and its own
+// constants are unexported, so the pairing cannot be a compile-time check. A
+// shared LITERAL asserted from both sides is what is available: this test names
+// it here, and `TestAnUnmeteredRawDeliveryWaivesTheFlatCredit` reads the counter
+// by the same string in `internal/router`.
+func TestWaivedMetricNameIsTheSameOnBothSides(t *testing.T) {
+	const wire = "ocrr_credits_waived_total"
+
+	if monitor.MetricCreditsWaived != wire {
+		t.Errorf("monitor.MetricCreditsWaived = %q, want %q — the router increments the literal, "+
+			"so a rename here silently orphans the series rather than breaking a build",
+			monitor.MetricCreditsWaived, wire)
+	}
+	// And it must be a series the registry will actually carry, unlabelled.
+	reg := monitor.NewRegistry()
+	reg.Add(monitor.MetricCreditsWaived, nil, 5)
+	if got := reg.Value(monitor.MetricCreditsWaived, nil); got != 5 {
+		t.Errorf("waived counter = %d, want 5", got)
+	}
+}
+
 // TestExportedLabelNamesAreOnlyAllowListed parses the RENDERED output.
 //
 // Registration-time enforcement is bypassed by any hand-written exposition line,

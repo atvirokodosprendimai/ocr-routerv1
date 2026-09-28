@@ -164,6 +164,11 @@ const (
 	// MetricCreditsDebited counts credits charged, which should agree with the
 	// ledger.
 	MetricCreditsDebited = "ocrr_credits_debited_total"
+	// MetricCreditsWaived counts what an unmetered customer's deliveries WOULD
+	// have cost (ADR-0009). It is deliberately not folded into the counter above:
+	// that one reconciles against the ledger, and an unmetered delivery writes no
+	// ledger row because nothing moved.
+	MetricCreditsWaived = "ocrr_credits_waived_total"
 
 	// ★ MetricWorkersLive is THE silent failure: a label with no worker queues
 	// until its jobs hit their deadline, and nothing else reports it.
