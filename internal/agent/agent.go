@@ -301,6 +301,50 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 	a.report(ctx, job.JobID, units, "", nil)
 }
 
+// maxInputExt bounds the extension a client can contribute, dot included.
+//
+// Longer than any real extension and short enough that nothing downstream has to
+// think about path length. A bound rather than no bound because the input is
+// client-supplied and every unbounded one is somebody's problem later.
+const maxInputExt = 17
+
+// inputExt returns the extension to give a materialised input, or "" when the
+// client's filename does not offer a safe one.
+//
+// ⚠ IT IS A FILTER, NOT A SANITISER, and the difference is the point: nothing is
+// stripped or escaped or rewritten. An extension is either entirely
+// [A-Za-z0-9] within the length bound and used as-is, or it is refused and the
+// file keeps the bare job id — which is exactly the behaviour that shipped
+// before this existed, so refusing costs nothing that was ever working.
+//
+// Case is preserved: `.PDF` is what the client called it and every tool that
+// cares accepts either.
+func inputExt(filename string) string {
+	// Base first, so "../../.bashrc" is judged as ".bashrc" rather than by a
+	// path that was never going to be used.
+	base := filepath.Base(filename)
+	ext := filepath.Ext(base)
+	// ⚠ `filepath.Ext(".bashrc")` RETURNS ".bashrc", NOT "". It takes everything
+	// from the final dot, and in a dotfile that dot is the first character — so
+	// the whole name reads as an extension. Measured, after a test written on the
+	// assumption it returned "" failed. A dotfile has a name and no extension.
+	if ext == base {
+		return ""
+	}
+	// len < 2 covers both "no extension" and a bare trailing dot.
+	if len(ext) < 2 || len(ext) > maxInputExt {
+		return ""
+	}
+	for _, r := range ext[1:] {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		default:
+			return ""
+		}
+	}
+	return ext
+}
+
 // materialise downloads the job's source file, if it has one.
 func (a *Agent) materialise(ctx context.Context, job claimResponse) (string, func(), error) {
 	noop := func() {}
@@ -312,7 +356,18 @@ func (a *Agent) materialise(ctx context.Context, job claimResponse) (string, fun
 	if err := os.MkdirAll(a.cfg.TmpDir, 0o700); err != nil {
 		return "", noop, err
 	}
-	path := filepath.Join(a.cfg.TmpDir, job.JobID)
+	// ⚠ THE JOB ID NAMES THE FILE; THE CLIENT ONLY CONTRIBUTES AN EXTENSION.
+	//
+	// The extension is not cosmetic: a great many tools detect format by it, and
+	// without one this file is unidentifiable. Reported 2026-09-28 from a real
+	// worker — `libreoffice --headless --cat <uuid>` answers "source file could
+	// not be loaded", the job fails, and nothing in the router explains why.
+	//
+	// ⚠ AND THE BASENAME IS NEVER THE CLIENT'S. `job.Filename` is whatever a
+	// customer called their upload, arriving at a worker on a host that customer
+	// does not own; using it would let them choose a path there. Only a
+	// character-validated extension is taken — see inputExt.
+	path := filepath.Join(a.cfg.TmpDir, job.JobID+inputExt(job.Filename))
 
 	// O_EXCL so a stale file from a previous run can never be silently reused as
 	// though it were this job's input.
