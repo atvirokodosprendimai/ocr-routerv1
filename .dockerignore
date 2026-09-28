@@ -1,0 +1,31 @@
+# The build context is sent to the daemon in full, so everything not needed for
+# `go build` is latency at best — and a few of these would be a leak.
+
+.git
+.github
+
+# ⚠ THE DANGEROUS ONES. A developer's working tree holds a real database with
+# real tokens and a real credit ledger, and an uploaded-file directory beside it.
+# Without these lines they are copied into the build context, and any layer that
+# does `COPY . .` bakes them into an image.
+*.db
+*.db-shm
+*.db-wal
+blobs/
+res/
+data/
+
+# Local scratch and scripts from a development session.
+test/
+*.sh
+compose.yml
+.env
+
+# Documentation and records: read by people, never by the compiler.
+docs/
+README.md
+*.md
+
+# Built artefacts. A host binary is the wrong GOOS anyway.
+bin/
+routerbin

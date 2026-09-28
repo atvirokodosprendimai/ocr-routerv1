@@ -10,6 +10,27 @@ the command's stdout back. `ocr` is simply the label it serves by default.
 The design and its reasoning are in
 [`docs/adr/0001-ocr-router-architecture.md`](docs/adr/0001-ocr-router-architecture.md).
 
+## Containers
+
+```bash
+cp compose.yml.example compose.yml
+docker compose build
+docker compose run --rm bootstrap    # prompts for a password, prints a token once
+docker compose up -d router
+```
+
+`Dockerfile` has three targets — `router` and `client` on distroless/static,
+`worker` on debian-slim. The worker's is the odd one and deliberately so: its
+whole job is to fork whatever `--cmd` names, so it needs a base you can install
+that command onto, and it ships **no OCR tooling** of its own. OCR is this
+system's default label, not its purpose.
+
+⚠ Read the comments in `compose.yml.example` before deploying any of it. Two
+lines matter more than the rest: `/data` must stay on a volume because it holds
+the credit ledger, and `--insecure-cookies` is there so the dashboard works on
+`http://localhost` — it means the session cookie travels in clear text, and
+anything reachable from a network wants TLS in front instead.
+
 ## First run
 
 ```bash

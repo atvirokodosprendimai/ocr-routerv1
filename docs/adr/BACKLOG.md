@@ -271,8 +271,30 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   key custody before anything else.
 
 - **Packaging: systemd units, containers, release artefacts.**
-  Deferred by ADR-0001 task T8 (§Out of Scope).
+  Deferred by ADR-0001 task T8 (§Out of Scope). ⚠ **PARTLY DONE 2026-09-28** — containers only, and
+  by direct request rather than by a record.
   The binaries build and run; nothing ships them.
+  What exists now: a multi-target `Dockerfile` (router and client on distroless/static, worker on
+  debian-slim because its whole job is to fork a command an operator installs) and
+  `compose.yml.example`. `CGO_ENABLED=0` works because the SQLite driver is pure Go, and the
+  generated `*_templ.go` files are committed, so the image needs neither a libc nor a `templ` step.
+  ⚠ **NOT decided, and still open:** systemd units, published release artefacts, and any image
+  registry or tagging scheme. Nor is there an ADR for the container decisions — the consequential
+  ones are volumes (`/data` holds the credit ledger), TLS termination (the session cookie is
+  `Secure`, so the example carries `--insecure-cookies` for localhost and a proxy block for
+  anything else) and NOT publishing `/metrics` (ADR-0001 T11 binds it to loopback on purpose;
+  container-local loopback preserves that, and the example shows a namespace-sharing sidecar rather
+  than moving the listener). Those are pinned by tests in `cmd/router/packaging_test.go` instead of
+  by a record, which is weaker: a test catches a change, a record explains why.
+
+- **A `router healthz` subcommand, so a container can probe itself.**
+  Found 2026-09-28 while writing `compose.yml.example`. The router image is distroless — no shell, no
+  curl, no wget — so a compose `healthcheck` has nothing to reach `/healthz` with, and the obvious
+  workaround (`test: ["CMD", "/router", "--help"]`) exits 0 whenever the image is intact and would
+  report HEALTHY while the listener is wedged. That is a check that cannot fail. The example ships
+  NO healthcheck and explains why, offering the reverse proxy or a sidecar sharing the network
+  namespace instead. A tiny `router healthz` that GETs the endpoint and exits non-zero would close
+  it properly; it needs a decision about which address it assumes.
 
 - **Sandboxing the worker subprocess with containers or seccomp.**
   Deferred by ADR-0001 task T9 (§Out of Scope).
