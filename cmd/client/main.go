@@ -15,7 +15,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/client"
+	"github.com/atvirokodosprendimai/ocr-router/client"
 )
 
 // Exit codes name an ACTION, not an error taxonomy.
@@ -185,7 +185,7 @@ func submit(ctx context.Context, c *cli.Command, stdout, stderr io.Writer) error
 
 // classify turns a submission error into an exit code.
 //
-// ⚠ This is the line that gives internal/client's typed errors their point.
+// ⚠ This is the line that gives the client package's typed errors their point.
 // Collapsing it to one code would leave a script unable to tell a pointless
 // retry from a correct one.
 func classify(ctx context.Context, err error) error {

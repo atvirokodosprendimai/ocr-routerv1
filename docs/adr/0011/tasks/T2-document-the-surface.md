@@ -36,30 +36,41 @@ underneath them.
 
 ```bash
 set -o pipefail
-go test ./client/... -count=1 -run 'TestReadmeClientExampleNamesRealSymbols|Example' -v 2>&1 | tee /tmp/acc-0011-T2a.out \
+go test ./client/... -count=1 -run 'TestReadmeClientExampleNamesRealSymbols|TestExamplesAreAttachedForGodoc' -v 2>&1 | tee /tmp/acc-0011-T2a.out \
   && ! grep -qE "no tests to run|^FAIL|^--- FAIL|warning: no tests" /tmp/acc-0011-T2a.out \
   && go vet ./client/... && test -z "$(gofmt -l .)" \
-  && go doc ./client Submit 2>&1 | tee /tmp/acc-0011-T2b.out \
-  && grep -q "Example" /tmp/acc-0011-T2b.out \
-  && go test ./client/... ./cmd/client/... -count=1 2>&1 | tee /tmp/acc-0011-T2c.out \
+  && go test ./client/... ./cmd/client/... -count=1 -race 2>&1 | tee /tmp/acc-0011-T2c.out \
   && ! grep -qE "no tests to run|^FAIL|^--- FAIL" /tmp/acc-0011-T2c.out
 ```
 
-<The new unit runs FIRST and alone, so the 776 lines of T1-era regression that follow cannot carry
-the verdict. The `go doc` leg is the one that proves rung 3 rather than rung 1: a compiled Example
-that godoc does not attach to `Submit` is a test, not documentation, and the two are
-indistinguishable from the test run alone — the attachment depends on the function being named
-exactly `Example` or `ExampleSubmit_*`, which is a naming convention nothing else checks. The
-regression leg is scoped to the two packages this task can reach.>
+<The two new units run FIRST and alone, so the T1-era regression that follows cannot carry the
+verdict.
+
+⚠ THIS FENCE ONCE CONTAINED A LEG THAT COULD NEVER PASS, and the correction is the most useful thing
+in this task. It read `go doc ./client Submit | grep -q "Example"`, on the belief that `go doc`
+renders examples. IT DOES NOT — example rendering is a godoc/pkgsite feature and the `go doc` CLI
+emits no "Example" however correct the code is, reproduced on go1.26.6 by an independent review on
+2026-09-29. The leg would have failed AFTER the work was done correctly, which is exactly inverted
+from the failure it was defending against. ★ THE GENERAL LESSON: a gate asserting that a TOOL
+reports something has to be run once against a known-good tree, or it encodes the author's belief
+about the tool rather than a fact about the code. `TestExamplesAreAttachedForGodoc` replaces it and
+asks the same question through `go/doc`, which is the package godoc itself uses. The regression leg
+is scoped to the two packages this task can reach, and now carries `-race`, which ADR-0005-T1's
+original acceptance required and an earlier draft of this fence silently dropped.>
 
 ## Tests
 
 | Test name | File | Verifies | Covers | Steps |
 |-----------|------|----------|--------|-------|
 | `TestReadmeClientExampleNamesRealSymbols` | `client/readme_test.go` | Every `client.<Ident>` the README's Go fence names is a symbol the package actually exports, and at least one was found — so the test cannot pass by matching nothing. | — | S1, S4 |
-| `Example` | `client/example_test.go` | The documented import-and-submit shape compiles against the exported surface only. Red the moment a symbol in it is renamed or re-signatured. | — | S2 |
-| `ExampleSubmit_progress` | `client/example_test.go` | The `Progress` callback shape compiles, and godoc attaches it to `Submit`. | — | S2 |
-| `TestClientPackageIsImportable` | `client/public_test.go` | Unchanged from T1. Runs here as regression: T2 must not relocate anything. | — | S4 |
+| `TestExamplesAreAttachedForGodoc` | `client/godoc_test.go` | `go/doc` binds a package-level example and an example on `Submit` — the rung-3 property, that a reader DISCOVERS them, which compiling alone does not give. | — | S2 |
+
+⚠ **The `Example` functions themselves are NOT rows here, and that is the correction.** An earlier
+draft listed `Example` and `ExampleSubmit_progress` as tests. They are not: an Example with no
+`// Output:` comment is COMPILED AND NEVER RUN, and nothing in one can go red — there is no failure
+call in its body. `adr-lint` says so outright. What they give is a compile-time check of the
+exported surface, which is real and is not a test; what proves they are DOCUMENTATION rather than
+dead code is `TestExamplesAreAttachedForGodoc`, which is a test and can fail.
 
 ## Reachability
 
@@ -71,6 +82,13 @@ regression leg is scoped to the two packages this task can reach.>
 | 4 — it is used | Nothing measures this yet. No external consumer exists and this repository cannot observe one — ADR-0011 §Consequences names that as inherent to publishing. |
 
 ## Mutation Log
+
+- 2026-09-29 · 43f2fb0* · mutant inconclusive · exit 1 · `client/example_test.go` · the example is renamed off the Example<Symbol> convention: it still compiles and still passes, and silently stops rendering beside Submit for every reader — the rung-3 failure a compile-only check cannot see · acceptance-sha256:ab7e5680bf94a2bdce15c0d6fc675cbdfcce19faba199533cfdc2e19f85bcd4e · covers:the Example compiling against the exported surface
+  ```
+  the fence failed on a build/parse error, not an assertion
+  ```
+- 2026-09-29 · 43f2fb0* · mutant killed · exit 1 · `client/example_test.go` · the example is renamed to a symbol that EXISTS, so go vet accepts it and the package still builds — but godoc now renders it beside Config instead of Submit, and the only entry point the package has loses its worked example with nothing reporting it · acceptance-sha256:ab7e5680bf94a2bdce15c0d6fc675cbdfcce19faba199533cfdc2e19f85bcd4e · covers:the Example compiling against the exported surface
+- 2026-09-29 · 43f2fb0* · mutant killed · exit 1 · `README.md` · the README documents a function the package does not export, so the first thing an adopter copies does not compile — the exact rot this check exists for · acceptance-sha256:ab7e5680bf94a2bdce15c0d6fc675cbdfcce19faba199533cfdc2e19f85bcd4e · covers:the README naming symbols that exist
 
 ## Invariants
 
@@ -105,3 +123,7 @@ a prerequisite rather than a follow-up.
 - Documenting the HTTP + SSE API for non-Go callers; `README.md` § The API already owns that.
 
 ## Verification Log
+- 2026-09-29 · 43f2fb0* · exit 0 · `set -o pipefail …` · acceptance-sha256:ab7e5680bf94a2bdce15c0d6fc675cbdfcce19faba199533cfdc2e19f85bcd4e · ms:3497
+- 2026-09-29 · 43f2fb0* · exit 0 · `set -o pipefail …` · acceptance-sha256:ab7e5680bf94a2bdce15c0d6fc675cbdfcce19faba199533cfdc2e19f85bcd4e · ms:3671
+- 2026-09-29 · 43f2fb0* · exit 0 · `set -o pipefail …` · acceptance-sha256:ab7e5680bf94a2bdce15c0d6fc675cbdfcce19faba199533cfdc2e19f85bcd4e · ms:4500
+- 2026-09-29 · 43f2fb0* · exit 0 · `set -o pipefail …` · acceptance-sha256:ab7e5680bf94a2bdce15c0d6fc675cbdfcce19faba199533cfdc2e19f85bcd4e · ms:5122

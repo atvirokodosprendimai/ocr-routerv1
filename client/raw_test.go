@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/client"
+	"github.com/atvirokodosprendimai/ocr-router/client"
 )
 
 const pngMagic = "\x89PNG\r\n\x1a\n"

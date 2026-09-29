@@ -5,7 +5,7 @@
 **Owner:** M
 **Spec:** None — no spec stage
 **Cross-references:** `docs/adr/0001-ocr-router-architecture.md`, `docs/adr/BACKLOG.md`
-**Governs:** `internal/runner/**`, `internal/results/**`, `internal/router/**`, `internal/blob/**`, `internal/httpapi/upload.go`, `internal/httpapi/files.go`, `internal/agent/**`, `internal/client/**`, `cmd/worker/**`, `cmd/client/output.go`, `internal/store/migrations/**`
+**Governs:** `internal/runner/**`, `internal/results/**`, `internal/router/**`, `internal/blob/**`, `internal/httpapi/upload.go`, `internal/httpapi/files.go`, `internal/agent/**`, `client/**`, `cmd/worker/**`, `cmd/client/output.go`, `internal/store/migrations/**`
 
 <!-- Class: every component that carries a job's OUTPUT from the worker's stdout to the client's
 file, plus the registry and pricing that decide a job's mode. Enumerated 2026-09-16 with

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/client"
+	"github.com/atvirokodosprendimai/ocr-router/client"
 )
 
 // pngMagic is deliberately not valid UTF-8 — the byte the whole ADR is about.

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/client"
+	"github.com/atvirokodosprendimai/ocr-router/client"
 )
 
 // stdoutPath is the conventional "write to stdout" destination.
