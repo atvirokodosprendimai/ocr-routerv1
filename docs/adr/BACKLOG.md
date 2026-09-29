@@ -307,7 +307,13 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   Process-group handling and the tmpdir lifecycle are POSIX-shaped.
 
 - **Exported `Upload()` and `Collect()` on the public client package.**
-  Deferred by ADR-0011 (§Out of Scope).
+  Deferred by ADR-0011 (§Out of Scope). **CLAIMED 2026-09-29 by ADR-0012
+  (`docs/adr/0012/0012-client-session.md`), Proposed — remove this entry when that record is
+  Accepted and executed.** ⚠ ADR-0012 does NOT export them as package functions: it answers the
+  criterion at the end of this entry with a `Session` handle, so the ordering becomes a compile-time
+  property (`Upload` is a method, `Open` is its only constructor, and `Open` returns only after
+  `hello`) rather than a doc comment. The entry is kept until execution lands because a Proposed
+  record is not a shipped one.
   `client.Submit` uploads and blocks for the result in one call, in one process. A caller that wants
   to post a job, keep the id, and collect the result later — from a different process, a queue
   worker, or after a restart — has no supported path: the two halves exist as the unexported
@@ -326,3 +332,53 @@ reported by `adr-debt` and missing here is a pointer to nothing.
   revisiting the moment the package grows a second entry point, because that is when passing
   `Config` to each of them starts to read as an omission rather than as simplicity. ⚠ Doing it after
   an external consumer has pinned the package is a breaking change; doing it before is free.
+  ⚠ **ADR-0012 creates exactly the condition this entry names** — the package gains `Open` beside
+  `Submit`, both taking `Config` — so it is worth revisiting once ADR-0012 is Accepted, and ADR-0012
+  §Follow-ups says so.
+
+- **Reconnecting a dropped SSE stream inside `client.Session`, and the retry policy that needs.**
+  Deferred by ADR-0012 (§Out of Scope).
+  `Session.Events()` CLOSES when the stream dies and the caller re-`Open`s, using `Backlog()` to pick
+  up results that landed while it was away. That is deliberate rather than unfinished: a reconnect
+  policy needs decisions only the caller can make — how long to keep trying, how many attempts, and
+  what happens to an `Upload` that was in flight when the connection dropped. `internal/agent`
+  already carries one shape of the answer (capped exponential backoff with jitter,
+  `internal/agent/agent.go:97-124`, where the jitter matters because a router restart drops every
+  worker at once), so the pattern exists to copy if a caller turns out to want it in the library.
+  ⚠ Note the asymmetry this leaves: `client.Submit` has no reconnect either, so a one-shot call
+  against a proxy that idles out a long job fails with `RetryableError` and the CLI exits. That is
+  the same gap seen from the other side, and the entry below is the other half of it.
+
+- **Streaming `client` uploads instead of buffering the whole document in memory.**
+  Deferred by ADR-0012 (§Out of Scope), and pre-existing — ADR-0012 relocates the defect, it does not
+  introduce it.
+  Both `client.Submit`'s `upload` and `Session.Upload` build the multipart body into a
+  `bytes.Buffer` before sending (`client/client.go:289-306`), so a caller's whole document is held in
+  memory. ⚠ **The ROUTER was deliberately fixed not to do this** — `/upload` reads the multipart part
+  itself rather than calling `r.FormFile`, precisely to avoid a 32 MiB in-memory parse plus a temp
+  spill (ADR-0001, and `docs/adr/0006`; the audit is in the `wing_ocr-routerv1` memory drawer for
+  `/upload`'s handling). So the server streams and the client does not, which is the wrong way round:
+  the client is the side running on a machine nobody is monitoring. The fix is an `io.Pipe` with the
+  multipart writer on one end, and it was kept out of ADR-0012 so that record stayed a provably
+  behaviour-preserving relocation. Worth doing before a consumer feeds it large PDFs.
+
+- **Exposing an HTTP status code on the `client` package's errors.**
+  Deferred by ADR-0012 (§Out of Scope).
+  `FailedError` and `RetryableError` say what a caller should DO; neither says what the router
+  ANSWERED. That is deliberate and mostly right — ADR-0005 gave these errors types precisely so nobody
+  parses prose — but it costs one real diagnosis. `e-tar-crawlerv1/internal/ocr/ocr.go:513-523`
+  classifies a 409 fatally AND explains it: *"the mode in OCR_PIPELINES disagrees with how this label is
+  configured on the router"*. `client/client.go` has no 409 branch and surfaces no status, so a consumer
+  porting onto this package keeps the fatal/retryable split and loses the message — it cannot even
+  detect 409 to re-attach its own. A `StatusCode int` on both error types, or a `Status() int`, would
+  restore it without putting the router's vocabulary in the library.
+
+- **Giving the `client` package's `Example` functions `// Output:` comments so `go test` runs them.**
+  Deferred by ADR-0012 task T4 (§Out of Scope).
+  `client/example_test.go` declares `Example`, `ExampleSubmit_progress` and `ExampleInput_params`, and
+  `grep -c "Output:"` over it returns **0** — so `go test` COMPILES all three and RUNS none. They
+  therefore catch a signature change (the build breaks) and nothing else: a body that compiles while
+  doing the wrong thing passes. T4 adds `ExampleOpen` with an `// Output:` comment; bringing the three
+  older ones under the same bar was kept out of it so the doc task stayed additive. ⚠ Each needs a
+  deterministic printed line, which is the actual work — map iteration and event ordering are where an
+  example becomes flaky.
