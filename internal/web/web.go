@@ -20,15 +20,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/starfederation/datastar-go/datastar"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/httpapi"
-	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
-	"github.com/atvirokodosprendimai/ocr-router/internal/ratelimit"
-	"github.com/atvirokodosprendimai/ocr-router/internal/results"
-	"github.com/atvirokodosprendimai/ocr-router/internal/router"
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
-	"github.com/atvirokodosprendimai/ocr-router/internal/web/views"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/httpapi"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/ratelimit"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/results"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/web/views"
 )
 
 // Deps is what the dashboard needs.

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/router"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
 )
 
 // unmetered marks a customer exempt from the balance, the way an administrator

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
-	"github.com/atvirokodosprendimai/ocr-router/internal/session"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/session"
 )
 
 // withSessions attaches a real session store to the harness's service.

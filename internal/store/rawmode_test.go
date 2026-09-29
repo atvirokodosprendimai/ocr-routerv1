@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
 )
 
 // TestSetRateCarriesRawMode pins the write half of the admin-owned mode.

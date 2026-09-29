@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/router"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
 )
 
 // rawJobDone admits a raw job, leases it, and completes it with body.

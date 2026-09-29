@@ -8,7 +8,7 @@
 **Governs:** `client/**`
 **Enforced-by:** `client/public_test.go::TestClientPackageIsImportable`
 **Invalidates:** none — checked. ADR-0005 decided the SEAM (protocol in a package, flags and rendering in `cmd/client`) and this record keeps that seam exactly as it is; it changes only which directory the package half sits in. ADR-0006 added `Input.Raw` and `Result.Raw` to that package and is likewise unaffected by the path. Both records' `Governs:` lines name `internal/client/**` and are repaired by T1 in the same commit as the move — see the Context.
-**Served-path change:** A Go program in another module can write `import "github.com/atvirokodosprendimai/ocr-router/client"` and call `client.Submit(ctx, cfg, in, prog)` to upload a file and block for its result, instead of re-implementing the SSE-before-upload ordering, the backlog replay and the job-id matching against the wire format by hand.
+**Served-path change:** A Go program in another module can write `import "github.com/atvirokodosprendimai/ocr-routerv1/client"` and call `client.Submit(ctx, cfg, in, prog)` to upload a file and block for its result, instead of re-implementing the SSE-before-upload ordering, the backlog replay and the job-id matching against the wire format by hand.
 
 ## Context
 
@@ -29,7 +29,7 @@ every element the request names:
 
 So the gap is not missing code. **The gap is one directory name.** Go's `internal/` rule is a
 compiler-enforced import boundary: a package under `internal/` is importable only from within
-`github.com/atvirokodosprendimai/ocr-router`, so the request as written is unsatisfiable while the
+`github.com/atvirokodosprendimai/ocr-routerv1`, so the request as written is unsatisfiable while the
 package sits there, and satisfied entirely by moving it.
 
 **The blast radius was measured, not estimated** (`grep -rn "internal/client"`, 2026-09-29, over
@@ -76,7 +76,7 @@ the sentence alone.
 ## Decision
 
 Move `internal/client/` to `client/` at the module root, so its import path becomes
-`github.com/atvirokodosprendimai/ocr-router/client`. The move is a `git mv` plus the `import` line
+`github.com/atvirokodosprendimai/ocr-routerv1/client`. The move is a `git mv` plus the `import` line
 in six files; **no exported or unexported symbol is added, removed, renamed or re-signatured**, and
 no function body changes.
 
@@ -149,7 +149,7 @@ Consequences, and it is the cost M accepted.
 
 | Contract | Producing task | Consuming task(s) | Breaking? |
 |----------|----------------|-------------------|-----------|
-| The `github.com/atvirokodosprendimai/ocr-router/client` import path | T1 | T2 | No — T2 only reads and documents the surface T1 relocates. T2 cannot compile before T1 lands. |
+| The `github.com/atvirokodosprendimai/ocr-routerv1/client` import path | T1 | T2 | No — T2 only reads and documents the surface T1 relocates. T2 cannot compile before T1 lands. |
 
 ## Implementation
 
@@ -224,6 +224,18 @@ named in Consequences.
 
 ## Follow-ups
 
+- [x] **The module path was wrong, and it made this record's whole promise unreachable.** Found by M
+      on 2026-09-29, hours after the move merged: `go.mod` declared
+      `github.com/atvirokodosprendimai/ocr-router` while the repository is `ocr-routerv1`. Go resolves
+      a module path as a URL, so `go get .../ocr-routerv1/client` — the only address an external
+      consumer can type — did not resolve to this module at all. The package was published and
+      unreachable, which is this corpus's most-repeated failure shape wearing a new hat: the thing
+      exists, is tested, and nothing selects it. ⚠ NOTHING IN THE BUILD CAN SEE THIS. A module builds,
+      vets, tests and ships perfectly under a path that matches no remote; only an outside consumer
+      finds out, and this repository has no outside consumer to tell it. Renamed across 229 sites in
+      101 files (go.mod, every `.go`, both `.templ` sources, `README.md` and this record) in one
+      generated `mrw` plan. Pasted compiler transcripts in ADR-0003 through ADR-0010 task files still
+      carry the old path and are LEFT ALONE: they are records of runs that really happened against it.
 - [ ] M to confirm the package path `client/` rather than `pkg/client/` before the first external
       consumer pins it — the choice is the author's (Alternatives), and it is cheap to change now
       and expensive after someone imports it.

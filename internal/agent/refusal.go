@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/runner"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/runner"
 )
 
 // exitCodeOf pulls the forked command exit status out of a runner failure.

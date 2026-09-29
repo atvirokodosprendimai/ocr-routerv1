@@ -30,7 +30,7 @@ Status: `pending` | `partial` | `blocked` | `done`.
 
 | Producer | Contract | Consumer(s) | Ordering note |
 |----------|----------|-------------|---------------|
-| T1 | The `github.com/atvirokodosprendimai/ocr-router/client` import path | T2 | T1 before T2 — T2's Example does not compile until the path exists. |
+| T1 | The `github.com/atvirokodosprendimai/ocr-routerv1/client` import path | T2 | T1 before T2 — T2's Example does not compile until the path exists. |
 
 ## Notes
 

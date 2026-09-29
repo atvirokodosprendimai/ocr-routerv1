@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/monitor"
-	"github.com/atvirokodosprendimai/ocr-router/internal/router"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/monitor"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
 )
 
 // recorder is a Counter that remembers what it was told, so a test can assert

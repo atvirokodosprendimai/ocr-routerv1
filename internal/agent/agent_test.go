@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/agent"
-	"github.com/atvirokodosprendimai/ocr-router/internal/runner"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/agent"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/runner"
 )
 
 // fakeRouter is a minimal stand-in for the real router, so the agent's loop can

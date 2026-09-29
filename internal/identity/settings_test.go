@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
 )
 
 // settingsFixture bootstraps an admin and a customer to edit.

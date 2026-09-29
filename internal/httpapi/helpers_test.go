@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // newCountingServer fronts the real API with a reader that counts what the

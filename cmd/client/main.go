@@ -15,7 +15,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/atvirokodosprendimai/ocr-router/client"
+	"github.com/atvirokodosprendimai/ocr-routerv1/client"
 )
 
 // Exit codes name an ACTION, not an error taxonomy.

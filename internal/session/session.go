@@ -14,9 +14,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
 )
 
 // secretBytes is the entropy behind a session cookie. The same 32 bytes a bearer

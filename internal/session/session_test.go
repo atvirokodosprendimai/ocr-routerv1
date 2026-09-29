@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/session"
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/session"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
 )
 
 var base = time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)

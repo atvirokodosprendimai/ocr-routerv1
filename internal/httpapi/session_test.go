@@ -11,16 +11,16 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/blob"
-	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/httpapi"
-	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
-	"github.com/atvirokodosprendimai/ocr-router/internal/logging"
-	"github.com/atvirokodosprendimai/ocr-router/internal/results"
-	"github.com/atvirokodosprendimai/ocr-router/internal/router"
-	"github.com/atvirokodosprendimai/ocr-router/internal/session"
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/blob"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/httpapi"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/logging"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/results"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/session"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
 )
 
 // sessionEnv mounts the API under a chi router with an /admin subtree, so the

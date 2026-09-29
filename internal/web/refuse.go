@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/httpapi"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/httpapi"
 )
 
 // loginPath is where a browser that is not signed in is sent.

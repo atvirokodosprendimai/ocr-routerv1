@@ -9,18 +9,18 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/blob"
-	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
-	"github.com/atvirokodosprendimai/ocr-router/internal/httpapi"
-	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
-	"github.com/atvirokodosprendimai/ocr-router/internal/logging"
-	"github.com/atvirokodosprendimai/ocr-router/internal/monitor"
-	"github.com/atvirokodosprendimai/ocr-router/internal/ratelimit"
-	"github.com/atvirokodosprendimai/ocr-router/internal/results"
-	"github.com/atvirokodosprendimai/ocr-router/internal/router"
-	"github.com/atvirokodosprendimai/ocr-router/internal/session"
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
-	"github.com/atvirokodosprendimai/ocr-router/internal/web"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/blob"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/httpapi"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/logging"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/monitor"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/ratelimit"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/results"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/session"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/web"
 )
 
 // Config is everything the binary needs to build itself.

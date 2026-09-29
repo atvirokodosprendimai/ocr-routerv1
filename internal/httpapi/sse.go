@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // handleSSE is the command channel: the router tells a client which files are

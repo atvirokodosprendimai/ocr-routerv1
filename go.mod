@@ -1,4 +1,4 @@
-module github.com/atvirokodosprendimai/ocr-router
+module github.com/atvirokodosprendimai/ocr-routerv1
 
 go 1.26.6
 

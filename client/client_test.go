@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/client"
+	"github.com/atvirokodosprendimai/ocr-routerv1/client"
 )
 
 // fakeRouter is a test double for the three endpoints Submit drives.

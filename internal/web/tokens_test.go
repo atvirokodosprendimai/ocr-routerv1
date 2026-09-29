@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // TestTokenListIsReachableFromTheDashboard is the rung-2 check that was missing.

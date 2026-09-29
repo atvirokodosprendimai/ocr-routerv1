@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/router"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
 )
 
 // filePart returns the "file" part of a multipart request as a STREAM, without

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
 )
 
 // recv waits briefly for one event. Every wait in this file is bounded so a

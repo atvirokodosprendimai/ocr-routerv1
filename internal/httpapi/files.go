@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // handleFile serves both roles: a client collects its result, a worker fetches

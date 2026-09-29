@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/agent"
-	"github.com/atvirokodosprendimai/ocr-router/internal/runner"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/agent"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/runner"
 )
 
 // refusingRouter answers every subscribe with one status and body, and counts

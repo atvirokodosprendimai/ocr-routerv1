@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 func testConfig(t *testing.T) Config {

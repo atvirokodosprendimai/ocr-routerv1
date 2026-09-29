@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/ratelimit"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/ratelimit"
 )
 
 var base = time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)

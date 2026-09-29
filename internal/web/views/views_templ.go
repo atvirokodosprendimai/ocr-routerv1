@@ -9,7 +9,7 @@ import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
 import "fmt"
-import "github.com/atvirokodosprendimai/ocr-router/internal/core"
+import "github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 
 // Overview is the landing page: live counters, the job table and the worker
 // table, all patched in over one SSE stream.

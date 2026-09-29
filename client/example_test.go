@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/client"
+	"github.com/atvirokodosprendimai/ocr-routerv1/client"
 )
 
 // Example submits one file and prints the units the service produced.

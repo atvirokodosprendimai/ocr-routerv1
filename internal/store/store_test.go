@@ -13,7 +13,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
 )
 
 // open is the helper every test uses. It returns the two handles and closes

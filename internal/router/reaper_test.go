@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/router"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
 )
 
 func TestReapRequeuesExpiredLease(t *testing.T) {

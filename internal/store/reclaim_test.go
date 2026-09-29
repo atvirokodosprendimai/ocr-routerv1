@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
 )
 
 // claim puts a job in `processing` under a lease, which is the only state a

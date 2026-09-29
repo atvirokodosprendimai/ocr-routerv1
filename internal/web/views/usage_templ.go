@@ -9,7 +9,7 @@ import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
 import "fmt"
-import "github.com/atvirokodosprendimai/ocr-router/internal/core"
+import "github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 
 // Usage is the per-customer counter table, and a live fragment like Stats, Jobs
 // and Workers.

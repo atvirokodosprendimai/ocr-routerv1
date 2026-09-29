@@ -12,16 +12,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/blob"
-	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/httpapi"
-	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
-	"github.com/atvirokodosprendimai/ocr-router/internal/logging"
-	"github.com/atvirokodosprendimai/ocr-router/internal/ratelimit"
-	"github.com/atvirokodosprendimai/ocr-router/internal/results"
-	"github.com/atvirokodosprendimai/ocr-router/internal/router"
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/blob"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/httpapi"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/logging"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/ratelimit"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/results"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
 )
 
 // countingCounter records metric increments for assertion.

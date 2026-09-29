@@ -3,7 +3,7 @@ package views
 import (
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // Dashboard is the read model the views render.

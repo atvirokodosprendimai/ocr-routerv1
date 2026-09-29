@@ -16,8 +16,8 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/agent"
-	"github.com/atvirokodosprendimai/ocr-router/internal/runner"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/agent"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/runner"
 )
 
 func main() {

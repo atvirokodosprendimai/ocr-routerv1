@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/web/views"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/web/views"
 )
 
 // render is views_test.go's helper, reused here.

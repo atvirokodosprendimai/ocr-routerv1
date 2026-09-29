@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/runner"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/runner"
 )
 
 // TestFailureKeepsStdout is the defect ADR-0007 was opened for.

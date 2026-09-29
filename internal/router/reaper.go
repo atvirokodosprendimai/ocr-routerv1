@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // ReapReport says what one sweep did. Returned so the caller can count it as a

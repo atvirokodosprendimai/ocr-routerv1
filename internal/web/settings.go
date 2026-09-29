@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/web/views"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/web/views"
 )
 
 // updateSettings changes a customer's buffer limit, priority and job TTL.

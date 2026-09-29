@@ -11,9 +11,9 @@ import (
 	"github.com/a-h/templ"
 	"github.com/starfederation/datastar-go/datastar"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
-	"github.com/atvirokodosprendimai/ocr-router/internal/ratelimit"
-	"github.com/atvirokodosprendimai/ocr-router/internal/web/views"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/ratelimit"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/web/views"
 )
 
 // SessionCookie is the cookie the dashboard authenticates with.

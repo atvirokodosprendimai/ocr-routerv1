@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/router"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
 )
 
 // rawResultFiles counts the `.out` blobs on disk.
