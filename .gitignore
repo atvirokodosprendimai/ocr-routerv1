@@ -47,3 +47,9 @@ go.work.sum
 .*.db.sw?
 /blobs/
 /tmp/
+
+# Python bytecode from the example client and its tests. Build output, not
+# source, and it carries an interpreter-version suffix that changes under
+# everyone.
+__pycache__/
+*.py[cod]
