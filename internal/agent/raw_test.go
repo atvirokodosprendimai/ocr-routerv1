@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/agent"
-	"github.com/atvirokodosprendimai/ocr-router/internal/runner"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/agent"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/runner"
 )
 
 // pngMagic is deliberately not valid UTF-8 — see internal/runner/raw_test.go.

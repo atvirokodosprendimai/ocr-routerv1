@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // statusFor maps a domain error to an HTTP status.

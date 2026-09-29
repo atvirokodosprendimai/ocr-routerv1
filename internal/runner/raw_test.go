@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/runner"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/runner"
 )
 
 // pngMagic is deliberately not valid UTF-8.

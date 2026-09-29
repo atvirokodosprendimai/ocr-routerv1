@@ -5,7 +5,7 @@
 **Estimated scope:** S (single file, plus a README section)
 **Owner:** unassigned
 **Produces:** the documented import-and-submit shape, in godoc and in `README.md`
-**Consumes:** the `github.com/atvirokodosprendimai/ocr-router/client` import path (T1)
+**Consumes:** the `github.com/atvirokodosprendimai/ocr-routerv1/client` import path (T1)
 **Data dependency:** hermetic
 **Proof map:** v1
 **Rests-on:** `the Example compiling against the exported surface`, `the README naming symbols that exist`

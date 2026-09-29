@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
 )
 
 // readEvents opens an SSE stream and returns a channel of "event" names plus a

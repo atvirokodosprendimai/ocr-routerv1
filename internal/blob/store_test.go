@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/blob"
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/blob"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 func newStore(t *testing.T) (*blob.Store, string) {

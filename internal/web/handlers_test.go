@@ -13,15 +13,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/blob"
-	"github.com/atvirokodosprendimai/ocr-router/internal/bus"
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/httpapi"
-	"github.com/atvirokodosprendimai/ocr-router/internal/identity"
-	"github.com/atvirokodosprendimai/ocr-router/internal/results"
-	"github.com/atvirokodosprendimai/ocr-router/internal/router"
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
-	"github.com/atvirokodosprendimai/ocr-router/internal/web"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/blob"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/httpapi"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/identity"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/results"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/web"
 )
 
 var base = time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)

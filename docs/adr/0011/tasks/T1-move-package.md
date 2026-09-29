@@ -4,7 +4,7 @@
 **Covers:** none — no spec
 **Estimated scope:** M (multi-file)
 **Owner:** unassigned
-**Produces:** the `github.com/atvirokodosprendimai/ocr-router/client` import path, and the repaired `Governs:` / `Enforced-by:` headers in ADR-0005 and ADR-0006
+**Produces:** the `github.com/atvirokodosprendimai/ocr-routerv1/client` import path, and the repaired `Governs:` / `Enforced-by:` headers in ADR-0005 and ADR-0006
 **Consumes:** none
 **Data dependency:** hermetic
 **Proof map:** v1

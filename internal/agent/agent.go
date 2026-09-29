@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/runner"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/runner"
 )
 
 // Config is how a worker is pointed at a router and a service.

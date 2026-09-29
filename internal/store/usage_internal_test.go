@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // usageFixture is a repo plus a raw handle, because seeding a DELIVERED, DEAD or

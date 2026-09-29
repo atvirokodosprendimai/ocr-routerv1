@@ -16,7 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/urfave/cli/v3"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/monitor"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/monitor"
 )
 
 // TestHealthzIsUnauthenticatedInTheBinary is a composition-root check.

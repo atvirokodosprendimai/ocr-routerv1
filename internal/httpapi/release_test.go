@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // otherWorkerToken mints a SECOND worker, so the guard can be shown to refuse

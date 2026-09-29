@@ -14,8 +14,8 @@ import (
 
 	"github.com/a-h/templ"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/web/views"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/web/views"
 )
 
 // render runs a component to a string, the way the handler does.

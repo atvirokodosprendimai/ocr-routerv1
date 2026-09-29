@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/atvirokodosprendimai/ocr-router/client"
+	"github.com/atvirokodosprendimai/ocr-routerv1/client"
 )
 
 // reporter renders progress.

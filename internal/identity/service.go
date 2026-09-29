@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
-	"github.com/atvirokodosprendimai/ocr-router/internal/store"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
 )
 
 // defaultBufferLimit is how many jobs a new customer may have in flight.

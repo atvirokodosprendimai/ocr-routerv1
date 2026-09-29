@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // Job is what the runner needs to know to execute one unit of work.

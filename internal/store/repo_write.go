@@ -7,7 +7,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // ---------- writes ----------

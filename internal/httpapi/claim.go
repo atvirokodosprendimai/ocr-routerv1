@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // claimResponse gives the worker everything it needs to build its argv without

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // Repo is every SQL statement in the router.

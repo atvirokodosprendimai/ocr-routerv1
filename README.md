@@ -187,7 +187,7 @@ The binary is a thin wrapper. The protocol itself is a library, so another Go
 program submits a job without reimplementing any of it:
 
 ```go
-import "github.com/atvirokodosprendimai/ocr-router/client"
+import "github.com/atvirokodosprendimai/ocr-routerv1/client"
 
 res, err := client.Submit(ctx,
     client.Config{RouterURL: "https://ocr.example.com", Token: token},
@@ -217,8 +217,19 @@ same silent data loss the exit codes above exist to prevent.
 stream stays open for the life of the job, so a client timeout aborts the wait
 on exactly the long jobs you wanted to wait for.
 
-Run `go doc github.com/atvirokodosprendimai/ocr-router/client` for the full
+Run `go doc github.com/atvirokodosprendimai/ocr-routerv1/client` for the full
 surface and runnable examples.
+
+### Clients in other languages
+
+The HTTP + SSE protocol is the language-neutral contract, and it is documented
+in full — with the flows, the frame formats, and the ordering rule that a
+hand-written client gets wrong — in **[`examples/README.md`](examples/README.md)**.
+
+A dependency-free Python client lives in
+[`examples/python/client.py`](examples/python/client.py); copy it and call
+`submit()`. It is a usable client and a worked reference for porting to anything
+else.
 
 ## The API
 

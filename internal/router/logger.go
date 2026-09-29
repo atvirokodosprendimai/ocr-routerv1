@@ -3,7 +3,7 @@ package router
 import (
 	"time"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/core"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
 
 // Logger is the slice of a structured logger the single writer needs.

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/atvirokodosprendimai/ocr-router/internal/logging"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/logging"
 )
 
 // TestJobLogsParamKeysAndNeverValues is the most important assertion in this
