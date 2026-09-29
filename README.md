@@ -181,6 +181,45 @@ life of the job. Behind a reverse proxy that **buffers** responses it will hang
 rather than fail, which is the worst shape a failure can take — use `--timeout`
 if your proxy is unknown.
 
+### Importing it as a Go package
+
+The binary is a thin wrapper. The protocol itself is a library, so another Go
+program submits a job without reimplementing any of it:
+
+```go
+import "github.com/atvirokodosprendimai/ocr-router/client"
+
+res, err := client.Submit(ctx,
+    client.Config{RouterURL: "https://ocr.example.com", Token: token},
+    client.Input{Filename: "scan.pdf", Body: f, Label: "ocr"},
+    func(stage client.Stage, detail string) { log.Println(stage, detail) },
+)
+// res.Units — the service's output, or res.Raw for a raw service
+```
+
+`client.Submit` opens the event stream, uploads, waits, and collects, in that
+order. Pass `nil` instead of the callback if you do not want progress.
+
+| | |
+|---|---|
+| `client.Config` | `RouterURL`, `Token`, and an optional `HTTP` client for a proxy or custom TLS |
+| `client.Input` | `Filename` + `Body`, or neither for a params-only job; plus `Label` or `Pipeline`, `Params`, and `Raw` |
+| `client.Result` | `JobID`, and exactly one of `Units` or `Raw` |
+| `client.Progress` | `func(client.Stage, string)` — `StageUploading`, `StageWaiting`, `StageCollecting`, `StageDone` |
+| `client.FailedError` | the job ran and died. `errors.As` it and read `.Reason` |
+| `client.RetryableError` | rate limited, router down, stream dropped — worth another attempt |
+
+⚠ **Branch on those two error types rather than on the text.** A job that ran and
+failed is not a transport problem, and treating either as "no result" is the
+same silent data loss the exit codes above exist to prevent.
+
+⚠ **Bound the work with the context, never with `http.Client.Timeout`.** The SSE
+stream stays open for the life of the job, so a client timeout aborts the wait
+on exactly the long jobs you wanted to wait for.
+
+Run `go doc github.com/atvirokodosprendimai/ocr-router/client` for the full
+surface and runnable examples.
+
 ## The API
 
 Every request carries `Authorization: Bearer <token>`. The token's row decides

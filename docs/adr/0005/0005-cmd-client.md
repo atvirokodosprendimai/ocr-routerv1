@@ -5,8 +5,8 @@
 **Owner:** M (operator) — authored by claude-code-aks
 **Spec:** None — no spec stage
 **Cross-references:** `docs/adr/0001-ocr-router-architecture.md`, `docs/adr/0002/0002-rate-limiting-and-structured-logging.md`, `docs/adr/BACKLOG.md`
-**Governs:** `cmd/client/**`, `internal/client/**`
-**Enforced-by:** `internal/client/client_test.go::TestStreamOpensBeforeUpload`
+**Governs:** `cmd/client/**`, `client/**`
+**Enforced-by:** `client/client_test.go::TestStreamOpensBeforeUpload`
 **Invalidates:** none — ADR-0001 specified the protocol and shipped no client for it
 (`adr-state.mjs`, 2026-09-15).
 **Served-path change:** `client --router … --token … -i scan.pdf -o out.txt` uploads a document,

@@ -21,7 +21,7 @@ import (
 // ⚠ It is a stub rather than the real router because the properties under test
 // are the BINARY's — exit codes, stream separation, atomic writes — and driving
 // a real router would need a real worker to make a job succeed or die on demand.
-// internal/client's tests cover the protocol against the wire format;
+// the client package's tests cover the protocol against the wire format;
 // cmd/router's tests cover the router. This covers what neither can.
 type stubRouter struct {
 	srv *httptest.Server

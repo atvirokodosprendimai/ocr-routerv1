@@ -1,12 +1,12 @@
 # ADR-0011: Move the client protocol out of `internal/` so other modules can import it
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-29
 **Owner:** M
 **Spec:** None — no spec stage
 **Cross-references:** `docs/adr/0005/0005-cmd-client.md`, `docs/adr/0006/0006-raw-passthrough.md`, `docs/adr/0001-ocr-router-architecture.md`, `README.md`
-**Governs:** None — declared by its tasks. Every path this decision owns is created by T1's move, so declaring the destination here before it exists would name a glob that resolves to nothing, which reads as coverage while covering nothing.
-**Enforced-by:** None — the check that will enforce this is ADR-0011-T1's TestClientPackageIsImportable, which does not exist until that task lands. It asserts the one thing nothing else in the build can: that the package sits outside internal/ and has not been moved back. Go's own internal rule is a compiler-enforced import boundary, so a regression here is invisible to build, vet and every existing test — the tree compiles perfectly either way, and only an external consumer finds out. The Decision below states the falsifying condition rather than naming a gate that cannot yet see it.
+**Governs:** `client/**`
+**Enforced-by:** `client/public_test.go::TestClientPackageIsImportable`
 **Invalidates:** none — checked. ADR-0005 decided the SEAM (protocol in a package, flags and rendering in `cmd/client`) and this record keeps that seam exactly as it is; it changes only which directory the package half sits in. ADR-0006 added `Input.Raw` and `Result.Raw` to that package and is likewise unaffected by the path. Both records' `Governs:` lines name `internal/client/**` and are repaired by T1 in the same commit as the move — see the Context.
 **Served-path change:** A Go program in another module can write `import "github.com/atvirokodosprendimai/ocr-router/client"` and call `client.Submit(ctx, cfg, in, prog)` to upload a file and block for its result, instead of re-implementing the SSE-before-upload ordering, the backlog replay and the job-id matching against the wire format by hand.
 
@@ -15,7 +15,7 @@
 M, 2026-09-29: *"we need importable package for cliena, with all mechanics. so other clients could
 import package, get callback functions like 'take results', 'upload file' etc. without any effort"*.
 
-**The mechanics already exist and are finished.** `internal/client` is 433 lines of protocol plus
+**The mechanics already exist and are finished.** `internal/client` is 519 lines of protocol plus
 776 lines of tests (`git ls-files 'internal/client/*'`, 4 files, 2026-09-29), and it already carries
 every element the request names:
 
@@ -32,9 +32,10 @@ compiler-enforced import boundary: a package under `internal/` is importable onl
 `github.com/atvirokodosprendimai/ocr-router`, so the request as written is unsatisfiable while the
 package sits there, and satisfied entirely by moving it.
 
-**The blast radius was measured, not estimated** (`grep -rn "internal/client" --include=*.go`,
-2026-09-29): four non-test files (`cmd/client/main.go`, `output.go`, `progress.go`, and
-`cmd/client/rawoutput_test.go`) plus the package's own two external test files. Six import lines.
+**The blast radius was measured, not estimated** (`grep -rn "internal/client"`, 2026-09-29, over
+every tracked file rather than only `*.go`): three non-test files (`cmd/client/main.go`,
+`output.go`, `progress.go`) and three test files (`cmd/client/rawoutput_test.go` plus the package's
+own two external test files). Six import lines.
 
 ⚠ **The part that is invisible from the diff, and is why this is a record rather than a `git mv`:**
 `adr-state.mjs` reports `internal/client/**` as governed by both ADR-0005 and ADR-0006. Those two
@@ -158,8 +159,10 @@ See `tasks/README.md`. Two tasks, sequential.
 
 - **Positive:** the request is satisfied with a move rather than a build — no new protocol code, and
   therefore no new protocol bugs. An external caller inherits the SSE-before-upload ordering, the
-  backlog replay that survives a dropped stream, the job-id match, and the typed errors, all of
-  which are already mutation-verified under ADR-0005-T1 and ADR-0006-T7.
+  backlog replay that survives a dropped stream, the job-id match, and the typed errors. ⚠ THREE OF
+  THOSE FOUR ARE MUTATION-VERIFIED under ADR-0005-T1 and ADR-0006-T7 — the ordering, the job-id
+  match and the typed failure. The BACKLOG REPLAY has a test and no mutant, so it is covered rather
+  than proved; an earlier draft of this line claimed all four, and a review caught it.
 - **Positive:** the corpus's path pointers are repaired in the same commit as the move that would
   have broken them, so `adr-context` keeps answering for this code.
 - **Negative:** `client/` becomes a public compatibility surface. A rename or signature change in it
