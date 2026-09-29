@@ -305,3 +305,24 @@ reported by `adr-debt` and missing here is a pointer to nothing.
 - **Windows support for the worker.**
   Deferred by ADR-0001 task T9 (§Out of Scope).
   Process-group handling and the tmpdir lifecycle are POSIX-shaped.
+
+- **Exported `Upload()` and `Collect()` on the public client package.**
+  Deferred by ADR-0011 (§Out of Scope).
+  `client.Submit` uploads and blocks for the result in one call, in one process. A caller that wants
+  to post a job, keep the id, and collect the result later — from a different process, a queue
+  worker, or after a restart — has no supported path: the two halves exist as the unexported
+  `upload` and `collect`. ⚠ **Exporting them is not a mechanical promotion.** `Submit`'s whole
+  correctness argument is the ORDERING — the SSE stream must be established before the upload is
+  posted, or a job that finishes in the gap fires `ready` into a stream nobody holds and the caller
+  waits forever (`client/client.go`, the `Submit` doc comment). Handing a caller the two pieces
+  hands them an order they can get wrong, with a failure that passes every casual test. Whatever
+  shape this takes has to make the wrong order unrepresentable or survivable; the existing backlog
+  replay is the start of an answer, not the whole of one.
+
+- **A `client.New(cfg) *Client` handle with methods, instead of `Config` passed per call.**
+  Deferred by ADR-0011 (§Out of Scope).
+  The conventional SDK shape, and the one an adopter will expect. Rejected for now only because M
+  chose the as-is move on 2026-09-29 and the ergonomic gain is one value per call; it becomes worth
+  revisiting the moment the package grows a second entry point, because that is when passing
+  `Config` to each of them starts to read as an omission rather than as simplicity. ⚠ Doing it after
+  an external consumer has pinned the package is a breaking change; doing it before is free.
