@@ -177,3 +177,58 @@ func TestDeliveredRawResultIsSweptAfterTTL(t *testing.T) {
 		t.Errorf("a delivered raw job left %d result file(s) past the TTL", n)
 	}
 }
+
+// TestRawRetryWindowRunsFromDelivery is the F3 review's finding: the window in
+// which a dropped download can be fetched again starts at the DELIVERY, not at
+// the worker's write. A file written 59 minutes before its download would
+// otherwise be swept a minute after the customer paid for it.
+func TestRawRetryWindowRunsFromDelivery(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "convert")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	id := rawJobDone(t, h, "convert", "\x89PNG")
+	out := filepath.Join(h.blobs.Dir(), id[:2], id+".out")
+	if err := os.Chtimes(out, base, base); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	delivered := base.Add(59 * time.Minute)
+	f, err := h.svc.DeliverRaw(ctx, "u", id, delivered)
+	if err != nil {
+		t.Fatalf("DeliverRaw: %v", err)
+	}
+	_ = f.Close() // dropped
+
+	if _, err := h.svc.Reap(ctx, delivered.Add(2*time.Minute)); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	f, err = h.svc.DeliverRaw(ctx, "u", id, delivered.Add(3*time.Minute))
+	if err != nil {
+		t.Fatalf("retry three minutes after paying: %v", err)
+	}
+	_ = f.Close()
+}
+
+// TestSweepKeepsALiveRawResult: step 3c removes only the files of delivered or
+// vanished jobs. A `done` job's result, however old the file, belongs to it.
+func TestSweepKeepsALiveRawResult(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "convert")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	id := rawJobDone(t, h, "convert", "\x89PNG")
+	out := filepath.Join(h.blobs.Dir(), id[:2], id+".out")
+	old := base.Add(-2 * time.Hour)
+	if err := os.Chtimes(out, old, old); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	// The job finished at base, so step 3 leaves it; only the file looks old.
+	if _, err := h.svc.Reap(ctx, base.Add(30*time.Minute)); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if n := rawResultFiles(t, h.blobs.Dir()); n != 1 {
+		t.Errorf("result files = %d, want 1 — the sweep deleted a done job's result", n)
+	}
+}

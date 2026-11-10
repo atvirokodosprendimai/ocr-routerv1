@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/atvirokodosprendimai/ocr-routerv1/internal/blob"
 	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
@@ -217,5 +218,32 @@ func TestBlobDirIsReported(t *testing.T) {
 	s, dir := newStore(t)
 	if s.Dir() != dir {
 		t.Errorf("Dir() = %q, want %q — the health probe needs it to check writability", s.Dir(), dir)
+	}
+}
+
+// TestResultsOlderThanSkipsAnUnreadableShard is the F3 review's finding: one
+// shard directory the walk cannot read must not hide the results in every shard
+// after it, tick after tick.
+func TestResultsOlderThanSkipsAnUnreadableShard(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 directory")
+	}
+	s, dir := newStore(t)
+	bad := "00000000-0000-7000-8000-000000000000"
+	good := "ffffffff-0000-7000-8000-000000000000"
+	for _, id := range []string{bad, good} {
+		if _, err := s.PutResult(id, strings.NewReader("x")); err != nil {
+			t.Fatalf("PutResult(%s): %v", id, err)
+		}
+	}
+	shard := filepath.Join(dir, bad[:2])
+	if err := os.Chmod(shard, 0); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(shard, 0o750) })
+
+	ids, _ := s.ResultsOlderThan(time.Now().Add(time.Hour))
+	if len(ids) != 1 || ids[0] != good {
+		t.Errorf("ResultsOlderThan = %v, want [%s] — the unreadable shard hid the rest", ids, good)
 	}
 }

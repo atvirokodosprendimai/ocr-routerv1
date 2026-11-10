@@ -90,7 +90,7 @@ deployment that administers rates some other way, and there is none.
 **Transport.** A raw result never becomes a string. The worker POSTs its bytes as the request body;
 the router streams them into the blob store under the job id; `GET /files/{id}` streams them back
 with `application/octet-stream` and deletes the blob once a copy completes; a dropped download may be
-fetched again without a second charge until the result TTL, when the reaper removes the file
+fetched again without a second charge for one result TTL after delivery, when the reaper removes the file
 (amended 2026-11-10, REPORT F3). Nothing is base64'd — that would
 cost +33% on the wire and, worse, put a whole binary result in the in-memory results store, which
 ADR-0001 already lists as its unbounded-growth risk (`ocrr_results_in_memory`).
@@ -191,7 +191,8 @@ See `tasks/README.md` — 8 tasks in 5 waves.
 - **Negative:** `SetRate` is a breaking signature change with existing callers, including the admin
   UI. T1 carries the sweep.
 - **Negative:** raw results now occupy disk until delivered or expired, where non-raw results
-  occupy only memory. The blob reaper must cover them or they leak.
+  occupy only memory. The blob reaper must cover them or they leak. A download that drops holds
+  its file one result TTL more (amended 2026-11-10, F3).
 - **Neutral:** a raw job reports exactly one output, so per-unit metrics for raw labels are always
   1. Dashboards showing units/job will show a flat line for raw services; that is accurate.
 

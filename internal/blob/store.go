@@ -142,17 +142,36 @@ func (s *Store) DeleteResult(id string) error {
 	return nil
 }
 
-// ResultsOlderThan lists the job ids whose raw result file was last written at
-// or before cutoff.
+// TouchResult stamps a raw result's modification time with t.
+//
+// DeliverRaw calls it when the charge commits, so the reaper's age check
+// (ResultsOlderThan) gives a dropped download a full result TTL from the
+// moment it was paid for, not from the moment the worker wrote it.
+func (s *Store) TouchResult(id string, t time.Time) error {
+	full, err := s.resultPath(id)
+	if err != nil {
+		return err
+	}
+	return os.Chtimes(full, t, t)
+}
+
+// ResultsOlderThan lists the job ids whose raw result file was last written (or
+// touched at delivery) at or before cutoff.
 //
 // It exists for the result a DELIVERED raw job leaves behind when its download
 // failed (F3): the job row is terminal, so no query over `done` rows finds it,
 // and the file is the only record that it is still there.
+//
+// An unreadable directory below the root is skipped, not fatal: one bad shard
+// would otherwise hide every result after it, on every tick.
 func (s *Store) ResultsOlderThan(cutoff time.Time) ([]string, error) {
 	var ids []string
 	err := filepath.WalkDir(s.dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			if p == s.dir {
+				return err
+			}
+			return nil
 		}
 		id, ok := strings.CutSuffix(d.Name(), ".out")
 		if d.IsDir() || !ok || !validID(id) {

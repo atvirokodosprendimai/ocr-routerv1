@@ -30,12 +30,13 @@ type resultResponse struct {
 // resultToClient delivers and charges.
 //
 // This GET mutates, which is the one deliberate exception in the API, and it is
-// bounded: delivery is idempotent TO THE HOLDER, because the second call finds
-// no result and is a 404 rather than a second charge. A separate acknowledge
-// endpoint was considered and is noted in the task's Stop Condition; the cost of
-// this shape is that a client whose connection drops mid-download has been
-// charged for bytes it did not finish reading. For a RAW result that cost is
-// bounded: the file stays and a retry streams it again uncharged (F3).
+// bounded: delivery is idempotent TO THE HOLDER, because a second call on a
+// units job finds no result and is a 404 rather than a second charge. A
+// separate acknowledge endpoint was considered and is noted in the task's Stop
+// Condition; the cost of this shape is that a client whose connection drops
+// mid-download has been charged for bytes it did not finish reading. For a RAW
+// result that cost is bounded: the file stays for a result TTL after the charge
+// and a retry streams it again uncharged (F3).
 func (a *API) resultToClient(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	id := chi.URLParam(r, "id")

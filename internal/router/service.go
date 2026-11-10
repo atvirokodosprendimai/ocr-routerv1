@@ -512,6 +512,10 @@ func (s *Service) DeliverRaw(ctx context.Context, userID, jobID string, now time
 		_ = f.Close()
 		return nil, err
 	}
+	// The retry window of a dropped download runs from HERE, the charge, not
+	// from the worker's write (F3 review). Best-effort: a failed stamp only
+	// shortens the window to the file's write time.
+	_ = s.blobs.TouchResult(jobID, now)
 
 	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDelivered)})
 	s.counter.Inc(metricRawJobs, map[string]string{"label": job.Label})
