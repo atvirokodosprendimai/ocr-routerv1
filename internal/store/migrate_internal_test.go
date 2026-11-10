@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pressly/goose/v3"
 )
@@ -267,4 +268,58 @@ func hasColumn(t *testing.T, db *sql.DB, table, column string) bool {
 		t.Fatalf("rows: %v", err)
 	}
 	return false
+}
+
+// TestBackfillNeverTakesBackMoreThanWasAccrued is the F1 review's finding on
+// migration 00008: the backfill estimates the last stage's accrual from TODAY's
+// rate. A job that ran at rate 0 (accrued 0) and whose rate was raised since
+// would have its total taken below zero by the first boot reset, and delivery
+// would then CREDIT the customer. The estimate is capped by what was accrued.
+func TestBackfillNeverTakesBackMoreThanWasAccrued(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "backfill.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	goose.SetBaseFS(migrationsFS)
+	goose.SetLogger(goose.NopLogger())
+	if err := goose.SetDialect(gooseDialect); err != nil {
+		t.Fatalf("SetDialect: %v", err)
+	}
+	if err := goose.DownTo(db.Write, "migrations", 7); err != nil {
+		t.Fatalf("goose.DownTo(7): %v", err)
+	}
+	for _, q := range []string{
+		`INSERT INTO users (id, email, role, credits, buffer_limit, priority, job_ttl_secs, active, unmetered, created_at)
+		 VALUES ('u','u@example.com','client',100,4,0,0,1,0,0)`,
+		`INSERT INTO service_rates (label, credits_per_unit, raw, updated_at) VALUES ('ocr', 2, 0, 0)`,
+		// Ran at rate 2: 3 units, 6 accrued.
+		`INSERT INTO jobs (id, user_id, filename, size_byte, label, pipeline, stage, params, has_blob, raw,
+		   state, attempts, units, accrued_credits, worker_id, last_error, queued_at, created_at, updated_at)
+		 VALUES ('paid','u','f',0,'ocr','["ocr"]',0,'{}',1,0,'done',0,3,6,'','',0,0,0)`,
+		// Ran while the rate was 0: 3 units, nothing accrued.
+		`INSERT INTO jobs (id, user_id, filename, size_byte, label, pipeline, stage, params, has_blob, raw,
+		   state, attempts, units, accrued_credits, worker_id, last_error, queued_at, created_at, updated_at)
+		 VALUES ('free','u','f',0,'ocr','["ocr"]',0,'{}',1,0,'done',0,3,0,'','',0,0,0)`,
+	} {
+		if _, err := db.Write.Exec(q); err != nil {
+			t.Fatalf("seeding: %v", err)
+		}
+	}
+	if err := goose.Up(db.Write, "migrations"); err != nil {
+		t.Fatalf("goose.Up: %v", err)
+	}
+	if _, err := NewRepo(db).ResetInFlightOnBoot(context.Background(), time.Unix(0, 0)); err != nil {
+		t.Fatalf("ResetInFlightOnBoot: %v", err)
+	}
+	for id, want := range map[string]int{"paid": 0, "free": 0} {
+		var got int
+		if err := db.Write.QueryRow(`SELECT accrued_credits FROM jobs WHERE id = ?`, id).Scan(&got); err != nil {
+			t.Fatalf("read %s: %v", id, err)
+		}
+		if got != want {
+			t.Errorf("job %s accrued_credits after migrate+boot = %d, want %d — a negative total "+
+				"turns the delivery debit into a credit", id, got, want)
+		}
+	}
 }

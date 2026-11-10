@@ -374,3 +374,63 @@ func TestSweepRetriesAJobWhoseResultIsAlreadyGone(t *testing.T) {
 			got.State)
 	}
 }
+
+// TestSweptPipelineKeepsItsEarlierStages: the F1 take-back is the LAST stage's
+// share only. Taking back the whole total would undercharge a pipeline by every
+// earlier stage, and a single-stage test cannot tell the two apart.
+func TestSweptPipelineKeepsItsEarlierStages(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "crawl")
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	if err := h.repo.SetRate(ctx, "crawl", 1, false, base); err != nil {
+		t.Fatalf("SetRate crawl: %v", err)
+	}
+	if err := h.repo.SetRate(ctx, "ocr", 2, false, base); err != nil {
+		t.Fatalf("SetRate ocr: %v", err)
+	}
+	j := upload(t, h, "u", router.UploadInput{
+		Pipeline: []string{"crawl", "ocr"}, Params: map[string]string{"url": "https://example.com"},
+	})
+	if _, err := h.svc.Claim(ctx, "w1", "crawl", base); err != nil {
+		t.Fatalf("claim crawl: %v", err)
+	}
+	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"<html/>"}, base); err != nil {
+		t.Fatalf("complete crawl: %v", err)
+	}
+	mustRun(t, h, j.ID, []string{"a", "b", "c"}) // ocr: 3 x 2
+
+	later := base.Add(2 * time.Hour)
+	h.results.SetClock(func() time.Time { return later })
+	if _, err := h.svc.Reap(ctx, later); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	rerunAndDeliver(t, h, j.ID, []string{"a", "b", "c"}, later)
+	assertChargedOnce(t, h, 7) // crawl 1x1 + ocr 3x2, each once
+}
+
+// TestSweptRawJobIsRequeuedAndLosesItsFile covers the raw half of the sweep:
+// past the TTL the job goes back to the queue and its `.out` is removed.
+func TestSweptRawJobIsRequeuedAndLosesItsFile(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "convert")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	id := rawJobDone(t, h, "convert", "\x89PNG")
+
+	rep, err := h.svc.Reap(ctx, base.Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if rep.ResultsSwept != 1 {
+		t.Errorf("ResultsSwept = %d, want 1", rep.ResultsSwept)
+	}
+	got, _ := h.repo.JobByID(ctx, id)
+	if got.State != core.JobQueued || got.AccruedCredits != 0 {
+		t.Errorf("after the sweep: state %q accrued %d, want queued and 0", got.State, got.AccruedCredits)
+	}
+	if n := rawResultFiles(t, h.blobs.Dir()); n != 0 {
+		t.Errorf("a swept raw job left %d result file(s)", n)
+	}
+}
