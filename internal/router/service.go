@@ -340,12 +340,15 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 		return nil
 	}
 
-	s.results.Put(job.ID, out)
+	// ⚠ THE ROW FIRST, THEN THE RESULT (F7, REPORT 2026-11-10). Put first, a
+	// completion that then lost its guard overwrote the winner's result and its
+	// Drop erased it, leaving a `done` job with nothing to deliver. Put after,
+	// a loser touches nothing; a delivery in the instant between gets a 404 and
+	// retries.
 	if err := s.repo.CompleteJob(ctx, job.ID, job.WorkerID, len(out), accrue, now); err != nil {
-		// The result would otherwise sit in memory for a job that is not `done`.
-		s.results.Drop(job.ID)
 		return lostLease(err)
 	}
+	s.results.Put(job.ID, out)
 	s.logTransition(job, core.JobProcessing, core.JobDone, job.UpdatedAt,
 		"worker", workerID, "", now)
 	s.bus.Publish(bus.UserTopic(job.UserID), bus.Event{
@@ -395,14 +398,16 @@ func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body 
 		return s.bridgeRawStage(ctx, job, next, workerID, st, now)
 	}
 
-	if err := st.CommitResult(); err != nil {
-		return err
-	}
-
+	// The row first, then the file's name (F7): committed first, a losing
+	// completion replaced the winner's `.out`, and its cleanup deleted it.
 	if err := s.repo.CompleteJob(ctx, job.ID, job.WorkerID, 1, job.AccruedCredits, now); err != nil {
-		// The result blob would otherwise sit on disk for a job that is not done.
-		_ = s.blobs.DeleteResult(job.ID)
+		st.Abort()
 		return lostLease(err)
+	}
+	if err := st.CommitResult(); err != nil {
+		// The job is `done` with no file; the reaper's result sweep requeues
+		// it once the result TTL has passed.
+		return err
 	}
 	s.logTransition(job, core.JobProcessing, core.JobDone, job.UpdatedAt,
 		"worker", workerID, "", now)
