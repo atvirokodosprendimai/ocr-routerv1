@@ -408,8 +408,11 @@ func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body 
 		return lostLease(err)
 	}
 	if err := st.CommitResult(); err != nil {
-		// The job is `done` with no file; the reaper's result sweep requeues
-		// it once the result TTL has passed.
+		// The job is `done` with no file, and stays so until the reaper's
+		// result sweep requeues it after the result TTL; the worker cannot
+		// retry (its lease is gone). Accepted rather than swapping the file
+		// in before the write: on a lost race that would serve the loser's
+		// bytes as the winner's result until the undo.
 		return err
 	}
 	s.logTransition(job, core.JobProcessing, core.JobDone, job.UpdatedAt,

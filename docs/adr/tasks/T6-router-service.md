@@ -58,8 +58,9 @@ which no test in this package can show.
      len(out) * RateForLabel(label))`, delete the previous stage's blob, and publish `work`
      to `workers:<next label>`. **No `ready`, and the client is told nothing** — a pipeline
      is one job from the client's side.
-   - **Last stage** — `results.Put(jobID, out)`; set `state='done'`,
-     `pages=len(out)`, accrue this stage's cost; publish `ready` to `user:<owner>`.
+   - **Last stage** — set `state='done'`, `pages=len(out)`, accrue this stage's cost; only
+     then `results.Put(jobID, out)`; publish `ready` to `user:<owner>`. (Amended 2026-11-10,
+     REPORT F7: Put before the guarded write let a losing worker overwrite and erase the result.)
 
    A worker whose lease expired mid-run is refused here, because the job has already been
    requeued and may be running elsewhere.

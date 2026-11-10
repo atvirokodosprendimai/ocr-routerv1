@@ -155,4 +155,5 @@ func TestLosingRawCompleteKeepsTheWinnersFile(t *testing.T) {
 	if err != nil || string(b) != "winner" {
 		t.Errorf("result file after a losing CompleteRaw = %q (%v), want %q", b, err, "winner")
 	}
+	assertOnlyTheJobsFiles(t, h, j.ID)
 }
