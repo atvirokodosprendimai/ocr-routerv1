@@ -34,7 +34,8 @@ type resultResponse struct {
 // no result and is a 404 rather than a second charge. A separate acknowledge
 // endpoint was considered and is noted in the task's Stop Condition; the cost of
 // this shape is that a client whose connection drops mid-download has been
-// charged for bytes it did not finish reading.
+// charged for bytes it did not finish reading. For a RAW result that cost is
+// bounded: the file stays and a retry streams it again uncharged (F3).
 func (a *API) resultToClient(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	id := chi.URLParam(r, "id")
@@ -60,8 +61,9 @@ func (a *API) resultToClient(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if _, err := io.Copy(w, f); err != nil {
 			// The charge has committed and the bytes are partly sent; there is no
-			// status left to change. Leave the blob so a retry can still collect
-			// it rather than destroying the only copy mid-flight.
+			// status left to change. Leave the blob: DeliverRaw serves a
+			// delivered job's file again without a charge, and the reaper
+			// removes it past the result TTL (F3).
 			return
 		}
 		a.deps.Router.DropRawResult(id)

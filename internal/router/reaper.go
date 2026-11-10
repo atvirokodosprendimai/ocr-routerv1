@@ -128,6 +128,28 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		s.publishWork(job.Label)
 	}
 
+	// 3c. Raw results of DELIVERED jobs (F3). Delivery charges before the
+	//     bytes are streamed, so a failed download leaves the `.out` for the
+	//     client to fetch again (DeliverRaw serves a delivered job's file
+	//     without charging). Past the TTL nobody is coming back for it.
+	old, err := s.blobs.ResultsOlderThan(now.Add(-s.cfg.ResultTTL))
+	if err != nil {
+		sweepErr = errors.Join(sweepErr, err)
+	}
+	for _, id := range old {
+		job, err := s.repo.JobByID(ctx, id)
+		if err != nil && !errors.Is(err, core.ErrNotFound) {
+			sweepErr = errors.Join(sweepErr, err)
+			continue
+		}
+		// A missing row has no owner left to collect it; a live job's file
+		// belongs to the paths above.
+		if err == nil && job.State != core.JobDelivered {
+			continue
+		}
+		_ = s.blobs.DeleteResult(id)
+	}
+
 	if rep.LeasesExpired+rep.JobsExpired+rep.ResultsSwept > 0 {
 		s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin})
 	}

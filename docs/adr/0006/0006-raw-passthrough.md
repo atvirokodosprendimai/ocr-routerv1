@@ -89,7 +89,9 @@ deployment that administers rates some other way, and there is none.
 
 **Transport.** A raw result never becomes a string. The worker POSTs its bytes as the request body;
 the router streams them into the blob store under the job id; `GET /files/{id}` streams them back
-with `application/octet-stream` and deletes the blob on delivery. Nothing is base64'd — that would
+with `application/octet-stream` and deletes the blob once a copy completes; a dropped download may be
+fetched again without a second charge until the result TTL, when the reaper removes the file
+(amended 2026-11-10, REPORT F3). Nothing is base64'd — that would
 cost +33% on the wire and, worse, put a whole binary result in the in-memory results store, which
 ADR-0001 already lists as its unbounded-growth risk (`ocrr_results_in_memory`).
 

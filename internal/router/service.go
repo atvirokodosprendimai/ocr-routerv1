@@ -457,6 +457,11 @@ func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, worker
 // open handle. The charge commits BEFORE the handle is returned, and the blob is
 // removed by the caller once the copy succeeds — a result deleted before the
 // transaction committed would be unrecoverable, while an orphan file is not.
+//
+// ⚠ A DELIVERED job whose file is still there is served again WITHOUT a charge
+// (F3, REPORT 2026-11-10). The charge precedes the stream, so a client whose
+// download dropped has paid for a file it does not have; the file stays until a
+// copy completes or the reaper sweeps it past the result TTL.
 func (s *Service) DeliverRaw(ctx context.Context, userID, jobID string, now time.Time) (*os.File, error) {
 	job, err := s.repo.JobByID(ctx, jobID)
 	if err != nil {
@@ -469,6 +474,9 @@ func (s *Service) DeliverRaw(ctx context.Context, userID, jobID string, now time
 	}
 	if !job.Raw {
 		return nil, core.ErrNotFound
+	}
+	if job.State == core.JobDelivered {
+		return s.blobs.OpenResult(jobID)
 	}
 
 	// ⚠ READ THE OWNER BEFORE OPENING THE RESULT. A failed read after the open

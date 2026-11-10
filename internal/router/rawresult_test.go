@@ -2,6 +2,7 @@ package router_test
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,5 +117,63 @@ func TestDeadRawJobDropsItsResultBlob(t *testing.T) {
 	}
 	if n := rawResultFiles(t, h.blobs.Dir()); n != 0 {
 		t.Errorf("a dead raw job left %d result blob(s) on disk", n)
+	}
+}
+
+// TestRawRedeliveryAfterAFailedCopy is F3 (REPORT 2026-11-10). DeliverRaw
+// charges before the bytes are streamed; a client whose copy failed must be able
+// to fetch the result it paid for again, and be charged once.
+func TestRawRedeliveryAfterAFailedCopy(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "convert")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	id := rawJobDone(t, h, "convert", "\x89PNG")
+
+	f, err := h.svc.DeliverRaw(ctx, "u", id, base)
+	if err != nil {
+		t.Fatalf("first DeliverRaw: %v", err)
+	}
+	_ = f.Close() // the copy failed: DropRawResult is never called
+
+	f, err = h.svc.DeliverRaw(ctx, "u", id, base)
+	if err != nil {
+		t.Fatalf("second DeliverRaw: %v — the customer paid and cannot collect", err)
+	}
+	body, _ := io.ReadAll(f)
+	_ = f.Close()
+	if string(body) != "\x89PNG" {
+		t.Errorf("re-fetched body = %q, want the result", body)
+	}
+	entries, _ := h.repo.Ledger(ctx, "u", 10)
+	if len(entries) != 1 || entries[0].Delta != -1 {
+		t.Errorf("ledger = %+v, want exactly one -1 entry", entries)
+	}
+}
+
+// TestDeliveredRawResultIsSweptAfterTTL: the `.out` a failed copy leaves behind
+// is removed once the result TTL has passed, or every dropped download is
+// permanent disk growth (F3).
+func TestDeliveredRawResultIsSweptAfterTTL(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "convert")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	id := rawJobDone(t, h, "convert", "\x89PNG")
+	f, err := h.svc.DeliverRaw(ctx, "u", id, base)
+	if err != nil {
+		t.Fatalf("DeliverRaw: %v", err)
+	}
+	_ = f.Close()
+	out := filepath.Join(h.blobs.Dir(), id[:2], id+".out")
+	if err := os.Chtimes(out, base, base); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	if _, err := h.svc.Reap(ctx, base.Add(2*time.Hour)); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if n := rawResultFiles(t, h.blobs.Dir()); n != 0 {
+		t.Errorf("a delivered raw job left %d result file(s) past the TTL", n)
 	}
 }

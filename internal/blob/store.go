@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
@@ -138,6 +140,37 @@ func (s *Store) DeleteResult(id string) error {
 		return err
 	}
 	return nil
+}
+
+// ResultsOlderThan lists the job ids whose raw result file was last written at
+// or before cutoff.
+//
+// It exists for the result a DELIVERED raw job leaves behind when its download
+// failed (F3): the job row is terminal, so no query over `done` rows finds it,
+// and the file is the only record that it is still there.
+func (s *Store) ResultsOlderThan(cutoff time.Time) ([]string, error) {
+	var ids []string
+	err := filepath.WalkDir(s.dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		id, ok := strings.CutSuffix(d.Name(), ".out")
+		if d.IsDir() || !ok || !validID(id) {
+			return nil
+		}
+		info, err := d.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil // deleted while walking
+		}
+		if err != nil {
+			return err
+		}
+		if !info.ModTime().After(cutoff) {
+			ids = append(ids, id)
+		}
+		return nil
+	})
+	return ids, err
 }
 
 // Put writes r's bytes as the blob for id, replacing any existing one.
