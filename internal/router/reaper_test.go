@@ -347,3 +347,30 @@ func TestBootRecoveredDoneJobIsChargedOnce(t *testing.T) {
 	rerunAndDeliver(t, h, j.ID, []string{"a", "b", "c"}, base)
 	assertChargedOnce(t, h, 6)
 }
+
+// TestSweepRetriesAJobWhoseResultIsAlreadyGone is F2 (REPORT 2026-11-10). A
+// previous pass drained the result store and then failed before requeueing; the
+// next pass must still find the job, because the database says it is `done`
+// with nothing left to serve.
+func TestSweepRetriesAJobWhoseResultIsAlreadyGone(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	j := upload(t, h, "u", router.UploadInput{Body: strings.NewReader("x")})
+	mustRun(t, h, j.ID, []string{"a"})
+
+	later := base.Add(2 * time.Hour)
+	h.results.SetClock(func() time.Time { return later })
+	// The failed pass: Sweep forgot the id, and no requeue followed.
+	_ = h.results.Sweep()
+
+	if _, err := h.svc.Reap(ctx, later); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	got, _ := h.repo.JobByID(ctx, j.ID)
+	if got.State != core.JobQueued {
+		t.Errorf("state = %q, want queued — a done job with no result is stranded until a restart",
+			got.State)
+	}
+}

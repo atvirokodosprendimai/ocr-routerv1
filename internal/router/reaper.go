@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
@@ -79,48 +80,48 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		})
 	}
 
-	// 3. Results nobody collected. The ids returned by Sweep are requeued — the
-	//    blob is still on disk, so the work is simply redone. Dropping them
-	//    instead would strand each job in `done` with no result, forever.
-	for _, jobID := range s.results.Sweep() {
-		rep.ResultsSwept++
-		s.counter.Inc(metricReaperActions, map[string]string{"action": "result-swept"})
-		job, err := s.repo.JobByID(ctx, jobID)
-		if err != nil {
-			// The job is gone; the orphaned result has already been removed by
-			// the sweep itself, so there is nothing left to reconcile.
-			continue
-		}
-		if job.State != core.JobDone {
-			continue
-		}
-		// nil: a result swept for age never ran a command that exited.
-		if err := s.repo.RequeueDone(ctx, jobID, "result expired before collection", now); err != nil {
-			return rep, err
-		}
-		s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,
-			"reaper", "", "result expired before collection", now)
-		s.publishWork(job.Label)
-	}
-
-	// 3b. The same sweep for RAW results, which live on disk rather than in the
-	//     result store and are therefore invisible to the loop above. Same
-	//     outcome, deliberately: the input blob is still there, so the job is
-	//     requeued and the work is redone rather than stranded in `done`.
+	// 3. Results nobody collected, units and raw alike: the job is requeued —
+	//    the input blob is still on disk, so the work is simply redone. Dropping
+	//    them instead would strand each job in `done` with no result, forever.
+	//
+	//    ⚠ DRIVEN BY THE DATABASE, not by the ids results.Sweep returns (F2,
+	//    REPORT 2026-11-10). Sweep forgets every id it hands out, so one failed
+	//    requeue used to strand the rest until a restart. Reselecting `done`
+	//    rows past the TTL on every tick retries whatever failed last time, and
+	//    a raw result — on disk, invisible to the result store — needs the same
+	//    query anyway. Sweep stays only to free the memory.
+	s.results.Sweep()
+	var sweepErr error
 	if s.cfg.ResultTTL > 0 {
-		stale, err := s.repo.RawJobsDoneBefore(ctx, now.Add(-s.cfg.ResultTTL))
+		stale, err := s.repo.JobsDoneBefore(ctx, now.Add(-s.cfg.ResultTTL))
 		if err != nil {
 			return rep, err
 		}
 		for _, job := range stale {
+			if !job.Raw {
+				if _, live := s.results.Peek(job.ID); live {
+					// Put back by a failed delivery, with a fresh expiry.
+					continue
+				}
+			}
+			const reason = "result expired before collection"
+			if err := s.repo.RequeueDone(ctx, job.ID, reason, now); err != nil {
+				// ErrNotFound: delivered since the read, nothing to do. Any
+				// other error is kept and the loop goes on; the next tick
+				// reselects this job.
+				if !errors.Is(err, core.ErrNotFound) {
+					sweepErr = errors.Join(sweepErr, err)
+				}
+				continue
+			}
 			rep.ResultsSwept++
 			s.counter.Inc(metricReaperActions, map[string]string{"action": "result-swept"})
+			// Only after the requeue: before it, the result is still the
+			// job's to deliver.
 			_ = s.blobs.DeleteResult(job.ID)
-			if err := s.repo.RequeueDone(ctx, job.ID, "result expired before collection", now); err != nil {
-				return rep, err
-			}
+			s.results.Drop(job.ID)
 			s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,
-				"reaper", "", "result expired before collection", now)
+				"reaper", "", reason, now)
 			s.publishWork(job.Label)
 		}
 	}
@@ -128,7 +129,7 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 	if rep.LeasesExpired+rep.JobsExpired+rep.ResultsSwept > 0 {
 		s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin})
 	}
-	return rep, nil
+	return rep, sweepErr
 }
 
 // RecoverOnBoot returns every in-flight job to the queue.

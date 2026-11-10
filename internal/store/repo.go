@@ -332,16 +332,17 @@ func (r *Repo) QueueDepthByLabel(ctx context.Context) (map[string]int, error) {
 	return out, rows.Err()
 }
 
-// RawJobsDoneBefore returns raw jobs that finished before cutoff and were never
-// collected.
+// JobsDoneBefore returns jobs, raw or units, that finished before cutoff and
+// were never collected.
 //
-// ⚠ It exists because a RAW job never enters the in-memory result store, so the
-// reaper's result sweep — which iterates that store — cannot see one. Without
-// this query a completed raw job nobody collects sits in `done` forever with its
-// output blob on disk: not merely a leak, a permanently stranded job.
-func (r *Repo) RawJobsDoneBefore(ctx context.Context, cutoff time.Time) ([]core.Job, error) {
+// ⚠ The reaper's result sweep reads THIS rather than the in-memory result
+// store: that store forgets an id once it hands it out, so a failed requeue
+// stranded the job (F2), and a RAW result never enters it at all. Without this
+// query a completed job nobody collects can sit in `done` forever: not merely a
+// leak, a permanently stranded job.
+func (r *Repo) JobsDoneBefore(ctx context.Context, cutoff time.Time) ([]core.Job, error) {
 	rows, err := r.read.QueryContext(ctx,
-		`SELECT `+jobColumns+` FROM jobs WHERE state = 'done' AND raw = 1 AND updated_at <= ?`,
+		`SELECT `+jobColumns+` FROM jobs WHERE state = 'done' AND updated_at <= ?`,
 		cutoff.Unix())
 	if err != nil {
 		return nil, err
