@@ -73,6 +73,25 @@ func TestClaimSkipsADeactivatedCustomer(t *testing.T) {
 	}
 }
 
+// TestAdmitJobHoldsTheBufferLimitInTheWrite is F13 (REPORT 2026-11-10): the
+// in-flight count and the insert are one statement, so uploads that all read
+// "0 in flight" before any of them wrote cannot together overshoot the limit.
+func TestAdmitJobHoldsTheBufferLimitInTheWrite(t *testing.T) {
+	r := newRepo(t)
+	ctx := context.Background()
+	mkUser(t, r, "u", 0, 10)
+	job := func(id string) core.Job {
+		return core.Job{ID: id, UserID: "u", Label: "ocr", Pipeline: []string{"ocr"},
+			Params: map[string]string{}, QueuedAt: base, CreatedAt: base, UpdatedAt: base}
+	}
+	if err := r.AdmitJob(ctx, job("a"), 1); err != nil {
+		t.Fatalf("first AdmitJob: %v", err)
+	}
+	if err := r.AdmitJob(ctx, job("b"), 1); !errors.Is(err, core.ErrBufferFull) {
+		t.Errorf("second AdmitJob at a limit of 1 = %v, want core.ErrBufferFull", err)
+	}
+}
+
 func TestClaimPrefersHigherPriority(t *testing.T) {
 	r := newRepo(t)
 	ctx := context.Background()

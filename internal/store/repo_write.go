@@ -94,27 +94,60 @@ func (r *Repo) TouchToken(ctx context.Context, id string, now time.Time) {
 
 // CreateJob inserts a queued job.
 func (r *Repo) CreateJob(ctx context.Context, j core.Job) error {
-	pipeline, err := json.Marshal(j.Pipeline)
+	_, err := r.insertJob(ctx, j, "")
+	return err
+}
+
+// AdmitJob inserts a queued job only while its owner has fewer than limit
+// jobs in flight, and returns core.ErrBufferFull otherwise.
+//
+// ⚠ ONE STATEMENT (F13, REPORT 2026-11-10). The router's count runs on the
+// read pool before the write, so N concurrent uploads could all read "0 in
+// flight" and all be admitted past the limit. The count inside the INSERT's
+// WHERE runs on the single writer, where no other insert can interleave.
+func (r *Repo) AdmitJob(ctx context.Context, j core.Job, limit int) error {
+	n, err := r.insertJob(ctx, j,
+		` WHERE (SELECT count(*) FROM jobs WHERE user_id = ? AND state IN (`+inFlightStates+`)) < ?`,
+		j.UserID, limit)
 	if err != nil {
 		return err
 	}
+	if n == 0 {
+		return core.ErrBufferFull
+	}
+	return nil
+}
+
+// insertJob is the one INSERT both callers share, as INSERT ... SELECT so a
+// caller can add a WHERE (with its own arguments) that decides admission.
+func (r *Repo) insertJob(ctx context.Context, j core.Job, where string, whereArgs ...any) (int64, error) {
+	pipeline, err := json.Marshal(j.Pipeline)
+	if err != nil {
+		return 0, err
+	}
 	params, err := json.Marshal(j.Params)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var expires any
 	if !j.ExpiresAt.IsZero() {
 		expires = j.ExpiresAt.Unix()
 	}
-	_, err = r.write.ExecContext(ctx,
+	args := append([]any{
+		j.ID, j.UserID, j.Filename, j.SizeByte, j.Label, string(pipeline), j.Stage,
+		string(params), boolToInt(j.HasBlob), boolToInt(j.Raw), core.JobQueued,
+		j.QueuedAt.Unix(), expires, j.CreatedAt.Unix(), j.UpdatedAt.Unix(),
+	}, whereArgs...)
+	res, err := r.write.ExecContext(ctx,
 		`INSERT INTO jobs (id, user_id, filename, size_byte, label, pipeline, stage, params,
 		                   has_blob, raw, state, attempts, units, accrued_credits, worker_id,
 		                   lease_expires_at, last_error, queued_at, expires_at, created_at, updated_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,0,0,0,'',NULL,'',?,?,?,?)`,
-		j.ID, j.UserID, j.Filename, j.SizeByte, j.Label, string(pipeline), j.Stage,
-		string(params), boolToInt(j.HasBlob), boolToInt(j.Raw), core.JobQueued,
-		j.QueuedAt.Unix(), expires, j.CreatedAt.Unix(), j.UpdatedAt.Unix())
-	return mapConstraint(err)
+		 SELECT ?,?,?,?,?,?,?,?,?,?,?,0,0,0,'',NULL,'',?,?,?,?`+where,
+		args...)
+	if err != nil {
+		return 0, mapConstraint(err)
+	}
+	return res.RowsAffected()
 }
 
 // ClaimOneQueued atomically leases the highest-priority claimable job for one

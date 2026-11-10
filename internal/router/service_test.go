@@ -152,6 +152,34 @@ func TestUploadRefusesAtBufferLimit(t *testing.T) {
 	}
 }
 
+// TestConcurrentUploadsRespectTheBufferLimit is F13 from the router: ten
+// uploads at once against a limit of four admit at most four.
+func TestConcurrentUploadsRespectTheBufferLimit(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	admitted := 0
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := h.svc.Upload(ctx, "u", router.UploadInput{Body: strings.NewReader("x")}, base); err == nil {
+				mu.Lock()
+				admitted++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if admitted > 4 {
+		t.Errorf("%d of 10 concurrent uploads admitted at a buffer limit of 4", admitted)
+	}
+}
+
 func TestUploadBufferLimitFreesOnDelivery(t *testing.T) {
 	h := newHarness(t)
 	h.worker(t, "ocr")

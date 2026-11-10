@@ -307,10 +307,14 @@ func collectJobs(rows *sql.Rows) ([]core.Job, error) {
 func (r *Repo) CountInFlight(ctx context.Context, userID string) (int, error) {
 	var n int
 	err := r.read.QueryRowContext(ctx,
-		`SELECT count(*) FROM jobs WHERE user_id = ? AND state IN ('queued','processing','done')`,
+		`SELECT count(*) FROM jobs WHERE user_id = ? AND state IN (`+inFlightStates+`)`,
 		userID).Scan(&n)
 	return n, err
 }
+
+// inFlightStates are the states that hold a buffer slot. One constant, because
+// CountInFlight (the cheap pre-check) and AdmitJob (the binding one) must agree.
+const inFlightStates = `'queued','processing','done'`
 
 // QueueDepthByLabel returns the number of queued jobs per label.
 func (r *Repo) QueueDepthByLabel(ctx context.Context) (map[string]int, error) {

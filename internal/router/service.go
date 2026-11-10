@@ -224,7 +224,9 @@ func (s *Service) Upload(ctx context.Context, userID string, in UploadInput, now
 		job.SizeByte = n
 	}
 
-	if err := s.repo.CreateJob(ctx, job); err != nil {
+	// AdmitJob, not CreateJob: the buffer check above is a read that a
+	// concurrent upload can race; this one is in the insert itself (F13).
+	if err := s.repo.AdmitJob(ctx, job, u.BufferLimit); err != nil {
 		// The blob would otherwise be orphaned; nothing references it.
 		if job.HasBlob {
 			_ = s.blobs.Delete(job.ID)
