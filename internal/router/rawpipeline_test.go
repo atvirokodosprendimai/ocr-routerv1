@@ -145,6 +145,37 @@ func TestRawStageModeMismatchIsNotRetried(t *testing.T) {
 	}
 }
 
+// TestUnitsStageIntoRawStageFailsTheJob is F9 (REPORT 2026-11-10), the mirror
+// of the raw-to-units check: a units stage feeding a raw one used to advance,
+// and every raw worker of the next label then had its result refused, so the
+// job burned its reclaims and died as "abandoned" with no word on why.
+func TestUnitsStageIntoRawStageFailsTheJob(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "ocr")
+	h.worker(t, "convert")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	if err := h.repo.SetRate(ctx, "ocr", 1, false, base); err != nil {
+		t.Fatalf("SetRate ocr: %v", err)
+	}
+	if err := h.repo.SetRate(ctx, "convert", 1, true, base); err != nil {
+		t.Fatalf("SetRate convert: %v", err)
+	}
+	j := upload(t, h, "u", router.UploadInput{
+		Pipeline: []string{"ocr", "convert"}, Body: strings.NewReader("scan"),
+	})
+	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	_ = h.svc.Complete(ctx, "w1", j.ID, []string{"text"}, base)
+
+	got, _ := h.repo.JobByID(ctx, j.ID)
+	if got.State != core.JobDead || !strings.Contains(got.LastError, "convert") {
+		t.Errorf("after a units stage into a raw one: state %q, last error %q; want dead, naming convert",
+			got.State, got.LastError)
+	}
+}
+
 // TestRawJobsCounterIncrementsOnDelivery is the rung-4 answer.
 func TestRawJobsCounterIncrementsOnDelivery(t *testing.T) {
 	h := newHarness(t)

@@ -312,6 +312,20 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 
 	next, more := job.NextLabel()
 	if more {
+		// The mirror of bridgeRawStage's check (F9, REPORT 2026-11-10): a units
+		// stage's output is a unit list, and a raw next stage would refuse every
+		// worker's result until the job died as "abandoned" with no word on
+		// why. Its mode is checked here, at the advance, for the reason
+		// bridgeRawStage gives.
+		_, nextRaw, err := s.repo.ServiceMode(ctx, next)
+		if err != nil {
+			return err
+		}
+		if nextRaw {
+			return s.killJob(ctx, job, "router",
+				fmt.Sprintf("stage %q is a raw service and cannot accept a units stage's output", next),
+				nil, now)
+		}
 		// The bridge between stages is a blob, because the next stage's contract
 		// is `-i <file>`. One element is written verbatim; several are joined by
 		// a newline.
