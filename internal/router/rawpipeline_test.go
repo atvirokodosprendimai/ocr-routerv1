@@ -116,6 +116,35 @@ func TestRawStageModeMismatchFailsTheJob(t *testing.T) {
 	}
 }
 
+// TestRawStageModeMismatchIsNotRetried is F12 (REPORT 2026-11-10): the
+// mismatch is a configuration error no rerun can fix, so the job dies at once
+// instead of rerunning the same raw stage up to MaxAttempts times.
+func TestRawStageModeMismatchIsNotRetried(t *testing.T) {
+	h := newHarness(t) // MaxAttempts 3
+	h.worker(t, "convert")
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	if err := h.repo.SetRate(ctx, "convert", 1, true, base); err != nil {
+		t.Fatalf("SetRate convert: %v", err)
+	}
+	if err := h.repo.SetRate(ctx, "ocr", 3, false, base); err != nil {
+		t.Fatalf("SetRate ocr: %v", err)
+	}
+	j := upload(t, h, "u", router.UploadInput{
+		Pipeline: []string{"convert", "ocr"}, Body: strings.NewReader("original"), Raw: true,
+	})
+	if _, err := h.svc.Claim(ctx, "w1", "convert", base); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	_ = h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader("\x89PNG"), base)
+
+	got, _ := h.repo.JobByID(ctx, j.ID)
+	if got.State != core.JobDead {
+		t.Errorf("state after a mode mismatch = %q, want dead — a rerun cannot fix a configuration", got.State)
+	}
+}
+
 // TestRawJobsCounterIncrementsOnDelivery is the rung-4 answer.
 func TestRawJobsCounterIncrementsOnDelivery(t *testing.T) {
 	h := newHarness(t)

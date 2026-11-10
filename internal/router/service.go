@@ -304,7 +304,7 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 	// and delivery would book it as a credit (F8). Fail the job with a reason
 	// the operator can act on rather than multiply.
 	if rate < 0 || rate > core.MaxCreditsPerUnit {
-		return s.failJob(ctx, job, "router",
+		return s.killJob(ctx, job, "router",
 			fmt.Sprintf("service %q has rate %d, outside 0..%d: fix it on the services page",
 				job.Label, rate, core.MaxCreditsPerUnit), nil, now)
 	}
@@ -456,7 +456,7 @@ func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, worker
 		// Fail the job with a reason a human can act on. Left queued instead, it
 		// would sit under a label whose every worker is refused, with nothing
 		// saying why.
-		return s.failJob(ctx, job, "router",
+		return s.killJob(ctx, job, "router",
 			fmt.Sprintf("stage %q is a units service and cannot accept a raw stage's output", next),
 			nil, now)
 	}
@@ -610,7 +610,16 @@ func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason strin
 		s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 		return nil
 	}
+	return s.killJob(ctx, job, actor, reason, exitCode, now)
+}
 
+// killJob dead-letters a job at once, whatever its attempt budget.
+//
+// failJob reaches it when the budget is spent. A CONFIGURATION error reaches
+// it directly (F12, REPORT 2026-11-10): a pipeline whose next stage has the
+// other output mode, or a rate outside the cap, fails the same way on every
+// rerun, so retrying only burns worker time up to MaxAttempts.
+func (s *Service) killJob(ctx context.Context, job core.Job, actor, reason string, exitCode *int, now time.Time) error {
 	if err := s.repo.FailJobDead(ctx, job.ID, job.WorkerID, reason, exitCode, now); err != nil {
 		return lostLease(err)
 	}
