@@ -32,7 +32,9 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 
 	// Keep the live-label registry fresh even when nobody is uploading; without
 	// this, the grace window would only ever be refreshed by traffic.
-	s.ObserveLabels(now)
+	// AvailableLabels rather than ObserveLabels: it also prunes the labels past
+	// their grace window, so the registry is bounded without uploads (F14).
+	_ = s.AvailableLabels(now)
 
 	// 1. Leases whose worker went silent. The job goes back to the queue with a
 	//    RECLAIM spent, or dies if the abandonment budget is gone.

@@ -935,7 +935,12 @@ func (s *Service) AvailableLabels(now time.Time) []string {
 	for label, seen := range s.labelSeen {
 		if now.Sub(seen) <= s.cfg.LabelGrace {
 			out = append(out, label)
+			continue
 		}
+		// Past its grace window the entry can never answer true again until a
+		// worker stamps it anew, so it goes: Claim stamps any label a worker
+		// names, and without this the map only grew (F14, REPORT 2026-11-10).
+		delete(s.labelSeen, label)
 	}
 	return out
 }
