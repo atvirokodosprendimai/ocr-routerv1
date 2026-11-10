@@ -56,6 +56,23 @@ func mkJob(t *testing.T, r *store.Repo, id, userID, label string, queuedAt time.
 	return j
 }
 
+// TestClaimSkipsADeactivatedCustomer is F11 (REPORT 2026-11-10): deactivation
+// stops every token at once (ADR-0004), so the owner cannot collect; running
+// their queued jobs only holds workers for results nobody may fetch.
+func TestClaimSkipsADeactivatedCustomer(t *testing.T) {
+	r := newRepo(t)
+	ctx := context.Background()
+	u := mkUser(t, r, "u", 0, 10)
+	mkJob(t, r, "j", "u", "ocr", base, time.Time{})
+	u.Active = false
+	if err := r.UpdateUser(ctx, u); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep); !errors.Is(err, core.ErrNotFound) {
+		t.Errorf("ClaimOneQueued for a deactivated owner = %v, want core.ErrNotFound", err)
+	}
+}
+
 func TestClaimPrefersHigherPriority(t *testing.T) {
 	r := newRepo(t)
 	ctx := context.Background()

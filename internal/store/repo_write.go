@@ -139,6 +139,11 @@ func (r *Repo) CreateJob(ctx context.Context, j core.Job) error {
 //
 // The deadline predicate sits in the same WHERE as the selection, so a job
 // cannot expire in a window between being chosen and being leased.
+//
+// A deactivated owner's jobs are skipped (`u.active = 1`, F11): deactivation
+// stops every token at once (ADR-0004), so their results could not be
+// collected, and running them only holds workers. They stay queued, and run
+// if the customer is reactivated before their deadline.
 func (r *Repo) ClaimOneQueued(
 	ctx context.Context,
 	label, workerID string,
@@ -157,7 +162,7 @@ func (r *Repo) ClaimOneQueued(
 		`UPDATE jobs SET state = 'processing', worker_id = ?, lease_expires_at = ?, updated_at = ?
 		 WHERE id = (
 		     SELECT j.id FROM jobs j JOIN users u ON u.id = j.user_id
-		     WHERE j.state = 'queued'
+		     WHERE j.state = 'queued' AND u.active = 1
 		       AND j.label = ?
 		       AND (j.expires_at IS NULL OR j.expires_at > ?)
 		     ORDER BY (u.priority + (? - j.queued_at) / ?) DESC, j.id ASC
