@@ -48,7 +48,10 @@ Three forks were put to the operator on 2026-09-15 and answered:
 
 1. **Undelivered results** → memory + TTL; a restart re-queues from the source blob, which
    is kept on disk until delivery. Charged once, at delivery.
-2. **Router scale** → exactly one router process.
+2. **Router scale** → exactly one router process. (Amended 2026-11-10, REPORT F6/F7 and branch
+   review: the router also orders a job's blob renames against its guarded writes with an
+   in-process per-job lock, so two routers on one data directory, even briefly during a deploy,
+   would break that ordering as well as the single writer.)
 3. **Dispatch** → broadcast + first-claim-wins, with the fourth endpoint explicitly accepted.
 
 ## Existing Primitives Audit

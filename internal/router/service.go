@@ -64,7 +64,8 @@ type Service struct {
 
 	// mu guards labelSeen only. It is deliberately NOT a lock around the
 	// service: serialisation of writes comes from the single writer connection
-	// in the store, not from here.
+	// in the store, not from here. The one exception is jobLocks below, which
+	// orders blob renames against the guarded writes of the same job.
 	mu sync.Mutex
 	// labelSeen is when a label last had a live worker. It is what implements
 	// the grace window.
@@ -996,10 +997,13 @@ func (s *Service) lockJob(jobID string) func() {
 	return m.Unlock
 }
 
-// lockHolder takes the job's lock and re-reads the row under it, so the
-// caller's lease is checked at the moment its files are about to move, not
-// before a long upload. It returns core.ErrConflict, with the lock released,
-// when the caller no longer holds the job.
+// lockHolder takes the job's lock and re-reads the row under it, so WHO holds
+// the job is checked at the moment its files are about to move, not before a
+// long upload. The lease's expiry is still judged at the request's `now`: a
+// lease that lapsed during the upload but was not yet reclaimed still names
+// this worker, and the reaper cannot reclaim it while the lock is held. It
+// returns core.ErrConflict, with the lock released, when the caller no longer
+// holds the job.
 func (s *Service) lockHolder(ctx context.Context, jobID, workerID string, now time.Time) (func(), error) {
 	unlock := s.lockJob(jobID)
 	cur, err := s.repo.JobByID(ctx, jobID)
