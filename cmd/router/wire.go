@@ -292,8 +292,12 @@ func (a *App) StartReaper(ctx context.Context, every time.Duration) {
 			case <-ticker.C:
 				// A failed sweep must not kill the loop: the next tick retries,
 				// and the alternative is a router that silently stops reaping
-				// after one transient database error.
-				_, _ = a.Router.Reap(ctx, time.Now())
+				// after one transient database error. Logged, not dropped: the
+				// result sweep goes on past a per-job error and returns it at
+				// the end (F2), and an error nobody sees repeats every tick.
+				if _, err := a.Router.Reap(ctx, time.Now()); err != nil {
+					a.Logger.Error("reaper pass failed", "err", err)
+				}
 				// ⚠ Limiter eviction rides THIS tick rather than a timer of its
 				// own. The tick already exists, and a second timer is a second
 				// goroutine to leak. Without this line the limiter's map grows
