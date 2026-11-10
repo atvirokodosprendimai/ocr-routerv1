@@ -218,7 +218,15 @@ func TestCompleteRefusesAnExpiredLease(t *testing.T) {
 	mkUser(t, r, "u", 0, 10)
 	mkJob(t, r, "j", "u", "ocr", base, time.Time{})
 	claim(t, r, "w1", "ocr") // lease until base+1m
-	if err := r.CompleteJob(ctx, "j", "w1", 1, 1, base.Add(2*time.Minute)); !errors.Is(err, core.ErrNotFound) {
-		t.Errorf("CompleteJob after the lease = %v, want core.ErrNotFound", err)
+	// AT the expiry instant, not only after it: the lease is live strictly
+	// before lease_expires_at, as holdsLease's After(now) says.
+	if err := r.CompleteJob(ctx, "j", "w1", 1, 1, base.Add(time.Minute)); !errors.Is(err, core.ErrNotFound) {
+		t.Errorf("CompleteJob at the lease's expiry = %v, want core.ErrNotFound", err)
+	}
+	if err := r.AdvanceStage(ctx, "j", "w1", "next", 1, base.Add(time.Minute)); !errors.Is(err, core.ErrNotFound) {
+		t.Errorf("AdvanceStage at the lease's expiry = %v, want core.ErrNotFound", err)
+	}
+	if err := r.CompleteJob(ctx, "j", "w1", 1, 1, base.Add(time.Minute-time.Second)); err != nil {
+		t.Errorf("CompleteJob a second before the expiry = %v, want nil", err)
 	}
 }

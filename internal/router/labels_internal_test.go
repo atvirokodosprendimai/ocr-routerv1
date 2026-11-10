@@ -1,12 +1,27 @@
 package router
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/atvirokodosprendimai/ocr-routerv1/internal/bus"
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
+
+// TestLostLeaseIsAConflict: a guarded writer that matched no row reaches the
+// worker as 409, the answer holdsLease gives for the same fact (F4/F5 review);
+// any other error passes through untouched.
+func TestLostLeaseIsAConflict(t *testing.T) {
+	if got := lostLease(core.ErrNotFound); !errors.Is(got, core.ErrConflict) {
+		t.Errorf("lostLease(ErrNotFound) = %v, want core.ErrConflict", got)
+	}
+	other := errors.New("disk full")
+	if got := lostLease(other); got != other {
+		t.Errorf("lostLease(other) = %v, want it unchanged", got)
+	}
+}
 
 // TestAvailableLabelsPrunesExpiredLabels is F14 (REPORT 2026-11-10): Claim
 // stamps any label a worker names, and nothing deleted from labelSeen, so a
