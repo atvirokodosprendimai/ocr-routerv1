@@ -152,7 +152,9 @@ one-function change if it turns out wrong.
 stage adds `len(output) × rate(label)` to `jobs.accrued_credits`; delivery debits that
 total in the single transaction that already exists. So a crawl at rate 0 followed by OCR
 at rate 1 costs what the OCR cost, the charge-once invariant is untouched, and an abandoned
-pipeline costs the customer nothing.
+pipeline costs the customer nothing. A done job sent back to the queue (result swept, or a
+restart) gives back its last stage's accrual, kept in `jobs.last_stage_accrued`, before
+that stage reruns and adds it again (amended 2026-11-10, REPORT F1).
 
 `queued_at` is **not** reset between stages, so a job halfway through a pipeline keeps the
 age it has accrued and is preferred over a freshly uploaded one. Without that, long
@@ -410,6 +412,7 @@ separate context; splitting billing out would be speculative at this size.
 | `jobs.pipeline TEXT` (JSON array of labels) | new | client (query param) | stage advancement |
 | `jobs.stage INTEGER NOT NULL DEFAULT 0` | new | router | which label is current |
 | `jobs.accrued_credits INTEGER NOT NULL DEFAULT 0` | new | router | the total debited at delivery |
+| `jobs.last_stage_accrued INTEGER NOT NULL DEFAULT 0` | amended 2026-11-10 (F1), migration `00008` | router | taken back when a done job is requeued |
 | `jobs.label TEXT NOT NULL DEFAULT 'ocr'` | new | client (query param) | claim filtering, worker topic |
 | `jobs.params TEXT` (JSON object) | new | client (query string) | worker argv |
 | `jobs.has_blob INTEGER NOT NULL` | new | router | whether `-i <file>` is passed |

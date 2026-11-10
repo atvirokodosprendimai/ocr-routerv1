@@ -95,7 +95,7 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 			continue
 		}
 		// nil: a result swept for age never ran a command that exited.
-		if err := s.repo.RequeueJob(ctx, jobID, "result expired before collection", nil, now); err != nil {
+		if err := s.repo.RequeueDone(ctx, jobID, "result expired before collection", now); err != nil {
 			return rep, err
 		}
 		s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,
@@ -116,7 +116,7 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 			rep.ResultsSwept++
 			s.counter.Inc(metricReaperActions, map[string]string{"action": "result-swept"})
 			_ = s.blobs.DeleteResult(job.ID)
-			if err := s.repo.RequeueJob(ctx, job.ID, "result expired before collection", nil, now); err != nil {
+			if err := s.repo.RequeueDone(ctx, job.ID, "result expired before collection", now); err != nil {
 				return rep, err
 			}
 			s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,

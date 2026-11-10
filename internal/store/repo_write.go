@@ -177,12 +177,17 @@ func (r *Repo) ClaimOneQueued(
 }
 
 // CompleteJob marks the FINAL stage done and records its output size and cost.
+//
+// `last_stage_accrued` keeps this stage's share of the total so a requeue of the
+// done job (RequeueDone, ResetInFlightOnBoot) can take it back before the rerun
+// adds it again (F1).
 func (r *Repo) CompleteJob(ctx context.Context, jobID string, units, accrue int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
 		`UPDATE jobs SET state = 'done', units = ?, accrued_credits = accrued_credits + ?,
+		        last_stage_accrued = ?,
 		        worker_id = '', lease_expires_at = NULL, updated_at = ?
 		 WHERE id = ? AND state = 'processing'`,
-		units, accrue, now.Unix(), jobID)
+		units, accrue, accrue, now.Unix(), jobID)
 	return affectedOne(res, err)
 }
 
@@ -224,6 +229,24 @@ func (r *Repo) RequeueJob(ctx context.Context, jobID, lastErr string, exitCode *
 		        lease_expires_at = NULL, last_error = ?, exit_code = ?, updated_at = ?
 		 WHERE id = ?`,
 		lastErr, nullableInt(exitCode), now.Unix(), jobID)
+	return affectedOne(res, err)
+}
+
+// RequeueDone returns a DONE job whose result was lost (swept uncollected) to
+// the queue, spending an attempt like RequeueJob.
+//
+// It differs from RequeueJob in two ways, both F1/F4 (REPORT 2026-11-10):
+//   - it takes back the last stage's accrual, because the rerun of that stage
+//     adds it again and delivery would charge it twice;
+//   - it is guarded on state = 'done', so a job delivered after the caller read
+//     it is left alone (core.ErrNotFound) instead of being resurrected.
+func (r *Repo) RequeueDone(ctx context.Context, jobID, lastErr string, now time.Time) error {
+	res, err := r.write.ExecContext(ctx,
+		`UPDATE jobs SET state = 'queued', attempts = attempts + 1, worker_id = '',
+		        accrued_credits = accrued_credits - last_stage_accrued, last_stage_accrued = 0,
+		        lease_expires_at = NULL, last_error = ?, exit_code = NULL, updated_at = ?
+		 WHERE id = ? AND state = 'done'`,
+		lastErr, now.Unix(), jobID)
 	return affectedOne(res, err)
 }
 
@@ -366,11 +389,13 @@ func (r *Repo) LeaseExpired(ctx context.Context, now time.Time) ([]core.Job, err
 //
 // Leases and in-memory results die with the process, so on boot neither can be
 // honoured. Nothing is charged and no blob is deleted: the source is still on
-// disk, so the work is simply redone. Because nothing is charged before
-// delivery, a restart can only cost repeated work — never a double charge.
+// disk, so the work is simply redone. A done job's last-stage accrual is taken
+// back, because the rerun of that stage adds it again (F1); a processing job's
+// is 0. So a restart costs repeated work — never a double charge.
 func (r *Repo) ResetInFlightOnBoot(ctx context.Context, now time.Time) (int, error) {
 	res, err := r.write.ExecContext(ctx,
-		`UPDATE jobs SET state = 'queued', worker_id = '', lease_expires_at = NULL, updated_at = ?
+		`UPDATE jobs SET state = 'queued', worker_id = '', lease_expires_at = NULL, updated_at = ?,
+		        accrued_credits = accrued_credits - last_stage_accrued, last_stage_accrued = 0
 		 WHERE state IN ('processing','done')`, now.Unix())
 	if err != nil {
 		return 0, err

@@ -273,3 +273,77 @@ func drain(ch <-chan bus.Event) {
 		}
 	}
 }
+
+// rerunAndDeliver claims the job again at `at`, completes it with out and
+// delivers it, failing the test on any error.
+func rerunAndDeliver(t *testing.T, h *harness, jobID string, out []string, at time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := h.svc.Claim(ctx, "w2", "ocr", at); err != nil {
+		t.Fatalf("second Claim: %v", err)
+	}
+	if err := h.svc.Complete(ctx, "w2", jobID, out, at); err != nil {
+		t.Fatalf("second Complete: %v", err)
+	}
+	if _, err := h.svc.Deliver(ctx, "u", jobID, at); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+}
+
+// assertChargedOnce checks the one ledger row and the balance after a delivery
+// that cost `want`, starting from 100 credits.
+func assertChargedOnce(t *testing.T, h *harness, want int) {
+	t.Helper()
+	ctx := context.Background()
+	entries, _ := h.repo.Ledger(ctx, "u", 10)
+	if len(entries) != 1 || entries[0].Delta != -want {
+		t.Errorf("ledger = %+v, want exactly one -%d entry", entries, want)
+	}
+	u, _ := h.repo.UserByID(ctx, "u")
+	if u.Credits != 100-want {
+		t.Errorf("credits = %d, want %d — the rerun of a requeued done job added its last "+
+			"stage's accrual a second time", u.Credits, 100-want)
+	}
+}
+
+// TestSweptDoneJobIsChargedOnce is F1 (REPORT 2026-11-10) through the sweep: a
+// done job requeued because nobody collected it must not keep the accrual of the
+// run whose result was thrown away.
+func TestSweptDoneJobIsChargedOnce(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	if err := h.repo.SetRate(ctx, "ocr", 2, false, base); err != nil {
+		t.Fatalf("SetRate: %v", err)
+	}
+	j := upload(t, h, "u", router.UploadInput{Body: strings.NewReader("x")})
+	mustRun(t, h, j.ID, []string{"a", "b", "c"})
+
+	later := base.Add(2 * time.Hour)
+	h.results.SetClock(func() time.Time { return later })
+	if _, err := h.svc.Reap(ctx, later); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	rerunAndDeliver(t, h, j.ID, []string{"a", "b", "c"}, later)
+	assertChargedOnce(t, h, 6)
+}
+
+// TestBootRecoveredDoneJobIsChargedOnce is F1 through a restart.
+func TestBootRecoveredDoneJobIsChargedOnce(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	if err := h.repo.SetRate(ctx, "ocr", 2, false, base); err != nil {
+		t.Fatalf("SetRate: %v", err)
+	}
+	j := upload(t, h, "u", router.UploadInput{Body: strings.NewReader("x")})
+	mustRun(t, h, j.ID, []string{"a", "b", "c"})
+
+	if _, err := h.svc.RecoverOnBoot(ctx, base); err != nil {
+		t.Fatalf("RecoverOnBoot: %v", err)
+	}
+	rerunAndDeliver(t, h, j.ID, []string{"a", "b", "c"}, base)
+	assertChargedOnce(t, h, 6)
+}
