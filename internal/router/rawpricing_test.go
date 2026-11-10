@@ -121,3 +121,35 @@ func TestUnitsPricingUnchanged(t *testing.T) {
 		t.Errorf("a 4-unit job at rate 3 cost %d, want 12 — units pricing must be untouched", spent)
 	}
 }
+
+// TestRawStageAddsNothingToTheAccrual is F10 (REPORT 2026-11-10): a raw
+// stage's completion and bridge must ADD zero, not the job's running total,
+// which the SQL adds to itself. Latent today (a raw job's total is always 0),
+// so the total is forced to 5 to make the doubling visible.
+func TestRawStageAddsNothingToTheAccrual(t *testing.T) {
+	for _, pipeline := range [][]string{{"convert"}, {"convert", "compress"}} {
+		h := newHarness(t)
+		h.worker(t, "convert")
+		h.user(t, "u", 100, 4, 0)
+		ctx := context.Background()
+		for _, l := range pipeline {
+			if err := h.repo.SetRate(ctx, l, 1, true, base); err != nil {
+				t.Fatalf("SetRate: %v", err)
+			}
+		}
+		j := upload(t, h, "u", router.UploadInput{Pipeline: pipeline, Body: strings.NewReader("src"), Raw: true})
+		if _, err := h.svc.Claim(ctx, "w1", "convert", base); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+		if _, err := h.db.Write.Exec(`UPDATE jobs SET accrued_credits = 5 WHERE id = ?`, j.ID); err != nil {
+			t.Fatalf("forcing the accrual: %v", err)
+		}
+		if err := h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader("out"), base); err != nil {
+			t.Fatalf("CompleteRaw: %v", err)
+		}
+		got, _ := h.repo.JobByID(ctx, j.ID)
+		if got.AccruedCredits != 5 {
+			t.Errorf("%v: accrued = %d after a raw stage, want 5 — the stage added the running total", pipeline, got.AccruedCredits)
+		}
+	}
+}

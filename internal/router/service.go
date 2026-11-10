@@ -394,8 +394,10 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 // duplication: it is what stops one customer's worker writing another's result,
 // and a second write path is exactly where such a guard gets forgotten.
 //
-// Pricing is deliberately NOT decided here — a raw job's flat credit is T6's,
-// and until then a raw job accrues what an empty unit list accrues.
+// Pricing is deliberately NOT decided here: a raw job's flat credit is charged
+// at delivery (DeliverRaw), and a raw stage ADDS 0 to the accrual, what an
+// empty unit list accrues. The SQL adds its argument, so passing the job's
+// running total here doubled it (F10, REPORT 2026-11-10).
 func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body io.Reader, now time.Time) error {
 	job, err := s.repo.JobByID(ctx, jobID)
 	if err != nil {
@@ -425,7 +427,7 @@ func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body 
 
 	// The row first, then the file's name (F7): committed first, a losing
 	// completion replaced the winner's `.out`, and its cleanup deleted it.
-	if err := s.repo.CompleteJob(ctx, job.ID, job.WorkerID, 1, job.AccruedCredits, now); err != nil {
+	if err := s.repo.CompleteJob(ctx, job.ID, job.WorkerID, 1, 0, now); err != nil {
 		st.Abort()
 		return lostLease(err)
 	}
@@ -480,7 +482,7 @@ func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, worker
 	if err != nil {
 		return err
 	}
-	if err := s.repo.AdvanceStage(ctx, job.ID, job.WorkerID, next, job.AccruedCredits, now); err != nil {
+	if err := s.repo.AdvanceStage(ctx, job.ID, job.WorkerID, next, 0, now); err != nil {
 		_ = swap.Undo()
 		return lostLease(err)
 	}
