@@ -6,9 +6,19 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 )
+
+// claimOCR leases the next queued "ocr" job: the failure writers act only on a
+// job in `processing` (F4).
+func (e *env) claimOCR(t *testing.T) {
+	t.Helper()
+	if _, err := e.repo.ClaimOneQueued(context.Background(), "ocr", "w", base, base.Add(time.Hour), time.Minute); err != nil {
+		t.Fatalf("ClaimOneQueued: %v", err)
+	}
+}
 
 func intp(n int) *int { return &n }
 
@@ -19,7 +29,7 @@ func (e *env) seedJobs(t *testing.T) {
 	ctx := context.Background()
 
 	for _, j := range []core.Job{
-		{ID: "job-ok", UserID: e.clientID, Filename: "a.pdf", Label: "ocr",
+		{ID: "job-ok", UserID: e.clientID, Filename: "a.pdf", Label: "ocr-done",
 			Pipeline: []string{"ocr"}, Params: map[string]string{}, State: core.JobDelivered,
 			Units: 4, AccruedCredits: 12, QueuedAt: base, CreatedAt: base, UpdatedAt: base},
 		{ID: "job-exit3", UserID: e.clientID, Filename: "b.pdf", Label: "ocr",
@@ -33,6 +43,8 @@ func (e *env) seedJobs(t *testing.T) {
 			t.Fatalf("CreateJob(%s): %v", j.ID, err)
 		}
 	}
+	e.claimOCR(t)
+	e.claimOCR(t)
 	if err := e.repo.FailJobDead(ctx, "job-exit3", "exit status 3: stderr: boom", intp(3), base); err != nil {
 		t.Fatalf("FailJobDead: %v", err)
 	}
@@ -122,6 +134,7 @@ func TestDetailDoesNotBreakTheTable(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
+	e.claimOCR(t)
 	if err := e.repo.FailJobDead(ctx, "job-long", strings.Repeat("x", 2000), intp(1), base); err != nil {
 		t.Fatalf("FailJobDead: %v", err)
 	}

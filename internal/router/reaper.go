@@ -52,6 +52,12 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 			rep.JobsAbandoned++
 		}
 		if err := s.reclaimJob(ctx, job, "lease expired, reclaimed", now); err != nil {
+			// ErrNotFound: the job left `processing` after LeaseExpired read
+			// it (completed, failed, released); the writers are guarded on
+			// that state, so someone else won and there is nothing to do (F4).
+			if errors.Is(err, core.ErrNotFound) {
+				continue
+			}
 			return rep, err
 		}
 	}

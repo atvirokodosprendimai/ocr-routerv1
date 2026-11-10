@@ -223,11 +223,16 @@ func (r *Repo) MarkHasBlob(ctx context.Context, jobID string) error {
 // `exitCode` is nil when the failure never reached an exit status — a timeout, an
 // output-limit trip, a contract violation. It is written on BOTH failure writers
 // so a code cannot appear on one row and vanish on the next.
+//
+// ⚠ It and its three siblings below (ReclaimJob, ReleaseJob, FailJobDead) are
+// guarded on state = 'processing' (F4, REPORT 2026-11-10): each caller acts
+// on a row it read earlier, and a job completed and delivered in between must
+// not be moved back to `queued` — the next delivery would charge it again.
 func (r *Repo) RequeueJob(ctx context.Context, jobID, lastErr string, exitCode *int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
 		`UPDATE jobs SET state = 'queued', attempts = attempts + 1, worker_id = '',
 		        lease_expires_at = NULL, last_error = ?, exit_code = ?, updated_at = ?
-		 WHERE id = ?`,
+		 WHERE id = ? AND state = 'processing'`,
 		lastErr, nullableInt(exitCode), now.Unix(), jobID)
 	return affectedOne(res, err)
 }
@@ -268,7 +273,7 @@ func (r *Repo) ReclaimJob(ctx context.Context, jobID, reason string, now time.Ti
 	res, err := r.write.ExecContext(ctx,
 		`UPDATE jobs SET state = 'queued', reclaims = reclaims + 1, worker_id = '',
 		        lease_expires_at = NULL, last_error = ?, updated_at = ?
-		 WHERE id = ?`,
+		 WHERE id = ? AND state = 'processing'`,
 		reason, now.Unix(), jobID)
 	return affectedOne(res, err)
 }
@@ -286,7 +291,7 @@ func (r *Repo) ReleaseJob(ctx context.Context, jobID, reason string, now time.Ti
 	res, err := r.write.ExecContext(ctx,
 		`UPDATE jobs SET state = 'queued', worker_id = '',
 		        lease_expires_at = NULL, last_error = ?, updated_at = ?
-		 WHERE id = ?`,
+		 WHERE id = ? AND state = 'processing'`,
 		reason, now.Unix(), jobID)
 	return affectedOne(res, err)
 }
@@ -296,7 +301,7 @@ func (r *Repo) FailJobDead(ctx context.Context, jobID, lastErr string, exitCode 
 	res, err := r.write.ExecContext(ctx,
 		`UPDATE jobs SET state = 'dead', attempts = attempts + 1, worker_id = '',
 		        lease_expires_at = NULL, last_error = ?, exit_code = ?, updated_at = ?
-		 WHERE id = ?`,
+		 WHERE id = ? AND state = 'processing'`,
 		lastErr, nullableInt(exitCode), now.Unix(), jobID)
 	return affectedOne(res, err)
 }

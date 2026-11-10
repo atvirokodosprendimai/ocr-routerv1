@@ -20,6 +20,7 @@ func TestExitCodeRoundTripsThroughTheJobRow(t *testing.T) {
 	mkUser(t, r, "u", 0, 10)
 
 	mkJob(t, r, "j-three", "u", "ocr", base, time.Time{})
+	claim(t, r, "w1", "ocr")
 	if err := r.FailJobDead(ctx, "j-three", "exit status 3: boom", intp(3), base); err != nil {
 		t.Fatalf("FailJobDead: %v", err)
 	}
@@ -34,6 +35,7 @@ func TestExitCodeRoundTripsThroughTheJobRow(t *testing.T) {
 	// A recorded ZERO must read back as zero, not as absent. A command can exit 0
 	// and still fail its contract, and that is a fact worth keeping.
 	mkJob(t, r, "j-zero", "u", "ocr", base, time.Time{})
+	claim(t, r, "w1", "ocr")
 	if err := r.FailJobDead(ctx, "j-zero", "produced no output", intp(0), base); err != nil {
 		t.Fatalf("FailJobDead: %v", err)
 	}
@@ -48,6 +50,7 @@ func TestNoExitCodeStaysNull(t *testing.T) {
 	ctx := context.Background()
 	mkUser(t, r, "u", 0, 10)
 	mkJob(t, r, "j-timeout", "u", "ocr", base, time.Time{})
+	claim(t, r, "w1", "ocr")
 
 	if err := r.FailJobDead(ctx, "j-timeout", "timed out after 5m", nil, base); err != nil {
 		t.Fatalf("FailJobDead: %v", err)
@@ -69,6 +72,7 @@ func TestExitCodeSurvivesARequeue(t *testing.T) {
 	ctx := context.Background()
 	mkUser(t, r, "u", 0, 10)
 	mkJob(t, r, "j-retry", "u", "ocr", base, time.Time{})
+	claim(t, r, "w1", "ocr")
 
 	if err := r.RequeueJob(ctx, "j-retry", "exit status 9: nope", intp(9), base); err != nil {
 		t.Fatalf("RequeueJob: %v", err)

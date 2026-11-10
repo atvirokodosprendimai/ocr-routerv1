@@ -2,9 +2,11 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 	"github.com/atvirokodosprendimai/ocr-routerv1/internal/store"
 )
 
@@ -106,5 +108,51 @@ func TestReclaimClearsTheLease(t *testing.T) {
 	if !got.LeaseExpiresAt.IsZero() {
 		t.Errorf("LeaseExpiresAt = %v, want zero — a live lease on a queued job is a row two "+
 			"workers can hold", got.LeaseExpiresAt)
+	}
+}
+
+// TestProcessingWritersLeaveADeliveredJobAlone is F4 (REPORT 2026-11-10). The
+// reaper and the failure paths act on a row they read earlier; if the job was
+// completed and delivered in between, their write must match nothing rather
+// than move a paid job back to `queued` (charged again on the next delivery) or
+// to `dead`.
+func TestProcessingWritersLeaveADeliveredJobAlone(t *testing.T) {
+	writers := map[string]func(r *store.Repo, id string) error{
+		"RequeueJob": func(r *store.Repo, id string) error {
+			return r.RequeueJob(context.Background(), id, "late failure", nil, base)
+		},
+		"ReclaimJob": func(r *store.Repo, id string) error {
+			return r.ReclaimJob(context.Background(), id, "stale lease", base)
+		},
+		"ReleaseJob": func(r *store.Repo, id string) error {
+			return r.ReleaseJob(context.Background(), id, "late release", base)
+		},
+		"FailJobDead": func(r *store.Repo, id string) error {
+			return r.FailJobDead(context.Background(), id, "late death", nil, base)
+		},
+	}
+	for name, write := range writers {
+		t.Run(name, func(t *testing.T) {
+			r := newRepo(t)
+			ctx := context.Background()
+			mkUser(t, r, "u", 0, 10)
+			mkJob(t, r, "j", "u", "ocr", base, time.Time{})
+			claim(t, r, "w1", "ocr")
+			if err := r.CompleteJob(ctx, "j", 1, 1, base); err != nil {
+				t.Fatalf("CompleteJob: %v", err)
+			}
+			if err := r.DeliverJob(ctx, "j", "u", 1, base); err != nil {
+				t.Fatalf("DeliverJob: %v", err)
+			}
+
+			if err := write(r, "j"); !errors.Is(err, core.ErrNotFound) {
+				t.Errorf("%s on a delivered job = %v, want core.ErrNotFound", name, err)
+			}
+			got, _ := r.JobByID(ctx, "j")
+			if got.State != core.JobDelivered {
+				t.Errorf("%s moved a delivered job to %q — the next delivery charges it again",
+					name, got.State)
+			}
+		})
 	}
 }
