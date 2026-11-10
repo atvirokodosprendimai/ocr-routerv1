@@ -21,3 +21,11 @@ type ServiceRate struct {
 	// units, and the job bills a flat 1 credit.
 	Raw bool
 }
+
+// MaxCreditsPerUnit bounds a service's rate (F8, REPORT 2026-11-10).
+//
+// The charge is len(units) x rate in int arithmetic; a rate near 1<<62 wraps
+// it negative, and delivery books a negative charge as a CREDIT. A million
+// credits per unit is far beyond any real price and leaves the product
+// representable for any output a worker can produce.
+const MaxCreditsPerUnit = 1_000_000

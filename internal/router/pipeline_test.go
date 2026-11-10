@@ -2,6 +2,7 @@ package router_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -242,5 +243,42 @@ func TestSingleStageUsesDefaultRateOfOne(t *testing.T) {
 	if u.Credits != 97 {
 		t.Errorf("credits = %d, want 97 — an unconfigured service costs 1 per unit, which is "+
 			"the operator's original '1 page = 1 credit'", u.Credits)
+	}
+}
+
+// TestHugeRateNeverCreditsTheCustomer is F8 (REPORT 2026-11-10): len(out) x
+// rate is int arithmetic, and a rate near 1<<62 wraps it negative, which
+// delivery would book as a credit. A rate already stored that large (written
+// before the cap) must make the completion refuse rather than wrap.
+func TestHugeRateNeverCreditsTheCustomer(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	if _, err := h.db.Write.Exec(
+		`INSERT INTO service_rates (label, credits_per_unit, raw, updated_at) VALUES ('ocr', ?, 0, 0)`,
+		int64(1)<<62); err != nil {
+		t.Fatalf("seeding a huge rate: %v", err)
+	}
+	j := upload(t, h, "u", router.UploadInput{Body: strings.NewReader("x")})
+	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	_ = h.svc.Complete(ctx, "w1", j.ID, []string{"a", "b", "c"}, base)
+	_, _ = h.svc.Deliver(ctx, "u", j.ID, base)
+
+	u, _ := h.repo.UserByID(ctx, "u")
+	if u.Credits > 100 {
+		t.Errorf("credits = %d after a delivery, want at most 100 — the charge wrapped into a credit", u.Credits)
+	}
+}
+
+// TestSetRateRefusesAnUnboundedRate: the cap at the source, so no admin can
+// store a rate the multiplication cannot carry (F8).
+func TestSetRateRefusesAnUnboundedRate(t *testing.T) {
+	h := newHarness(t)
+	err := h.repo.SetRate(context.Background(), "ocr", core.MaxCreditsPerUnit+1, false, base)
+	if !errors.Is(err, core.ErrInvalidParam) {
+		t.Errorf("SetRate above the cap = %v, want core.ErrInvalidParam", err)
 	}
 }

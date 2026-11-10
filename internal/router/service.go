@@ -300,6 +300,14 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 	if err != nil {
 		return err
 	}
+	// A rate stored before the cap existed could wrap len(out) x rate negative,
+	// and delivery would book it as a credit (F8). Fail the job with a reason
+	// the operator can act on rather than multiply.
+	if rate < 0 || rate > core.MaxCreditsPerUnit {
+		return s.failJob(ctx, job, "router",
+			fmt.Sprintf("service %q has rate %d, outside 0..%d: fix it on the services page",
+				job.Label, rate, core.MaxCreditsPerUnit), nil, now)
+	}
 	accrue := len(out) * rate
 
 	next, more := job.NextLabel()

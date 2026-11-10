@@ -564,8 +564,9 @@ func (wb *Web) setRate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rate, err := strconv.Atoi(strings.TrimSpace(s.RateValue))
-	if err != nil || rate < 0 {
-		wb.patch(w, r, views.CreateError("credits per unit must be a non-negative whole number"))
+	if err != nil || rate < 0 || rate > core.MaxCreditsPerUnit {
+		wb.patch(w, r, views.CreateError(fmt.Sprintf(
+			"credits per unit must be a whole number from 0 to %d", core.MaxCreditsPerUnit)))
 		return
 	}
 	// The mode comes from the control, not from a re-read. T1 installed a

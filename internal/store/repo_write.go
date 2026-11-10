@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
@@ -427,7 +428,14 @@ func (r *Repo) ResetInFlightOnBoot(ctx context.Context, now time.Time) (int, err
 // `raw` rides with the rate because it IS one: a raw service bills a flat credit
 // instead of per unit, so letting it be set anywhere less privileged would put
 // pricing back in reach of a worker (ADR-0006, ADR-0001 §security boundary).
+//
+// The rate is bounded by core.MaxCreditsPerUnit (F8): beyond it the charge's
+// multiplication can wrap negative and credit the customer.
 func (r *Repo) SetRate(ctx context.Context, label string, creditsPerUnit int, raw bool, now time.Time) error {
+	if creditsPerUnit < 0 || creditsPerUnit > core.MaxCreditsPerUnit {
+		return fmt.Errorf("%w: credits per unit %d is outside 0..%d",
+			core.ErrInvalidParam, creditsPerUnit, core.MaxCreditsPerUnit)
+	}
 	_, err := r.write.ExecContext(ctx,
 		`INSERT INTO service_rates (label, credits_per_unit, raw, updated_at) VALUES (?,?,?,?)
 		 ON CONFLICT(label) DO UPDATE SET credits_per_unit = excluded.credits_per_unit,
