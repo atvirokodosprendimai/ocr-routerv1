@@ -33,13 +33,14 @@ func TestAvailableLabelsPrunesExpiredLabels(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		s.noteLabel(fmt.Sprintf("random-%d", i), at)
 	}
-	if got := s.AvailableLabels(at.Add(10 * time.Minute)); len(got) != 0 {
-		t.Errorf("AvailableLabels past the grace window = %d labels, want 0", len(got))
+	s.noteLabel("live", at.Add(8*time.Minute)) // inside the grace window at the read
+	if got := s.AvailableLabels(at.Add(10 * time.Minute)); len(got) != 1 || got[0] != "live" {
+		t.Errorf("AvailableLabels = %v, want only the label inside its grace window", got)
 	}
 	s.mu.Lock()
 	n := len(s.labelSeen)
 	s.mu.Unlock()
-	if n != 0 {
-		t.Errorf("labelSeen holds %d labels past their grace window, want 0", n)
+	if n != 1 {
+		t.Errorf("labelSeen holds %d labels, want 1 — the expired ones must go, the live one stay", n)
 	}
 }

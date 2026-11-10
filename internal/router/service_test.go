@@ -175,8 +175,8 @@ func TestConcurrentUploadsRespectTheBufferLimit(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if admitted > 4 {
-		t.Errorf("%d of 10 concurrent uploads admitted at a buffer limit of 4", admitted)
+	if admitted != 4 {
+		t.Errorf("%d of 10 concurrent uploads admitted at a buffer limit of 4, want exactly 4", admitted)
 	}
 }
 

@@ -268,8 +268,11 @@ func TestHugeRateNeverCreditsTheCustomer(t *testing.T) {
 	_, _ = h.svc.Deliver(ctx, "u", j.ID, base)
 
 	u, _ := h.repo.UserByID(ctx, "u")
-	if u.Credits > 100 {
-		t.Errorf("credits = %d after a delivery, want at most 100 — the charge wrapped into a credit", u.Credits)
+	if u.Credits != 100 {
+		t.Errorf("credits = %d, want 100 — the job dies and nothing is charged; more means the charge wrapped into a credit", u.Credits)
+	}
+	if got, _ := h.repo.JobByID(ctx, j.ID); got.State != core.JobDead {
+		t.Errorf("state = %q, want dead — a rate no rerun can fix kills the job at once", got.State)
 	}
 }
 

@@ -71,6 +71,14 @@ func TestClaimSkipsADeactivatedCustomer(t *testing.T) {
 	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep); !errors.Is(err, core.ErrNotFound) {
 		t.Errorf("ClaimOneQueued for a deactivated owner = %v, want core.ErrNotFound", err)
 	}
+	// Reactivated, the job is claimable again: it was skipped, not dropped.
+	u.Active = true
+	if err := r.UpdateUser(ctx, u); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep); err != nil {
+		t.Errorf("ClaimOneQueued after reactivation = %v, want the job", err)
+	}
 }
 
 // TestAdmitJobHoldsTheBufferLimitInTheWrite is F13 (REPORT 2026-11-10): the
