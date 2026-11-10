@@ -8,6 +8,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -564,7 +565,7 @@ func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, exit
 func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason string, exitCode *int, now time.Time) error {
 	if job.Attempts+1 < s.cfg.MaxAttempts {
 		if err := s.repo.RequeueJob(ctx, job.ID, reason, exitCode, now); err != nil {
-			return err
+			return lostLease(err)
 		}
 		// The retry is the transition nothing else records: a job that succeeds
 		// on attempt 3 looks identical in the metrics to one that succeeded
@@ -576,10 +577,11 @@ func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason strin
 		return nil
 	}
 
-	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})
 	if err := s.repo.FailJobDead(ctx, job.ID, reason, exitCode, now); err != nil {
-		return err
+		return lostLease(err)
 	}
+	// Counted only once the row is dead: a write that lost a race is not a death.
+	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})
 	// The line the counter cannot give you: which job, on which worker, for what
 	// reason, at which attempt.
 	s.logFailureTransition(job, job.State, core.JobDead, job.UpdatedAt,
@@ -621,13 +623,25 @@ func (s *Service) ReleaseLease(ctx context.Context, workerID, jobID string, now 
 	// nothing. The lease and worker_id still have to go, or the releasing
 	// worker's subprocess could land a late result on a job somebody else holds.
 	if err := s.repo.ReleaseJob(ctx, jobID, "released by its worker", now); err != nil {
-		return err
+		return lostLease(err)
 	}
 	s.logFailureTransition(job, job.State, core.JobQueued, job.UpdatedAt,
 		"worker", workerID, "released by its worker", nil, now)
 	s.publishWork(job.Label)
 	s.bus.Publish(bus.AdminTopic, bus.Event{Kind: bus.KindAdmin, JobID: job.ID})
 	return nil
+}
+
+// lostLease reports a guarded writer that matched no row as the worker having
+// lost its lease (core.ErrConflict, 409), the answer holdsLease gives for the
+// same fact a moment earlier. Since F4 the failure and release writers act only
+// on a `processing` row, so zero rows means the job moved on between the read
+// and the write — a 404 would tell the worker the job does not exist.
+func lostLease(err error) error {
+	if errors.Is(err, core.ErrNotFound) {
+		return core.ErrConflict
+	}
+	return err
 }
 
 // reclaimJob returns a job whose worker went away, WITHOUT spending an attempt.
@@ -661,10 +675,10 @@ func (s *Service) reclaimJob(ctx context.Context, job core.Job, reason string, n
 	// operator who reads one and concludes the other goes looking for a broken
 	// command when the problem is a host that keeps losing workers.
 	dead := reason + ": abandoned too many times"
-	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})
 	if err := s.repo.FailJobDead(ctx, job.ID, dead, nil, now); err != nil {
 		return err
 	}
+	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})
 	s.logFailureTransition(job, job.State, core.JobDead, job.UpdatedAt,
 		"reaper", job.WorkerID, dead, nil, now)
 	// Terminal: neither blob has any further use and nothing was charged.

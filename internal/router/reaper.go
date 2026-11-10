@@ -46,19 +46,20 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		return rep, err
 	}
 	for _, job := range expiredLeases {
-		rep.LeasesExpired++
-		s.counter.Inc(metricReaperActions, map[string]string{"action": "lease-expired"})
-		if job.Reclaims+1 >= s.cfg.MaxReclaims {
-			rep.JobsAbandoned++
-		}
 		if err := s.reclaimJob(ctx, job, "lease expired, reclaimed", now); err != nil {
 			// ErrNotFound: the job left `processing` after LeaseExpired read
 			// it (completed, failed, released); the writers are guarded on
-			// that state, so someone else won and there is nothing to do (F4).
+			// that state, so someone else won and there is nothing to do —
+			// and nothing to count (F4).
 			if errors.Is(err, core.ErrNotFound) {
 				continue
 			}
 			return rep, err
+		}
+		rep.LeasesExpired++
+		s.counter.Inc(metricReaperActions, map[string]string{"action": "lease-expired"})
+		if job.Reclaims+1 >= s.cfg.MaxReclaims {
+			rep.JobsAbandoned++
 		}
 	}
 

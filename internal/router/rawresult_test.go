@@ -97,9 +97,9 @@ func TestDeadRawJobDropsItsResultBlob(t *testing.T) {
 			if err := h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader("\x89PNG"), base); err != nil {
 				t.Fatalf("CompleteRaw: %v", err)
 			}
-			// Put it back into processing so it can fail.
+			// Put it back into the queue so the next claim can fail it.
 			if err := h.repo.RequeueDone(ctx, j.ID, "test", base); err != nil {
-				t.Fatalf("RequeueJob: %v", err)
+				t.Fatalf("RequeueDone: %v", err)
 			}
 			continue
 		}
