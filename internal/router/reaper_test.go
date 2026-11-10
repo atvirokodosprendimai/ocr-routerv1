@@ -434,3 +434,27 @@ func TestSweptRawJobIsRequeuedAndLosesItsFile(t *testing.T) {
 		t.Errorf("a swept raw job left %d result file(s)", n)
 	}
 }
+
+// TestSweepWithZeroResultTTLStillRequeues is the F2 review's finding: a
+// `--result-ttl 0` result store expires every result at once, and the sweep
+// must still requeue its job rather than leave it `done` with nothing to serve.
+func TestSweepWithZeroResultTTLStillRequeues(t *testing.T) {
+	h := newHarnessWith(t, router.Config{
+		Lease: 5 * time.Minute, MaxAttempts: 3, MaxReclaims: 10,
+		AgingStep: time.Minute, LabelGrace: 5 * time.Minute,
+		ResultTTL: 0, DefaultLabel: "ocr",
+	})
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	j := upload(t, h, "u", router.UploadInput{Body: strings.NewReader("x")})
+	mustRun(t, h, j.ID, []string{"a"})
+	h.results.SetClock(func() time.Time { return base.Add(2 * time.Hour) })
+
+	if _, err := h.svc.Reap(ctx, base); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if got, _ := h.repo.JobByID(ctx, j.ID); got.State != core.JobQueued {
+		t.Errorf("state = %q, want queued", got.State)
+	}
+}

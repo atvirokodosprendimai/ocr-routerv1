@@ -90,40 +90,42 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 	//    rows past the TTL on every tick retries whatever failed last time, and
 	//    a raw result — on disk, invisible to the result store — needs the same
 	//    query anyway. Sweep stays only to free the memory.
+	//
+	//    No `ResultTTL > 0` gate: with a zero TTL the result store expires every
+	//    result at once, and the cutoff `now` still requeues those jobs, as the
+	//    old units loop did (F2 review).
 	s.results.Sweep()
 	var sweepErr error
-	if s.cfg.ResultTTL > 0 {
-		stale, err := s.repo.JobsDoneBefore(ctx, now.Add(-s.cfg.ResultTTL))
-		if err != nil {
-			return rep, err
-		}
-		for _, job := range stale {
-			if !job.Raw {
-				if _, live := s.results.Peek(job.ID); live {
-					// Put back by a failed delivery, with a fresh expiry.
-					continue
-				}
-			}
-			const reason = "result expired before collection"
-			if err := s.repo.RequeueDone(ctx, job.ID, reason, now); err != nil {
-				// ErrNotFound: delivered since the read, nothing to do. Any
-				// other error is kept and the loop goes on; the next tick
-				// reselects this job.
-				if !errors.Is(err, core.ErrNotFound) {
-					sweepErr = errors.Join(sweepErr, err)
-				}
+	stale, err := s.repo.JobsDoneBefore(ctx, now.Add(-s.cfg.ResultTTL))
+	if err != nil {
+		return rep, err
+	}
+	for _, job := range stale {
+		if !job.Raw {
+			if _, live := s.results.Peek(job.ID); live {
+				// Put back by a failed delivery, with a fresh expiry.
 				continue
 			}
-			rep.ResultsSwept++
-			s.counter.Inc(metricReaperActions, map[string]string{"action": "result-swept"})
-			// Only after the requeue: before it, the result is still the
-			// job's to deliver.
-			_ = s.blobs.DeleteResult(job.ID)
-			s.results.Drop(job.ID)
-			s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,
-				"reaper", "", reason, now)
-			s.publishWork(job.Label)
 		}
+		const reason = "result expired before collection"
+		if err := s.repo.RequeueDone(ctx, job.ID, reason, now); err != nil {
+			// ErrNotFound: delivered since the read, nothing to do. Any other
+			// error is kept and the loop goes on; the next tick reselects
+			// this job.
+			if !errors.Is(err, core.ErrNotFound) {
+				sweepErr = errors.Join(sweepErr, err)
+			}
+			continue
+		}
+		rep.ResultsSwept++
+		s.counter.Inc(metricReaperActions, map[string]string{"action": "result-swept"})
+		// Only after the requeue: before it, the result is still the job's to
+		// deliver. No results.Drop: Sweep already freed the expired entry, and a
+		// Drop here could only remove the result of a rerun that won the race.
+		_ = s.blobs.DeleteResult(job.ID)
+		s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,
+			"reaper", "", reason, now)
+		s.publishWork(job.Label)
 	}
 
 	if rep.LeasesExpired+rep.JobsExpired+rep.ResultsSwept > 0 {
