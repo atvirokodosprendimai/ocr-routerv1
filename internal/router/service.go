@@ -308,21 +308,24 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 		// is `-i <file>`. One element is written verbatim; several are joined by
 		// a newline.
 		//
-		// ⚠ STAGED, then the row, then the rename (F6, REPORT 2026-11-10). The
-		// output used to overwrite the input first; when the guarded advance
-		// then lost, the job stayed at this stage with this stage's own output
-		// as its input, and the next claimant ran the stage on it.
-		st, _, err := s.blobs.Stage(job.ID, strings.NewReader(joinUnits(out)))
+		// ⚠ STAGED AND SWAPPED, then the row, then Keep or Undo (F6). The output
+		// used to overwrite the input outright; when the guarded advance then
+		// lost, the job stayed at this stage with this stage's own output as its
+		// input. Swapped before the advance (not renamed after it), no worker of
+		// the next stage can be handed the job while the old input is in place.
+		st, err := s.blobs.Stage(job.ID, strings.NewReader(joinUnits(out)))
+		if err != nil {
+			return err
+		}
+		swap, err := st.SwapInput()
 		if err != nil {
 			return err
 		}
 		if err := s.repo.AdvanceStage(ctx, job.ID, job.WorkerID, next, accrue, now); err != nil {
-			st.Abort()
+			_ = swap.Undo()
 			return lostLease(err)
 		}
-		if err := st.CommitInput(); err != nil {
-			return err
-		}
+		swap.Keep()
 		if !job.HasBlob {
 			// A params-only job now HAS a blob: its first stage produced one.
 			if err := s.repo.MarkHasBlob(ctx, job.ID); err != nil {
@@ -384,8 +387,8 @@ func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body 
 			core.ErrModeMismatch, jobID)
 	}
 
-	// Staged, not yet named: the name is given once the row has moved (F6).
-	st, _, err := s.blobs.Stage(job.ID, body)
+	// Staged, not yet named: the name is given around the row's write (F6, F7).
+	st, err := s.blobs.Stage(job.ID, body)
 	if err != nil {
 		return err
 	}
@@ -422,9 +425,9 @@ func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body 
 //
 // The bridge is a MOVE of the staged output onto the input key, not a render:
 // joinUnits is never reached, so its newline joining — documented as lossy, and
-// for binary actively wrong — cannot touch the payload. The move happens only
-// after the row has advanced (F6): before it, a lost advance left the job at
-// this stage with its own output as input.
+// for binary actively wrong — cannot touch the payload. The move is swapped in
+// before the advance and undone if the advance loses (F6): before, a lost
+// advance left the job at this stage with its own output as input.
 //
 // ⚠ The NEXT stage's mode is validated here rather than at admission. ADR-0001
 // deliberately checks only pipeline[0] against live workers, because a later
@@ -447,13 +450,16 @@ func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, worker
 			nil, now)
 	}
 
-	if err := s.repo.AdvanceStage(ctx, job.ID, job.WorkerID, next, job.AccruedCredits, now); err != nil {
-		st.Abort()
-		return lostLease(err)
-	}
-	if err := st.CommitInput(); err != nil {
+	// Swapped before the advance and undone if it loses, as in Complete (F6).
+	swap, err := st.SwapInput()
+	if err != nil {
 		return err
 	}
+	if err := s.repo.AdvanceStage(ctx, job.ID, job.WorkerID, next, job.AccruedCredits, now); err != nil {
+		_ = swap.Undo()
+		return lostLease(err)
+	}
+	swap.Keep()
 	if !job.HasBlob {
 		// A params-only raw job now HAS a blob: its first stage produced one.
 		if err := s.repo.MarkHasBlob(ctx, job.ID); err != nil {

@@ -247,3 +247,59 @@ func TestResultsOlderThanSkipsAnUnreadableShard(t *testing.T) {
 		t.Errorf("ResultsOlderThan = %v, want [%s] — the unreadable shard hid the rest", ids, good)
 	}
 }
+
+// TestSwapInputUndoAndKeep: a swap puts the staged bytes in place at once; Undo
+// brings the old input back, Keep leaves the new one and nothing beside it.
+func TestSwapInputUndoAndKeep(t *testing.T) {
+	for _, keep := range []bool{false, true} {
+		s, dir := newStore(t)
+		id := core.NewID()
+		if _, err := s.Put(id, strings.NewReader("old")); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		st, err := s.Stage(id, strings.NewReader("new"))
+		if err != nil {
+			t.Fatalf("Stage: %v", err)
+		}
+		w, err := st.SwapInput()
+		if err != nil {
+			t.Fatalf("SwapInput: %v", err)
+		}
+		want := "old"
+		if keep {
+			w.Keep()
+			want = "new"
+		} else if err := w.Undo(); err != nil {
+			t.Fatalf("Undo: %v", err)
+		}
+		b, _ := os.ReadFile(filepath.Join(dir, id[:2], id))
+		if string(b) != want {
+			t.Errorf("keep=%v: input = %q, want %q", keep, b, want)
+		}
+		entries, _ := os.ReadDir(filepath.Join(dir, id[:2]))
+		if len(entries) != 1 {
+			t.Errorf("keep=%v: %d files in the shard, want 1 (no temp, no .prev)", keep, len(entries))
+		}
+	}
+}
+
+// TestSwapInputUndoWithoutAnInput: a params-only job has no input to keep, and
+// Undo must leave it with none rather than with the staged output.
+func TestSwapInputUndoWithoutAnInput(t *testing.T) {
+	s, dir := newStore(t)
+	id := core.NewID()
+	st, err := s.Stage(id, strings.NewReader("new"))
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	w, err := st.SwapInput()
+	if err != nil {
+		t.Fatalf("SwapInput: %v", err)
+	}
+	if err := w.Undo(); err != nil {
+		t.Fatalf("Undo: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, id[:2], id)); !os.IsNotExist(err) {
+		t.Errorf("input after Undo on a job that had none: %v, want absent", err)
+	}
+}

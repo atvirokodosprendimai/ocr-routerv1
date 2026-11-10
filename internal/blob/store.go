@@ -224,10 +224,10 @@ func (s *Store) putAt(full, id string, r io.Reader) (int64, error) {
 
 // Staged is a fully written and fsync'd blob that no key names yet.
 //
-// It exists so a router write can put the bytes on disk BEFORE the database
-// row moves and give them their real name only AFTER it has (F6, F7): renamed
-// first, a write that then lost its guard had already replaced the job's input
-// or another worker's result.
+// It exists so a router write never leaves the job's input or another
+// worker's result replaced when the database row it goes with did not move:
+// the bytes are on disk first, and are named (or swapped in, with the old
+// bytes kept aside) around the guarded write.
 type Staged struct {
 	s    *Store
 	id   string
@@ -235,12 +235,13 @@ type Staged struct {
 }
 
 // Stage writes r beside id's blobs under a private temporary name.
-func (s *Store) Stage(id string, r io.Reader) (*Staged, int64, error) {
+func (s *Store) Stage(id string, r io.Reader) (*Staged, error) {
 	full, err := s.path(id)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	return s.stage(full, id, r)
+	st, _, err := s.stage(full, id, r)
+	return st, err
 }
 
 func (s *Store) stage(full, id string, r io.Reader) (*Staged, int64, error) {
@@ -267,19 +268,61 @@ func (s *Store) stage(full, id string, r io.Reader) (*Staged, int64, error) {
 	return st, n, nil
 }
 
-// CommitInput renames the staged bytes onto the job's input key.
-func (st *Staged) CommitInput() error {
+// Swap is a staged blob already renamed onto a job's input key, with the input
+// it replaced kept aside until the caller knows whether its write held.
+type Swap struct {
+	full, prev string
+	had        bool // the job had an input before the swap
+}
+
+// SwapInput renames the staged bytes onto id's input key NOW, keeping the
+// replaced input under a hard link. The caller then makes its database write
+// and calls Undo if it failed, Keep if it held.
+//
+// Swapping BEFORE the write is the point: the row still says `processing`
+// under the caller, so no other worker can be handed the job and read the
+// input in between. Renaming after the write left a window in which the next
+// stage's worker could claim the advanced job and fetch the previous input.
+func (st *Staged) SwapInput() (*Swap, error) {
 	full, err := st.s.path(st.id)
 	if err != nil {
-		return err
+		st.Abort()
+		return nil, err
 	}
-	return st.commit(full)
+	w := &Swap{full: full, prev: full + ".prev", had: true}
+	_ = os.Remove(w.prev) // left by a crash between a swap and its Keep
+	if err := os.Link(full, w.prev); err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			st.Abort()
+			return nil, fmt.Errorf("keeping blob %s: %w", st.id, err)
+		}
+		w.had = false // a params-only job: nothing to keep
+	}
+	if err := os.Rename(st.name, full); err != nil {
+		_ = os.Remove(w.prev)
+		st.Abort()
+		return nil, fmt.Errorf("committing blob %s: %w", st.id, err)
+	}
+	return w, nil
 }
+
+// Undo puts the replaced input back (or removes the new one when there was
+// none), for a database write that did not hold.
+func (w *Swap) Undo() error {
+	if w.had {
+		return os.Rename(w.prev, w.full)
+	}
+	return os.Remove(w.full)
+}
+
+// Keep drops the replaced input, for a database write that held.
+func (w *Swap) Keep() { _ = os.Remove(w.prev) }
 
 // CommitResult renames the staged bytes onto the job's raw result key.
 func (st *Staged) CommitResult() error {
 	full, err := st.s.resultPath(st.id)
 	if err != nil {
+		st.Abort()
 		return err
 	}
 	return st.commit(full)

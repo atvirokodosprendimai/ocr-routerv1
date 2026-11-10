@@ -33,8 +33,27 @@ func readInput(t *testing.T, h *harness, id string) string {
 		t.Fatalf("Open input: %v", err)
 	}
 	defer f.Close()
-	b, _ := io.ReadAll(f)
+	b, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("read input: %v", err)
+	}
 	return string(b)
+}
+
+// assertOnlyTheJobsFiles fails when anything but the job's own input or
+// result is left in its shard: a staged temp or a kept-aside `.prev` after a
+// lost write is disk nobody ever reclaims.
+func assertOnlyTheJobsFiles(t *testing.T, h *harness, id string) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(h.blobs.Dir(), id[:2]))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if n := e.Name(); n != id && n != id+".out" {
+			t.Errorf("stray file %q left after a lost write", n)
+		}
+	}
 }
 
 // TestFailedAdvanceKeepsTheInput is F6 (REPORT 2026-11-10): a stage's output
@@ -58,6 +77,7 @@ func TestFailedAdvanceKeepsTheInput(t *testing.T) {
 	if got := readInput(t, h, j.ID); got != "original" {
 		t.Errorf("input after a refused advance = %q, want %q", got, "original")
 	}
+	assertOnlyTheJobsFiles(t, h, j.ID)
 }
 
 // TestFailedRawAdvanceKeepsTheInput is F6 on the raw bridge.
@@ -83,6 +103,7 @@ func TestFailedRawAdvanceKeepsTheInput(t *testing.T) {
 	if got := readInput(t, h, j.ID); got != "original" {
 		t.Errorf("input after a refused advance = %q, want %q", got, "original")
 	}
+	assertOnlyTheJobsFiles(t, h, j.ID)
 }
 
 // TestLosingCompleteKeepsTheWinnersResult is F7 (REPORT 2026-11-10): a worker
