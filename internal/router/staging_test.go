@@ -2,6 +2,7 @@ package router_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atvirokodosprendimai/ocr-routerv1/internal/core"
 	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
 )
 
@@ -182,6 +184,7 @@ func TestStaleHolderNeverSwapsTheInput(t *testing.T) {
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
 	go func() { done <- h.svc.CompleteRaw(ctx, "w1", j.ID, pr, base) }()
+	defer pw.Close()
 	if _, err := pw.Write([]byte("A-")); err != nil { // w1 is inside Stage, past its lease check
 		t.Fatal(err)
 	}
@@ -200,18 +203,29 @@ func TestStaleHolderNeverSwapsTheInput(t *testing.T) {
 	if _, err := tx.Exec(`UPDATE users SET credits = credits WHERE id = 'u'`); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = pw.Write([]byte("output"))
+	if _, err := pw.Write([]byte("output")); err != nil {
+		t.Fatal(err)
+	}
 	_ = pw.Close()
-	swapped := false
-	for i := 0; i < 40 && !swapped; i++ {
-		swapped = readInput(t, h, j.ID) != "original"
-		time.Sleep(5 * time.Millisecond)
+	// The fixed path refuses at once (its re-read uses the read pool, not the
+	// held writer); the old path swapped and then blocked in its advance, so
+	// the timer bounds a failure, it does not wait for a success.
+	var err1 error
+	select {
+	case err1 = <-done:
+	case <-time.After(2 * time.Second):
+		got := readInput(t, h, j.ID)
+		_ = tx.Rollback()
+		<-done
+		t.Fatalf("w1 is still inside its advance; meanwhile w2, the holder, is served %q as its input", got)
 	}
+	got := readInput(t, h, j.ID)
 	_ = tx.Rollback()
-	if err := <-done; err == nil {
-		t.Error("w1's CompleteRaw succeeded after its job was reclaimed and claimed by w2")
+	if !errors.Is(err1, core.ErrConflict) {
+		t.Errorf("w1's CompleteRaw = %v, want core.ErrConflict (it no longer holds the job)", err1)
 	}
-	if swapped {
-		t.Error("w2, the holder, was served w1's output as its input while w1's advance waited")
+	if got != "original" {
+		t.Errorf("input after w1's refusal = %q, want %q", got, "original")
 	}
+	assertOnlyTheJobsFiles(t, h, j.ID)
 }

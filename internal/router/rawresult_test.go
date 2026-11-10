@@ -210,6 +210,34 @@ func TestRawRetryWindowRunsFromDelivery(t *testing.T) {
 	_ = f.Close()
 }
 
+// TestSweepKeepsAFileDeliveredAfterTheWalk: the reaper reads a file's age in
+// its walk and decides later; a delivery in between must still give the file
+// its TTL. Simulated by putting the old mtime back after the delivery, as if
+// the walk had read it first (lock review).
+func TestSweepKeepsAFileDeliveredAfterTheWalk(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "convert")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	id := rawJobDone(t, h, "convert", "\x89PNG")
+	delivered := base.Add(59 * time.Minute)
+	f, err := h.svc.DeliverRaw(ctx, "u", id, delivered)
+	if err != nil {
+		t.Fatalf("DeliverRaw: %v", err)
+	}
+	_ = f.Close() // dropped
+	out := filepath.Join(h.blobs.Dir(), id[:2], id+".out")
+	if err := os.Chtimes(out, base, base); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+	if _, err := h.svc.Reap(ctx, delivered.Add(2*time.Minute)); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if n := rawResultFiles(t, h.blobs.Dir()); n != 1 {
+		t.Errorf("result files = %d, want 1 — the file was delivered two minutes ago", n)
+	}
+}
+
 // TestSweepKeepsALiveRawResult: step 3c removes only the files of delivered or
 // vanished jobs. A `done` job's result, however old the file, belongs to it.
 func TestSweepKeepsALiveRawResult(t *testing.T) {
