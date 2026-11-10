@@ -212,36 +212,90 @@ func (s *Store) Put(id string, r io.Reader) (int64, error) {
 // result blob cannot drift apart on the property that matters — a crash partway
 // through leaves a stray temp file, never a truncated blob under the real name.
 func (s *Store) putAt(full, id string, r io.Reader) (int64, error) {
-	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
-		return 0, err
-	}
-
-	tmp, err := os.CreateTemp(filepath.Dir(full), ".tmp-"+id+"-*")
+	st, n, err := s.stage(full, id, r)
 	if err != nil {
 		return 0, err
 	}
-	tmpName := tmp.Name()
-	// If anything below fails, do not leave the staging file behind.
-	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}()
-
-	n, err := io.Copy(tmp, r)
-	if err != nil {
-		return 0, fmt.Errorf("writing blob %s: %w", id, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return 0, fmt.Errorf("syncing blob %s: %w", id, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return 0, fmt.Errorf("closing blob %s: %w", id, err)
-	}
-	if err := os.Rename(tmpName, full); err != nil {
-		return 0, fmt.Errorf("committing blob %s: %w", id, err)
+	if err := st.commit(full); err != nil {
+		return 0, err
 	}
 	return n, nil
 }
+
+// Staged is a fully written and fsync'd blob that no key names yet.
+//
+// It exists so a router write can put the bytes on disk BEFORE the database
+// row moves and give them their real name only AFTER it has (F6, F7): renamed
+// first, a write that then lost its guard had already replaced the job's input
+// or another worker's result.
+type Staged struct {
+	s    *Store
+	id   string
+	name string
+}
+
+// Stage writes r beside id's blobs under a private temporary name.
+func (s *Store) Stage(id string, r io.Reader) (*Staged, int64, error) {
+	full, err := s.path(id)
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.stage(full, id, r)
+}
+
+func (s *Store) stage(full, id string, r io.Reader) (*Staged, int64, error) {
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+		return nil, 0, err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(full), ".tmp-"+id+"-*")
+	if err != nil {
+		return nil, 0, err
+	}
+	st := &Staged{s: s, id: id, name: tmp.Name()}
+	n, err := io.Copy(tmp, r)
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		// Do not leave the staging file behind.
+		st.Abort()
+		return nil, 0, fmt.Errorf("writing blob %s: %w", id, err)
+	}
+	return st, n, nil
+}
+
+// CommitInput renames the staged bytes onto the job's input key.
+func (st *Staged) CommitInput() error {
+	full, err := st.s.path(st.id)
+	if err != nil {
+		return err
+	}
+	return st.commit(full)
+}
+
+// CommitResult renames the staged bytes onto the job's raw result key.
+func (st *Staged) CommitResult() error {
+	full, err := st.s.resultPath(st.id)
+	if err != nil {
+		return err
+	}
+	return st.commit(full)
+}
+
+func (st *Staged) commit(full string) error {
+	if err := os.Rename(st.name, full); err != nil {
+		st.Abort()
+		return fmt.Errorf("committing blob %s: %w", st.id, err)
+	}
+	return nil
+}
+
+// Abort removes the staged bytes. Safe after a commit, when there is nothing
+// left under the temporary name.
+func (st *Staged) Abort() { _ = os.Remove(st.name) }
 
 // PutBytes writes b as the blob for id.
 //

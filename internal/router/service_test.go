@@ -25,6 +25,9 @@ type harness struct {
 	bus     *bus.Bus
 	blobs   *blob.Store
 	results *results.Store
+	// db is the raw handle, for the tests that install a trigger to make one
+	// guarded write fail at a chosen point.
+	db *store.DB
 }
 
 // newHarness builds a service on the configuration almost every test wants.
@@ -67,7 +70,7 @@ func newHarnessWith(t *testing.T, cfg router.Config) *harness {
 	res.SetClock(func() time.Time { return base })
 	b := bus.New()
 	svc := router.New(repo, blobs, res, b, cfg)
-	return &harness{svc: svc, repo: repo, bus: b, blobs: blobs, results: res}
+	return &harness{svc: svc, repo: repo, bus: b, blobs: blobs, results: res, db: db}
 }
 
 // worker subscribes to a label so it counts as live, which is what makes that
