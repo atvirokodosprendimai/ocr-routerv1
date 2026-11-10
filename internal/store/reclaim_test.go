@@ -37,7 +37,7 @@ func TestReclaimIncrementsReclaimsNotAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("JobByID: %v", err)
 	}
-	if err := r.ReclaimJob(ctx, "j-reclaim", "router restarted", base); err != nil {
+	if err := r.ReclaimJob(ctx, "j-reclaim", "w1", "router restarted", base); err != nil {
 		t.Fatalf("ReclaimJob: %v", err)
 	}
 	got, err := r.JobByID(ctx, "j-reclaim")
@@ -65,7 +65,7 @@ func TestRequeueIncrementsAttemptsNotReclaims(t *testing.T) {
 	mkJob(t, r, "j-fail", "u", "ocr", base, time.Time{})
 	claim(t, r, "w1", "ocr")
 
-	if err := r.RequeueJob(ctx, "j-fail", "exit status 9: nope", intp(9), base); err != nil {
+	if err := r.RequeueJob(ctx, "j-fail", "w1", "exit status 9: nope", intp(9), base); err != nil {
 		t.Fatalf("RequeueJob: %v", err)
 	}
 	got, err := r.JobByID(ctx, "j-fail")
@@ -91,7 +91,7 @@ func TestReclaimClearsTheLease(t *testing.T) {
 	mkJob(t, r, "j-lease", "u", "ocr", base, time.Time{})
 	claim(t, r, "w1", "ocr")
 
-	if err := r.ReclaimJob(ctx, "j-lease", "worker released it", base); err != nil {
+	if err := r.ReclaimJob(ctx, "j-lease", "w1", "worker released it", base); err != nil {
 		t.Fatalf("ReclaimJob: %v", err)
 	}
 	got, err := r.JobByID(ctx, "j-lease")
@@ -119,16 +119,16 @@ func TestReclaimClearsTheLease(t *testing.T) {
 func TestProcessingWritersLeaveADeliveredJobAlone(t *testing.T) {
 	writers := map[string]func(r *store.Repo, id string) error{
 		"RequeueJob": func(r *store.Repo, id string) error {
-			return r.RequeueJob(context.Background(), id, "late failure", nil, base)
+			return r.RequeueJob(context.Background(), id, "w1", "late failure", nil, base)
 		},
 		"ReclaimJob": func(r *store.Repo, id string) error {
-			return r.ReclaimJob(context.Background(), id, "stale lease", base)
+			return r.ReclaimJob(context.Background(), id, "w1", "stale lease", base)
 		},
 		"ReleaseJob": func(r *store.Repo, id string) error {
-			return r.ReleaseJob(context.Background(), id, "late release", base)
+			return r.ReleaseJob(context.Background(), id, "w1", "late release", base)
 		},
 		"FailJobDead": func(r *store.Repo, id string) error {
-			return r.FailJobDead(context.Background(), id, "late death", nil, base)
+			return r.FailJobDead(context.Background(), id, "w1", "late death", nil, base)
 		},
 	}
 	for name, write := range writers {
@@ -138,7 +138,7 @@ func TestProcessingWritersLeaveADeliveredJobAlone(t *testing.T) {
 			mkUser(t, r, "u", 0, 10)
 			mkJob(t, r, "j", "u", "ocr", base, time.Time{})
 			claim(t, r, "w1", "ocr")
-			if err := r.CompleteJob(ctx, "j", 1, 1, base); err != nil {
+			if err := r.CompleteJob(ctx, "j", "w1", 1, 1, base); err != nil {
 				t.Fatalf("CompleteJob: %v", err)
 			}
 			if err := r.DeliverJob(ctx, "j", "u", 1, base); err != nil {
@@ -154,5 +154,71 @@ func TestProcessingWritersLeaveADeliveredJobAlone(t *testing.T) {
 					name, got.State)
 			}
 		})
+	}
+}
+
+// TestWritersRefuseAWorkerThatLostTheJob is F5 (REPORT 2026-11-10). The lease
+// check in the router is a read; between it and the write the reaper can take
+// the job back and another worker claim it. A write guarded on state alone then
+// lands on the new holder's row — the old worker's output accepted, or the new
+// worker's job requeued under it.
+func TestWritersRefuseAWorkerThatLostTheJob(t *testing.T) {
+	writers := map[string]func(r *store.Repo, id string) error{
+		"CompleteJob": func(r *store.Repo, id string) error {
+			return r.CompleteJob(context.Background(), id, "w1", 1, 1, base)
+		},
+		"AdvanceStage": func(r *store.Repo, id string) error {
+			return r.AdvanceStage(context.Background(), id, "w1", "next", 1, base)
+		},
+		"RequeueJob": func(r *store.Repo, id string) error {
+			return r.RequeueJob(context.Background(), id, "w1", "late failure", nil, base)
+		},
+		"ReleaseJob": func(r *store.Repo, id string) error {
+			return r.ReleaseJob(context.Background(), id, "w1", "late release", base)
+		},
+		"FailJobDead": func(r *store.Repo, id string) error {
+			return r.FailJobDead(context.Background(), id, "w1", "late death", nil, base)
+		},
+		"ReclaimJob": func(r *store.Repo, id string) error {
+			return r.ReclaimJob(context.Background(), id, "w1", "stale lease", base)
+		},
+	}
+	for name, write := range writers {
+		t.Run(name, func(t *testing.T) {
+			r := newRepo(t)
+			ctx := context.Background()
+			mkUser(t, r, "u", 0, 10)
+			mkJob(t, r, "j", "u", "ocr", base, time.Time{})
+			claim(t, r, "w1", "ocr")
+			if err := r.ReclaimJob(ctx, "j", "w1", "lease expired", base); err != nil {
+				t.Fatalf("ReclaimJob: %v", err)
+			}
+			claim(t, r, "w2", "ocr")
+
+			if err := write(r, "j"); !errors.Is(err, core.ErrNotFound) {
+				t.Errorf("%s by the worker that lost the job = %v, want core.ErrNotFound", name, err)
+			}
+			got, err := r.JobByID(ctx, "j")
+			if err != nil {
+				t.Fatalf("JobByID: %v", err)
+			}
+			if got.State != core.JobProcessing || got.WorkerID != "w2" {
+				t.Errorf("%s left the job %q under %q, want processing under w2", name, got.State, got.WorkerID)
+			}
+		})
+	}
+}
+
+// TestCompleteRefusesAnExpiredLease: the final-stage and advance writes also
+// check the lease itself, so a result posted after the lease lapsed is refused
+// even before the reaper has run (F5).
+func TestCompleteRefusesAnExpiredLease(t *testing.T) {
+	r := newRepo(t)
+	ctx := context.Background()
+	mkUser(t, r, "u", 0, 10)
+	mkJob(t, r, "j", "u", "ocr", base, time.Time{})
+	claim(t, r, "w1", "ocr") // lease until base+1m
+	if err := r.CompleteJob(ctx, "j", "w1", 1, 1, base.Add(2*time.Minute)); !errors.Is(err, core.ErrNotFound) {
+		t.Errorf("CompleteJob after the lease = %v, want core.ErrNotFound", err)
 	}
 }

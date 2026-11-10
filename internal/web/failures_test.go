@@ -45,10 +45,10 @@ func (e *env) seedJobs(t *testing.T) {
 	}
 	e.claimOCR(t)
 	e.claimOCR(t)
-	if err := e.repo.FailJobDead(ctx, "job-exit3", "exit status 3: stderr: boom", intp(3), base); err != nil {
+	if err := e.repo.FailJobDead(ctx, "job-exit3", "w", "exit status 3: stderr: boom", intp(3), base); err != nil {
 		t.Fatalf("FailJobDead: %v", err)
 	}
-	if err := e.repo.FailJobDead(ctx, "job-timeout", "timed out after 5m", nil, base); err != nil {
+	if err := e.repo.FailJobDead(ctx, "job-timeout", "w", "timed out after 5m", nil, base); err != nil {
 		t.Fatalf("FailJobDead: %v", err)
 	}
 }
@@ -135,7 +135,7 @@ func TestDetailDoesNotBreakTheTable(t *testing.T) {
 		t.Fatalf("CreateJob: %v", err)
 	}
 	e.claimOCR(t)
-	if err := e.repo.FailJobDead(ctx, "job-long", strings.Repeat("x", 2000), intp(1), base); err != nil {
+	if err := e.repo.FailJobDead(ctx, "job-long", "w", strings.Repeat("x", 2000), intp(1), base); err != nil {
 		t.Fatalf("FailJobDead: %v", err)
 	}
 

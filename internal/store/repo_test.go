@@ -262,7 +262,7 @@ func TestAdvanceStagePreservesQueuedAt(t *testing.T) {
 	if _, err := r.ClaimOneQueued(ctx, "crawl", "w1", base, base.Add(time.Minute), agingStep); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if err := r.AdvanceStage(ctx, "p1", "strip-html", 3, base); err != nil {
+	if err := r.AdvanceStage(ctx, "p1", "w1", "strip-html", 3, base); err != nil {
 		t.Fatalf("AdvanceStage: %v", err)
 	}
 
@@ -301,7 +301,7 @@ func TestRequeuePreservesQueuedAt(t *testing.T) {
 	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if err := r.RequeueJob(ctx, "j1", "boom", nil, base); err != nil {
+	if err := r.RequeueJob(ctx, "j1", "w1", "boom", nil, base); err != nil {
 		t.Fatalf("RequeueJob: %v", err)
 	}
 	got, _ := r.JobByID(ctx, "j1")
@@ -358,7 +358,7 @@ func TestDeliverJobChargesOnceAndIsAtomic(t *testing.T) {
 	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Hour), agingStep); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if err := r.CompleteJob(ctx, "j1", 7, 7, base); err != nil {
+	if err := r.CompleteJob(ctx, "j1", "w1", 7, 7, base); err != nil {
 		t.Fatalf("CompleteJob: %v", err)
 	}
 
@@ -396,7 +396,7 @@ func TestDeliverJobMayOverdraw(t *testing.T) {
 	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Hour), agingStep); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if err := r.CompleteJob(ctx, "j1", 9, 9, base); err != nil {
+	if err := r.CompleteJob(ctx, "j1", "w1", 9, 9, base); err != nil {
 		t.Fatalf("CompleteJob: %v", err)
 	}
 	if err := r.DeliverJob(ctx, "j1", "u", 9, base); err != nil {
@@ -464,7 +464,7 @@ func TestCountInFlightCountsTheRightStates(t *testing.T) {
 	if _, err := r.ClaimOneQueued(ctx, "third", "w", base, base.Add(time.Hour), agingStep); err != nil {
 		t.Fatalf("claim c: %v", err)
 	}
-	if err := r.CompleteJob(ctx, "c", 1, 1, base); err != nil {
+	if err := r.CompleteJob(ctx, "c", "w", 1, 1, base); err != nil {
 		t.Fatalf("complete c: %v", err)
 	}
 
@@ -498,7 +498,7 @@ func TestResetInFlightOnBoot(t *testing.T) {
 	if _, err := r.ClaimOneQueued(ctx, "other", "w", base, base.Add(time.Hour), agingStep); err != nil {
 		t.Fatalf("claim b: %v", err)
 	}
-	if err := r.CompleteJob(ctx, "b", 2, 2, base); err != nil {
+	if err := r.CompleteJob(ctx, "b", "w", 2, 2, base); err != nil {
 		t.Fatalf("complete b: %v", err)
 	}
 

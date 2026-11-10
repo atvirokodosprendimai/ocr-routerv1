@@ -310,8 +310,8 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 		if _, err := s.blobs.PutBytes(job.ID, []byte(joinUnits(out))); err != nil {
 			return err
 		}
-		if err := s.repo.AdvanceStage(ctx, job.ID, next, accrue, now); err != nil {
-			return err
+		if err := s.repo.AdvanceStage(ctx, job.ID, job.WorkerID, next, accrue, now); err != nil {
+			return lostLease(err)
 		}
 		if !job.HasBlob {
 			// A params-only job now HAS a blob: its first stage produced one.
@@ -331,10 +331,10 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 	}
 
 	s.results.Put(job.ID, out)
-	if err := s.repo.CompleteJob(ctx, job.ID, len(out), accrue, now); err != nil {
+	if err := s.repo.CompleteJob(ctx, job.ID, job.WorkerID, len(out), accrue, now); err != nil {
 		// The result would otherwise sit in memory for a job that is not `done`.
 		s.results.Drop(job.ID)
-		return err
+		return lostLease(err)
 	}
 	s.logTransition(job, core.JobProcessing, core.JobDone, job.UpdatedAt,
 		"worker", workerID, "", now)
@@ -383,10 +383,10 @@ func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body 
 		return s.bridgeRawStage(ctx, job, next, workerID, now)
 	}
 
-	if err := s.repo.CompleteJob(ctx, job.ID, 1, job.AccruedCredits, now); err != nil {
+	if err := s.repo.CompleteJob(ctx, job.ID, job.WorkerID, 1, job.AccruedCredits, now); err != nil {
 		// The result blob would otherwise sit on disk for a job that is not done.
 		_ = s.blobs.DeleteResult(job.ID)
-		return err
+		return lostLease(err)
 	}
 	s.logTransition(job, core.JobProcessing, core.JobDone, job.UpdatedAt,
 		"worker", workerID, "", now)
@@ -434,8 +434,8 @@ func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, worker
 	// has committed, so the result is no longer the only copy.
 	_ = s.blobs.DeleteResult(job.ID)
 
-	if err := s.repo.AdvanceStage(ctx, job.ID, next, job.AccruedCredits, now); err != nil {
-		return err
+	if err := s.repo.AdvanceStage(ctx, job.ID, job.WorkerID, next, job.AccruedCredits, now); err != nil {
+		return lostLease(err)
 	}
 	if !job.HasBlob {
 		// A params-only raw job now HAS a blob: its first stage produced one.
@@ -564,7 +564,7 @@ func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, exit
 // and mean entirely different things to whoever is debugging.
 func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason string, exitCode *int, now time.Time) error {
 	if job.Attempts+1 < s.cfg.MaxAttempts {
-		if err := s.repo.RequeueJob(ctx, job.ID, reason, exitCode, now); err != nil {
+		if err := s.repo.RequeueJob(ctx, job.ID, job.WorkerID, reason, exitCode, now); err != nil {
 			return lostLease(err)
 		}
 		// The retry is the transition nothing else records: a job that succeeds
@@ -577,7 +577,7 @@ func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason strin
 		return nil
 	}
 
-	if err := s.repo.FailJobDead(ctx, job.ID, reason, exitCode, now); err != nil {
+	if err := s.repo.FailJobDead(ctx, job.ID, job.WorkerID, reason, exitCode, now); err != nil {
 		return lostLease(err)
 	}
 	// Counted only once the row is dead: a write that lost a race is not a death.
@@ -622,7 +622,7 @@ func (s *Service) ReleaseLease(ctx context.Context, workerID, jobID string, now 
 	// writer fits: this is the only requeue in the system that costs the job
 	// nothing. The lease and worker_id still have to go, or the releasing
 	// worker's subprocess could land a late result on a job somebody else holds.
-	if err := s.repo.ReleaseJob(ctx, jobID, "released by its worker", now); err != nil {
+	if err := s.repo.ReleaseJob(ctx, jobID, workerID, "released by its worker", now); err != nil {
 		return lostLease(err)
 	}
 	s.logFailureTransition(job, job.State, core.JobQueued, job.UpdatedAt,
@@ -634,8 +634,8 @@ func (s *Service) ReleaseLease(ctx context.Context, workerID, jobID string, now 
 
 // lostLease reports a guarded writer that matched no row as the worker having
 // lost its lease (core.ErrConflict, 409), the answer holdsLease gives for the
-// same fact a moment earlier. Since F4 the failure and release writers act only
-// on a `processing` row, so zero rows means the job moved on between the read
+// same fact a moment earlier. Since F4/F5 the writers act only on the
+// holder's `processing` row, so zero rows means the job moved on between the read
 // and the write — a 404 would tell the worker the job does not exist.
 func lostLease(err error) error {
 	if errors.Is(err, core.ErrNotFound) {
@@ -660,7 +660,7 @@ func lostLease(err error) error {
 // No exit code, ever: nothing exited (ADR-0007).
 func (s *Service) reclaimJob(ctx context.Context, job core.Job, reason string, now time.Time) error {
 	if job.Reclaims+1 < s.cfg.MaxReclaims {
-		if err := s.repo.ReclaimJob(ctx, job.ID, reason, now); err != nil {
+		if err := s.repo.ReclaimJob(ctx, job.ID, job.WorkerID, reason, now); err != nil {
 			return err
 		}
 		s.logFailureTransition(job, job.State, core.JobQueued, job.UpdatedAt,
@@ -675,7 +675,7 @@ func (s *Service) reclaimJob(ctx context.Context, job core.Job, reason string, n
 	// operator who reads one and concludes the other goes looking for a broken
 	// command when the problem is a host that keeps losing workers.
 	dead := reason + ": abandoned too many times"
-	if err := s.repo.FailJobDead(ctx, job.ID, dead, nil, now); err != nil {
+	if err := s.repo.FailJobDead(ctx, job.ID, job.WorkerID, dead, nil, now); err != nil {
 		return err
 	}
 	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})
