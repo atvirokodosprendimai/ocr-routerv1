@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/atvirokodosprendimai/ocr-routerv1/internal/router"
 )
@@ -156,4 +157,61 @@ func TestLosingRawCompleteKeepsTheWinnersFile(t *testing.T) {
 		t.Errorf("result file after a losing CompleteRaw = %q (%v), want %q", b, err, "winner")
 	}
 	assertOnlyTheJobsFiles(t, h, j.ID)
+}
+
+// TestStaleHolderNeverSwapsTheInput is the branch review's finding: the lease
+// check is made before a raw body is streamed, so a holder whose lease lapsed
+// during the upload, and whose job was reclaimed and claimed by w2, used to
+// swap its output onto the input anyway. While its doomed advance waited for
+// the writer, w2 was served that output as its input. The holder is checked
+// again, under the job's lock, right before the swap.
+func TestStaleHolderNeverSwapsTheInput(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "convert")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	for _, l := range []string{"convert", "compress"} {
+		if err := h.repo.SetRate(ctx, l, 1, true, base); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j := upload(t, h, "u", routerUpload([]string{"convert", "compress"}, "original", true))
+	if _, err := h.svc.Claim(ctx, "w1", "convert", base); err != nil {
+		t.Fatal(err)
+	}
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- h.svc.CompleteRaw(ctx, "w1", j.ID, pr, base) }()
+	if _, err := pw.Write([]byte("A-")); err != nil { // w1 is inside Stage, past its lease check
+		t.Fatal(err)
+	}
+	later := base.Add(6 * time.Minute)
+	if _, err := h.svc.Reap(ctx, later); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.Claim(ctx, "w2", "convert", later); err != nil {
+		t.Fatal(err)
+	}
+	// Hold the single writer, as any queued write would, so w1's advance waits.
+	tx, err := h.db.Write.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`UPDATE users SET credits = credits WHERE id = 'u'`); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = pw.Write([]byte("output"))
+	_ = pw.Close()
+	swapped := false
+	for i := 0; i < 40 && !swapped; i++ {
+		swapped = readInput(t, h, j.ID) != "original"
+		time.Sleep(5 * time.Millisecond)
+	}
+	_ = tx.Rollback()
+	if err := <-done; err == nil {
+		t.Error("w1's CompleteRaw succeeded after its job was reclaimed and claimed by w2")
+	}
+	if swapped {
+		t.Error("w2, the holder, was served w1's output as its input while w1's advance waited")
+	}
 }

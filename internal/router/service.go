@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"os"
 	"strings"
@@ -76,6 +77,19 @@ type Service struct {
 	// died; this says WHICH, on which worker, after how long in each state.
 	// Never nil, same reasoning.
 	logger Logger
+
+	// jobLocks serialise, per job, the steps that rename a job's blobs around
+	// a guarded write (Complete and bridgeRawStage swapping the input,
+	// CompleteRaw committing the result) with the steps that can change who
+	// holds the job or remove its files (the reaper's reclaim and result
+	// sweep). Striped by id hash so the set is bounded; a collision only
+	// serialises two unrelated jobs for a moment.
+	//
+	// ⚠ The guarded SQL alone was not enough (branch review, 2026-11-10): the
+	// file is renamed before the row is written, so a holder whose lease
+	// lapsed while its body streamed could swap its output onto the input of
+	// a job the reaper had already handed to another worker.
+	jobLocks [64]sync.Mutex
 }
 
 // New builds the service.
@@ -341,6 +355,12 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 		if err != nil {
 			return err
 		}
+		unlock, err := s.lockHolder(ctx, job.ID, workerID, now)
+		if err != nil {
+			st.Abort()
+			return err
+		}
+		defer unlock()
 		swap, err := st.SwapInput()
 		if err != nil {
 			return err
@@ -429,6 +449,9 @@ func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body 
 
 	// The row first, then the file's name (F7): committed first, a losing
 	// completion replaced the winner's `.out`, and its cleanup deleted it.
+	// Under the job's lock, so the reaper's result sweep cannot requeue and
+	// delete between the two (branch review).
+	defer s.lockJob(job.ID)()
 	if err := s.repo.CompleteJob(ctx, job.ID, job.WorkerID, 1, 0, now); err != nil {
 		st.Abort()
 		return lostLease(err)
@@ -479,7 +502,14 @@ func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, worker
 			nil, now)
 	}
 
-	// Swapped before the advance and undone if it loses, as in Complete (F6).
+	// Swapped before the advance and undone if it loses, as in Complete (F6),
+	// and only by a caller that still holds the job, checked under its lock.
+	unlock, err := s.lockHolder(ctx, job.ID, workerID, now)
+	if err != nil {
+		st.Abort()
+		return err
+	}
+	defer unlock()
 	swap, err := st.SwapInput()
 	if err != nil {
 		return err
@@ -720,6 +750,9 @@ func lostLease(err error) error {
 //
 // No exit code, ever: nothing exited (ADR-0007).
 func (s *Service) reclaimJob(ctx context.Context, job core.Job, reason string, now time.Time) error {
+	// Under the job's lock: a holder in the middle of a swap must finish its
+	// advance (or undo) before the job can change hands.
+	defer s.lockJob(job.ID)()
 	if job.Reclaims+1 < s.cfg.MaxReclaims {
 		if err := s.repo.ReclaimJob(ctx, job.ID, job.WorkerID, reason, now); err != nil {
 			return err
@@ -952,4 +985,31 @@ func (s *Service) labelAvailable(label string, now time.Time) bool {
 		}
 	}
 	return false
+}
+
+// lockJob takes the job's lock and returns its unlock.
+func (s *Service) lockJob(jobID string) func() {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(jobID))
+	m := &s.jobLocks[h.Sum32()%uint32(len(s.jobLocks))]
+	m.Lock()
+	return m.Unlock
+}
+
+// lockHolder takes the job's lock and re-reads the row under it, so the
+// caller's lease is checked at the moment its files are about to move, not
+// before a long upload. It returns core.ErrConflict, with the lock released,
+// when the caller no longer holds the job.
+func (s *Service) lockHolder(ctx context.Context, jobID, workerID string, now time.Time) (func(), error) {
+	unlock := s.lockJob(jobID)
+	cur, err := s.repo.JobByID(ctx, jobID)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	if !holdsLease(cur, workerID, now) {
+		unlock()
+		return nil, core.ErrConflict
+	}
+	return unlock, nil
 }

@@ -117,7 +117,20 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 			}
 		}
 		const reason = "result expired before collection"
-		if err := s.repo.RequeueDone(ctx, job.ID, reason, now); err != nil {
+		// Requeue and delete under the job's lock: CompleteRaw commits a
+		// rerun's `.out` under the same lock, so the delete cannot take the
+		// file of a rerun that finished in between (branch review).
+		unlock := s.lockJob(job.ID)
+		err := s.repo.RequeueDone(ctx, job.ID, reason, now)
+		if err == nil {
+			// Only after the requeue: before it, the result is still the
+			// job's to deliver. No results.Drop: Sweep already freed the
+			// expired entry, and a Drop here could only remove the result of
+			// a rerun that won the race.
+			_ = s.blobs.DeleteResult(job.ID)
+		}
+		unlock()
+		if err != nil {
 			// ErrNotFound: delivered since the read, nothing to do. Any other
 			// error is kept and the loop goes on; the next tick reselects
 			// this job.
@@ -128,10 +141,6 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		}
 		rep.ResultsSwept++
 		s.counter.Inc(metricReaperActions, map[string]string{"action": "result-swept"})
-		// Only after the requeue: before it, the result is still the job's to
-		// deliver. No results.Drop: Sweep already freed the expired entry, and a
-		// Drop here could only remove the result of a rerun that won the race.
-		_ = s.blobs.DeleteResult(job.ID)
 		s.logTransition(job, core.JobDone, core.JobQueued, job.UpdatedAt,
 			"reaper", "", reason, now)
 		s.publishWork(job.Label)
@@ -152,8 +161,9 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 			continue
 		}
 		// A missing row has no owner left to collect it; a live job's file
-		// belongs to the paths above.
-		if err == nil && job.State != core.JobDelivered {
+		// belongs to the paths above. A job delivered after the walk read the
+		// file's age keeps it: its retry window starts at that delivery.
+		if err == nil && (job.State != core.JobDelivered || job.UpdatedAt.After(now.Add(-s.cfg.ResultTTL))) {
 			continue
 		}
 		_ = s.blobs.DeleteResult(id)
