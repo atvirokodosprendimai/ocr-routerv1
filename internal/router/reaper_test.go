@@ -348,11 +348,11 @@ func TestBootRecoveredDoneJobIsChargedOnce(t *testing.T) {
 	assertChargedOnce(t, h, 6)
 }
 
-// TestSweepRetriesAJobWhoseResultIsAlreadyGone is F2 (REPORT 2026-11-10). A
+// TestSweepRequeuesAJobWhoseResultIsAlreadyGone is F2 (REPORT 2026-11-10). A
 // previous pass drained the result store and then failed before requeueing; the
 // next pass must still find the job, because the database says it is `done`
 // with nothing left to serve.
-func TestSweepRetriesAJobWhoseResultIsAlreadyGone(t *testing.T) {
+func TestSweepRequeuesAJobWhoseResultIsAlreadyGone(t *testing.T) {
 	h := newHarness(t)
 	h.worker(t, "ocr")
 	h.user(t, "u", 100, 4, 0)
@@ -456,5 +456,33 @@ func TestSweepWithZeroResultTTLStillRequeues(t *testing.T) {
 	}
 	if got, _ := h.repo.JobByID(ctx, j.ID); got.State != core.JobQueued {
 		t.Errorf("state = %q, want queued", got.State)
+	}
+}
+
+// TestSweepKeepsALiveUnitsResult: a `done` row past the TTL whose result is
+// still live (put back by a failed delivery, with a fresh expiry) is left alone.
+// Without the Peek skip the sweep would requeue work the customer can collect.
+func TestSweepKeepsALiveUnitsResult(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	j := upload(t, h, "u", router.UploadInput{Body: strings.NewReader("x")})
+	mustRun(t, h, j.ID, []string{"a"})
+
+	// The row is two hours old, but its result was re-stamped just now.
+	later := base.Add(2 * time.Hour)
+	h.results.SetClock(func() time.Time { return later })
+	h.results.Put(j.ID, []string{"a"})
+
+	rep, err := h.svc.Reap(ctx, later)
+	if err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if rep.ResultsSwept != 0 {
+		t.Errorf("ResultsSwept = %d, want 0", rep.ResultsSwept)
+	}
+	if got, _ := h.repo.JobByID(ctx, j.ID); got.State != core.JobDone {
+		t.Errorf("state = %q, want done — the result is live and collectable", got.State)
 	}
 }
