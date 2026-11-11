@@ -23,7 +23,9 @@ const releaseTimeout = 3 * time.Second
 //
 // Keyed by the CLAIM (job id and lease token, ADR-0013), not the job id: two
 // slots can hold the same job under two claims after a reclaim, and the stale
-// slot finishing must not erase the current slot's entry.
+// slot finishing must not erase the current slot's entry. Against an older
+// router, which gives no lease, both claims are (job, "") and share one entry,
+// exactly as before the token existed.
 type inflight struct {
 	mu     sync.Mutex
 	claims map[claim]struct{}
