@@ -55,7 +55,10 @@ job id: `?lease=` on `GET /files/{id}`, `POST /release` and the raw
 `POST /upload?job_id=`; `"lease"` in the JSON result body. The router refuses a
 token that is not the row's current one with `409` and a message that says the
 claim is stale and the result must be dropped. An expired lease is refused as
-before (`409`), now saying so.
+before (`409`), now saying so. The worker's input download now makes the same
+check as the result routes, so it too refuses an expired lease; before, it
+served the file to the holder until the reaper ran. A download past the lease
+could only feed a result the router refuses anyway.
 
 **The store guards on the token the router read.** Every processing writer gains
 `AND lease_token = ?`, bound to the token of the snapshot the router checked.
@@ -71,6 +74,15 @@ claim at the moment of reading. The next release removes the empty-token path:
 a request without `lease` becomes `400`. A new worker against an old router
 works unchanged: the old router ignores the unknown query key and JSON field,
 and sends no `lease`, so the worker sends none.
+
+⚠ **One release, not two, is M's choice (2026-11-11).** The review panel's rule
+is warn in N and N+1, refuse from N+2. The token-less path keeps open exactly
+the stale-claim hole this record closes, so it is kept as short as M decided.
+Every token-less request logs one warning (several per job: fetch, result,
+release); `grep 'without a lease token'` in the router log, by the `worker`
+field, says which worker tokens are not upgraded and when the path can go.
+Deploy one router at a time: two router processes on one database are outside
+ADR-0001, and a token written by one is not checked by an older one.
 
 ## Alternatives Considered
 
