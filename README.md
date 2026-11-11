@@ -239,13 +239,22 @@ label for judging a leak, and carries no authority.
 
 | Method | Path | As a client | As a worker |
 |---|---|---|---|
-| `POST` | `/upload` | multipart `file`, plus query params → `201 {job_id}` | JSON result → `204` |
+| `POST` | `/upload` | multipart `file`, plus query params → `201 {job_id}` | JSON result `{job_id, lease, units\|error}` (raw: `?job_id=&lease=` + body) → `204` |
 | `GET` | `/sse` | command stream: `hello`, `backlog`, `ready`, `failed`, `ping` | `?label=<l>` → `hello`, `work`, `ping` |
-| `GET` | `/files/{id}` | the result JSON; **deleted and charged on success** | the source file; requires holding the lease |
-| `POST` | `/claim` | — | `?label=<l>` → `200 {job_id,…}` or `204` when idle |
+| `GET` | `/files/{id}` | the result JSON; **deleted and charged on success** | `?lease=` → the source file; requires holding the lease |
+| `POST` | `/claim` | — | `?label=<l>` → `200 {job_id, lease, …}` or `204` when idle |
+| `POST` | `/release` | — | `?job_id=&lease=` → `204`, the job back to the queue |
 | `GET` | `/services` | the labels currently available | — |
 | `GET` | `/healthz` | **no token** — `200 {"ok":true,…}` or `503` naming what broke | same |
 | `GET`/`POST` | `/admin/login` | **no token** — the dashboard's sign-in page | — |
+
+**The lease token (ADR-0013).** Every claim answer carries a `lease`, unique to
+that claim. A worker sends it back beside the job id on every request about the
+job. A token that is not the job's current claim — the job was taken back and
+claimed again, perhaps by another slot of the same worker — is refused with
+`409`, and so is an expired lease; drop that result. A worker that sends no
+`lease` is still accepted **for this release only**, with a warning in the
+router log naming the worker token; the next release refuses it.
 
 ### Uploading
 

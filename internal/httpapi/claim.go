@@ -18,6 +18,10 @@ type claimResponse struct {
 	HasBlob  bool              `json:"has_blob"`
 	Stage    int               `json:"stage"`
 	Stages   int               `json:"stages"`
+	// Lease is this claim's token (ADR-0013). The worker sends it back beside
+	// the job id on every request about the job: `?lease=` on the input fetch,
+	// the raw result and release, `"lease"` in a JSON result.
+	Lease string `json:"lease"`
 }
 
 // handleClaim leases one job for the label this worker serves.
@@ -68,6 +72,7 @@ func (a *API) handleClaim(w http.ResponseWriter, r *http.Request) {
 		HasBlob:  job.HasBlob,
 		Stage:    job.Stage,
 		Stages:   len(job.Pipeline),
+		Lease:    job.LeaseToken,
 	})
 }
 
@@ -84,7 +89,8 @@ func (a *API) handleRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, core.ErrInvalidParam)
 		return
 	}
-	if err := a.deps.Router.ReleaseLease(r.Context(), p.TokenID, jobID, "", a.deps.Now()); err != nil {
+	lease := r.URL.Query().Get("lease")
+	if err := a.deps.Router.ReleaseLease(r.Context(), p.TokenID, jobID, lease, a.deps.Now()); err != nil {
 		writeError(w, err)
 		return
 	}

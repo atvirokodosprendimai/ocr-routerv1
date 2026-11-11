@@ -181,6 +181,9 @@ type workerResult struct {
 	// for success, and defaulting to it would make every timeout read as a job
 	// that exited cleanly and failed anyway.
 	ExitCode *int `json:"exit_code,omitempty"`
+	// Lease is the claim's token (ADR-0013). Absent from a worker built before
+	// it, which is accepted with a warning for one release.
+	Lease string `json:"lease,omitempty"`
 }
 
 // resultFromWorker records a stage's outcome.
@@ -203,7 +206,8 @@ func (a *API) resultFromWorker(w http.ResponseWriter, r *http.Request) {
 		// The id rides the query because the body IS the payload and has no room
 		// for an envelope. Streamed under the same cap as a client upload.
 		r.Body = http.MaxBytesReader(w, r.Body, a.deps.MaxUpload)
-		if err := a.deps.Router.CompleteRaw(r.Context(), p.TokenID, jobID, "", r.Body, a.deps.Now()); err != nil {
+		lease := r.URL.Query().Get("lease")
+		if err := a.deps.Router.CompleteRaw(r.Context(), p.TokenID, jobID, lease, r.Body, a.deps.Now()); err != nil {
 			var tooBig *http.MaxBytesError
 			if errors.As(err, &tooBig) {
 				err = fmt.Errorf("%w: result exceeds the %d byte limit", core.ErrInvalidParam, tooBig.Limit)
@@ -229,9 +233,9 @@ func (a *API) resultFromWorker(w http.ResponseWriter, r *http.Request) {
 	// naming its own id could complete a job leased to a different one.
 	var err error
 	if body.Error != "" {
-		err = a.deps.Router.Fail(r.Context(), p.TokenID, body.JobID, "", body.Error, body.ExitCode, a.deps.Now())
+		err = a.deps.Router.Fail(r.Context(), p.TokenID, body.JobID, body.Lease, body.Error, body.ExitCode, a.deps.Now())
 	} else {
-		err = a.deps.Router.Complete(r.Context(), p.TokenID, body.JobID, "", body.Units, a.deps.Now())
+		err = a.deps.Router.Complete(r.Context(), p.TokenID, body.JobID, body.Lease, body.Units, a.deps.Now())
 	}
 	if err != nil {
 		writeError(w, err)

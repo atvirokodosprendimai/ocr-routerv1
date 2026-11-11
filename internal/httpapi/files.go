@@ -91,8 +91,10 @@ func (a *API) blobToWorker(w http.ResponseWriter, r *http.Request) {
 	}
 	// The lease is the authorisation. Without this a worker could read any
 	// customer's source file by guessing — or simply enumerating — job ids.
-	if job.WorkerID != p.TokenID || job.State != core.JobProcessing {
-		writeError(w, core.ErrConflict)
+	// The same check the result routes make (ADR-0013): this worker token, the
+	// claim's `?lease=` token, a lease not yet expired.
+	if err := a.deps.Router.CheckLease(job, p.TokenID, r.URL.Query().Get("lease"), a.deps.Now()); err != nil {
+		writeError(w, err)
 		return
 	}
 	if !job.HasBlob {
