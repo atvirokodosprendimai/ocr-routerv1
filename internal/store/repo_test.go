@@ -558,6 +558,11 @@ func TestResetInFlightOnBoot(t *testing.T) {
 		if j.State != core.JobQueued {
 			t.Errorf("job %s state = %q, want queued after boot recovery", id, j.State)
 		}
+		// A processing claim died with the process; its token must not match
+		// anything the next claim of this job is checked against (ADR-0013).
+		if j.LeaseToken != "" {
+			t.Errorf("job %s lease token = %q after boot recovery, want empty", id, j.LeaseToken)
+		}
 	}
 	// Nothing was charged: boot recovery costs repeated work, never money.
 	entries, _ := r.Ledger(ctx, "u", 10)

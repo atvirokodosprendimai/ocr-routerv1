@@ -21,9 +21,13 @@ func claim(t *testing.T, r *store.Repo, worker, label string) {
 // holds the same job twice under two claims (ADR-0013).
 func claimAs(t *testing.T, r *store.Repo, worker, lease, label string) {
 	t.Helper()
-	if _, err := r.ClaimOneQueued(context.Background(), label, worker, lease,
-		base, base.Add(time.Minute), agingStep); err != nil {
+	got, err := r.ClaimOneQueued(context.Background(), label, worker, lease,
+		base, base.Add(time.Minute), agingStep)
+	if err != nil {
 		t.Fatalf("ClaimOneQueued: %v", err)
+	}
+	if got.LeaseToken != lease {
+		t.Fatalf("ClaimOneQueued stored lease %q, want %q", got.LeaseToken, lease)
 	}
 }
 
@@ -224,26 +228,28 @@ func TestWritersRefuseAWorkerThatLostTheJob(t *testing.T) {
 // compares worker_id, the worker's TOKEN id, so the SAME worker token claiming
 // the job again after a reclaim (another slot of one process, a second process
 // on one token) passed it, and the older claim's write landed on the newer
-// claim's row. Each writer must match only the current claim's lease token.
+// claim's row. Each writer must match only the current claim's lease token —
+// not the older one, not an empty one — and, under the current claim, succeed
+// and leave no token behind.
 func TestWritersRefuseAStaleClaimOfTheSameWorker(t *testing.T) {
-	writers := map[string]func(r *store.Repo, id string) error{
-		"CompleteJob": func(r *store.Repo, id string) error {
-			return r.CompleteJob(context.Background(), id, "w1", "lease-old", 1, 1, base)
+	writers := map[string]func(r *store.Repo, id, lease string) error{
+		"CompleteJob": func(r *store.Repo, id, lease string) error {
+			return r.CompleteJob(context.Background(), id, "w1", lease, 1, 1, base)
 		},
-		"AdvanceStage": func(r *store.Repo, id string) error {
-			return r.AdvanceStage(context.Background(), id, "w1", "lease-old", "next", 1, base)
+		"AdvanceStage": func(r *store.Repo, id, lease string) error {
+			return r.AdvanceStage(context.Background(), id, "w1", lease, "next", 1, base)
 		},
-		"RequeueJob": func(r *store.Repo, id string) error {
-			return r.RequeueJob(context.Background(), id, "w1", "lease-old", "late failure", nil, base)
+		"RequeueJob": func(r *store.Repo, id, lease string) error {
+			return r.RequeueJob(context.Background(), id, "w1", lease, "late failure", nil, base)
 		},
-		"ReleaseJob": func(r *store.Repo, id string) error {
-			return r.ReleaseJob(context.Background(), id, "w1", "lease-old", "late release", base)
+		"ReleaseJob": func(r *store.Repo, id, lease string) error {
+			return r.ReleaseJob(context.Background(), id, "w1", lease, "late release", base)
 		},
-		"FailJobDead": func(r *store.Repo, id string) error {
-			return r.FailJobDead(context.Background(), id, "w1", "lease-old", "late death", nil, base)
+		"FailJobDead": func(r *store.Repo, id, lease string) error {
+			return r.FailJobDead(context.Background(), id, "w1", lease, "late death", nil, base)
 		},
-		"ReclaimJob": func(r *store.Repo, id string) error {
-			return r.ReclaimJob(context.Background(), id, "w1", "lease-old", "stale lease", base)
+		"ReclaimJob": func(r *store.Repo, id, lease string) error {
+			return r.ReclaimJob(context.Background(), id, "w1", lease, "stale lease", base)
 		},
 	}
 	for name, write := range writers {
@@ -258,8 +264,10 @@ func TestWritersRefuseAStaleClaimOfTheSameWorker(t *testing.T) {
 			}
 			claimAs(t, r, "w1", "lease-new", "ocr")
 
-			if err := write(r, "j"); !errors.Is(err, core.ErrNotFound) {
-				t.Errorf("%s under the older claim = %v, want core.ErrNotFound", name, err)
+			for _, stale := range []string{"lease-old", ""} {
+				if err := write(r, "j", stale); !errors.Is(err, core.ErrNotFound) {
+					t.Errorf("%s under lease %q = %v, want core.ErrNotFound", name, stale, err)
+				}
 			}
 			got, err := r.JobByID(ctx, "j")
 			if err != nil {
@@ -268,6 +276,14 @@ func TestWritersRefuseAStaleClaimOfTheSameWorker(t *testing.T) {
 			if got.State != core.JobProcessing || got.WorkerID != "w1" || got.LeaseToken != "lease-new" {
 				t.Errorf("%s left the job %q under %q/%q, want processing under w1/lease-new",
 					name, got.State, got.WorkerID, got.LeaseToken)
+			}
+
+			if err := write(r, "j", "lease-new"); err != nil {
+				t.Fatalf("%s under the current claim = %v, want nil", name, err)
+			}
+			got, _ = r.JobByID(ctx, "j")
+			if got.LeaseToken != "" {
+				t.Errorf("%s left lease token %q on a %q job, want empty", name, got.LeaseToken, got.State)
 			}
 		})
 	}
