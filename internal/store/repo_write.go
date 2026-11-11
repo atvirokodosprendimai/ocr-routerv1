@@ -175,8 +175,8 @@ func (r *Repo) insertJob(ctx context.Context, j core.Job, where string, whereArg
 //
 // A deactivated owner's jobs are skipped (`u.active = 1`, F11): deactivation
 // stops every token at once (ADR-0004), so their results could not be
-// collected, and running them only holds workers. They stay queued, and run
-// if the customer is reactivated before their deadline.
+// collected, and running them only holds workers. The reaper's next pass
+// expires them (ExpireOverdue); until then a reactivation finds them queued.
 //
 // `lease` is the claim's own token (ADR-0013), minted by the caller and
 // stored with the lease. worker_id says WHO holds the job; the token says WHICH
@@ -417,15 +417,25 @@ func (r *Repo) DeliverJob(ctx context.Context, jobID, userID string, charge int,
 	return tx.Commit()
 }
 
-// ExpireOverdue moves queued jobs past their deadline to 'expired'.
+// ExpireOverdue moves queued jobs past their deadline, and the queued jobs of
+// a deactivated owner, to 'expired'.
 //
 // ⚠ It touches ONLY queued rows. A job a worker is already running has consumed
 // worker time that discarding it does not recover, so it runs to completion even
 // past its deadline.
+//
+// A deactivated owner's queued jobs expire too (F11, REPORT 2026-11-10): claims
+// skip them, so before this they stayed queued — forever, with no TTL.
+// EXPIRED, not a new cancelled state: it is already terminal, uncharged, swept
+// of its blobs and announced to the owner, which is exactly what is wanted.
+// Reactivating the owner before the next reap keeps the jobs; after it, they
+// are gone, as deactivation means.
 func (r *Repo) ExpireOverdue(ctx context.Context, now time.Time) ([]core.Job, error) {
 	rows, err := r.write.QueryContext(ctx,
 		`UPDATE jobs SET state = 'expired', updated_at = ?
-		 WHERE state = 'queued' AND expires_at IS NOT NULL AND expires_at <= ?
+		 WHERE state = 'queued'
+		   AND ((expires_at IS NOT NULL AND expires_at <= ?)
+		        OR user_id IN (SELECT id FROM users WHERE active = 0))
 		 RETURNING `+jobColumns,
 		now.Unix(), now.Unix())
 	if err != nil {

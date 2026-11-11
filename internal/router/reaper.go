@@ -65,19 +65,27 @@ func (s *Service) Reap(ctx context.Context, now time.Time) (ReapReport, error) {
 		}
 	}
 
-	// 2. Queued jobs past their deadline. Nothing is charged, the blob goes, and
-	//    the owner is told why — an expired job that failed silently is
-	//    indistinguishable from one still waiting.
+	// 2. Queued jobs past their deadline, or of a deactivated owner (F11).
+	//    Nothing is charged, the blob goes, and the owner is told why — an
+	//    expired job that failed silently is indistinguishable from one still
+	//    waiting.
 	expiredJobs, err := s.repo.ExpireOverdue(ctx, now)
 	if err != nil {
 		return rep, err
 	}
 	for _, job := range expiredJobs {
 		rep.JobsExpired++
-		s.counter.Inc(metricReaperActions, map[string]string{"action": "deadline-expired"})
+		// The row does not say which of the two it was; its deadline does. A
+		// job with no deadline yet, or one still ahead, went because its owner
+		// was deactivated.
+		reason, action := "deadline passed", "deadline-expired"
+		if job.ExpiresAt.IsZero() || job.ExpiresAt.After(now) {
+			reason, action = "owner deactivated", "owner-deactivated"
+		}
+		s.counter.Inc(metricReaperActions, map[string]string{"action": action})
 		s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobExpired)})
 		s.logTransition(job, core.JobQueued, core.JobExpired, job.QueuedAt,
-			"reaper", "", "deadline passed", now)
+			"reaper", "", reason, now)
 		// BOTH keys. A raw job has an input blob and an output blob, and a
 		// deletion added to one path and forgotten on the other leaks silently
 		// — which is why every terminal path below calls the same pair.

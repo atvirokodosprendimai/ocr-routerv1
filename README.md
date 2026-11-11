@@ -368,6 +368,12 @@ A customer whose `job_ttl_secs` is 0 gets the router's `--default-job-ttl`
 the flag to `0` for the old "no deadline" behaviour. It applies to jobs
 uploaded after the upgrade; rows already queued keep the deadline they had.
 
+Deactivating a customer **expires their queued jobs** on the reaper's next pass
+(`--reap-interval`, 30s): uncharged, the source deleted, the owner told
+`expired`, and the log line says `owner deactivated`. Reactivate before that
+pass and the jobs stay queued. A job a worker already holds runs to completion,
+and if it then goes back to the queue it expires on the next pass.
+
 ## Flags
 
 ```
