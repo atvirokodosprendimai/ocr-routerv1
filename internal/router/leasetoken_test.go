@@ -3,6 +3,7 @@ package router_test
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -170,4 +171,91 @@ func TestExpiredLeaseIsRefusedSayingSo(t *testing.T) {
 	if !errors.Is(err, core.ErrConflict) || !strings.Contains(err.Error(), "expired") {
 		t.Errorf("Complete past the lease = %v, want core.ErrConflict saying it expired", err)
 	}
+}
+
+// TestTokenlessWorkerIsStillRefusedPastItsLease: the compatibility path skips
+// only the token compare, never the expiry (commit-3 review).
+func TestTokenlessWorkerIsStillRefusedPastItsLease(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "ocr")
+	h.user(t, "u", 100, 4, 0)
+	upload(t, h, "u", router.UploadInput{Body: strings.NewReader("x")})
+	ctx := context.Background()
+	c, err := h.svc.Claim(ctx, "w1", "ocr", base)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	err = h.svc.Complete(ctx, "w1", c.ID, "", []string{"late"}, base.Add(10*time.Minute))
+	if !errors.Is(err, core.ErrConflict) || !strings.Contains(err.Error(), "expired") {
+		t.Errorf("token-less Complete past the lease = %v, want core.ErrConflict saying it expired", err)
+	}
+}
+
+// TestTokenlessStaleSlotNeverSwapsTheInput pins lockHolder's recheck against
+// the SNAPSHOT's token (ADR-0013). A token-less raw upload by w1 passes the
+// first check; while its body streams the lease lapses, the reaper takes the
+// job back and w1 — another slot of the same worker token — claims it again.
+// Re-checked against the token the worker presented (none), the stale slot
+// would still look like the holder and swap its output onto the input the
+// current slot is being served; re-checked against the snapshot's token it is
+// refused before the swap.
+func TestTokenlessStaleSlotNeverSwapsTheInput(t *testing.T) {
+	h := newHarness(t)
+	h.worker(t, "convert")
+	h.user(t, "u", 100, 4, 0)
+	ctx := context.Background()
+	for _, l := range []string{"convert", "compress"} {
+		if err := h.repo.SetRate(ctx, l, 1, true, base); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j := upload(t, h, "u", routerUpload([]string{"convert", "compress"}, "original", true))
+	if _, err := h.svc.Claim(ctx, "w1", "convert", base); err != nil {
+		t.Fatal(err)
+	}
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- h.svc.CompleteRaw(ctx, "w1", j.ID, "", pr, base) }()
+	defer pw.Close()
+	if _, err := pw.Write([]byte("A-")); err != nil { // past its first check, inside Stage
+		t.Fatal(err)
+	}
+	later := base.Add(6 * time.Minute)
+	if _, err := h.svc.Reap(ctx, later); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.Claim(ctx, "w1", "convert", later); err != nil {
+		t.Fatal(err)
+	}
+	// Hold the single writer so a swap that happened would sit visible while
+	// the doomed advance waits.
+	tx, err := h.db.Write.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`UPDATE users SET credits = credits WHERE id = 'u'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pw.Write([]byte("output")); err != nil {
+		t.Fatal(err)
+	}
+	_ = pw.Close()
+	var err1 error
+	select {
+	case err1 = <-done:
+	case <-time.After(2 * time.Second):
+		got := readInput(t, h, j.ID)
+		_ = tx.Rollback()
+		<-done
+		t.Fatalf("the stale slot is inside its advance; the current slot is served %q as its input", got)
+	}
+	got := readInput(t, h, j.ID)
+	_ = tx.Rollback()
+	if !errors.Is(err1, core.ErrConflict) {
+		t.Errorf("the stale slot's CompleteRaw = %v, want core.ErrConflict", err1)
+	}
+	if got != "original" {
+		t.Errorf("input after the stale slot's refusal = %q, want %q", got, "original")
+	}
+	assertOnlyTheJobsFiles(t, h, j.ID)
 }
