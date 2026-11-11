@@ -49,3 +49,86 @@ func TestReapExpiresADeactivatedOwnersQueuedJobs(t *testing.T) {
 		t.Errorf("expiry log = %+v (found %v), want job %s with reason \"owner deactivated\"", e, ok, gone.ID)
 	}
 }
+
+// deactivatedOwner makes "off" with a TTL of ttlSecs, uploads one job, and
+// deactivates them.
+func deactivatedOwner(t *testing.T, h *harness, ttlSecs int, reactivate bool) core.Job {
+	t.Helper()
+	ctx := context.Background()
+	h.worker(t, "ocr")
+	off := h.user(t, "off", 100, 4, ttlSecs)
+	j := upload(t, h, "off", router.UploadInput{Body: strings.NewReader("x")})
+	off.Active = false
+	if err := h.repo.UpdateUser(ctx, off); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+	if reactivate {
+		off.Active = true
+		if err := h.repo.UpdateUser(ctx, off); err != nil {
+			t.Fatalf("UpdateUser: %v", err)
+		}
+	}
+	return j
+}
+
+// TestReapExpiresADeactivatedOwnersJobWithADeadlineAhead: the reason is the
+// owner, not the deadline, when the deadline has not come yet.
+func TestReapExpiresADeactivatedOwnersJobWithADeadlineAhead(t *testing.T) {
+	h := newHarness(t)
+	rec := &recordingLogger{}
+	h.svc.SetLogger(rec)
+	j := deactivatedOwner(t, h, 3600, false)
+	if _, err := h.svc.Reap(context.Background(), base.Add(time.Second)); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	e, ok := rec.find(core.JobQueued, core.JobExpired)
+	if !ok || e.JobID != j.ID || e.Reason != "owner deactivated" {
+		t.Errorf("expiry log = %+v (found %v), want job %s with reason \"owner deactivated\"", e, ok, j.ID)
+	}
+}
+
+// TestReactivationBeforeThePassKeepsTheJobs: deactivation takes effect at the
+// reap, so an owner switched back on in time keeps the queue.
+func TestReactivationBeforeThePassKeepsTheJobs(t *testing.T) {
+	h := newHarness(t)
+	j := deactivatedOwner(t, h, 0, true)
+	rep, err := h.svc.Reap(context.Background(), base.Add(time.Second))
+	if err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	got, err := h.repo.JobByID(context.Background(), j.ID)
+	if err != nil {
+		t.Fatalf("JobByID: %v", err)
+	}
+	if rep.JobsExpired != 0 || got.State != core.JobQueued {
+		t.Errorf("after reactivation: JobsExpired = %d, job %q; want 0 and queued", rep.JobsExpired, got.State)
+	}
+}
+
+// TestDeactivationLeavesARunningJobAlone: only queued rows expire; a job a
+// worker holds runs to completion.
+func TestDeactivationLeavesARunningJobAlone(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.worker(t, "ocr")
+	off := h.user(t, "off", 100, 4, 0)
+	upload(t, h, "off", router.UploadInput{Body: strings.NewReader("x")})
+	c, err := h.svc.Claim(ctx, "w1", "ocr", base)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	off.Active = false
+	if err := h.repo.UpdateUser(ctx, off); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+	if _, err := h.svc.Reap(ctx, base.Add(time.Second)); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	got, err := h.repo.JobByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("JobByID: %v", err)
+	}
+	if got.State != core.JobProcessing {
+		t.Errorf("a running job of a deactivated owner is %q, want processing", got.State)
+	}
+}

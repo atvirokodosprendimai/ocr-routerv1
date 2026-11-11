@@ -373,9 +373,15 @@ one. Deadlines already stamped stay, and the older binary enforces them too.
 
 Deactivating a customer **expires their queued jobs** on the reaper's next pass
 (`--reap-interval`, 30s): uncharged, the source deleted, the owner told
-`expired`, and the log line says `owner deactivated`. Reactivate before that
-pass and the jobs stay queued. A job a worker already holds runs to completion,
-and if it then goes back to the queue it expires on the next pass.
+`expired` (seen once they are reactivated, since their tokens stop), and the
+log line says `owner deactivated` (or `deadline passed` when the deadline had
+also gone); `ocrr_reaper_actions_total{action="owner-deactivated"}` counts them.
+Reactivate before that pass and the jobs stay queued. A job a worker already
+holds runs to completion, and if it then goes back to the queue it expires on
+the next pass. **On upgrade**, customers who are already inactive lose their
+queued jobs on the first pass; to see how many first:
+`SELECT user_id, count(*) FROM jobs WHERE state='queued' AND user_id IN
+(SELECT id FROM users WHERE active=0) GROUP BY user_id;`
 
 ## Flags
 
