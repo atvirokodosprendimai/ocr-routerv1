@@ -23,6 +23,7 @@ func TestUploadAppliesTheDefaultJobTTL(t *testing.T) {
 		{"default fills an unset TTL", time.Hour, 0, base.Add(time.Hour)},
 		{"the customer's own TTL wins", time.Hour, 60, base.Add(time.Minute)},
 		{"a zero default means no deadline", 0, 0, time.Time{}},
+		{"a negative default is no deadline", -time.Hour, 0, time.Time{}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

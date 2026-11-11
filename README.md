@@ -367,6 +367,9 @@ A customer whose `job_ttl_secs` is 0 gets the router's `--default-job-ttl`
 (7 days) instead, so no job waits forever for a worker that never comes; set
 the flag to `0` for the old "no deadline" behaviour. It applies to jobs
 uploaded after the upgrade; rows already queued keep the deadline they had.
+Rolling back: `--default-job-ttl 0` changes only later uploads, and an older
+binary does not know the flag — remove it from the start line before starting
+one. Deadlines already stamped stay, and the older binary enforces them too.
 
 Deactivating a customer **expires their queued jobs** on the reaper's next pass
 (`--reap-interval`, 30s): uncharged, the source deleted, the owner told

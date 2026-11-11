@@ -127,6 +127,11 @@ func (r routerLogger) Warn(msg string, args ...any) { r.log.Warn(msg, args...) }
 // where the write handle belongs. That class of defect is invisible to every
 // test in T2–T7, and this is the seam that makes it visible.
 func buildApp(cfg Config) (*App, error) {
+	// Refused before anything opens: a negative deadline would silently mean
+	// "no deadline", which is how a mistyped unit file hides (F11 review).
+	if cfg.DefaultJobTTL < 0 {
+		return nil, fmt.Errorf("--default-job-ttl %v is negative; use 0 for no deadline", cfg.DefaultJobTTL)
+	}
 	// The logger is built FIRST and its failure is fatal: a misconfigured
 	// --log-level must stop the boot rather than start a process whose logging
 	// silently differs from what was asked for.

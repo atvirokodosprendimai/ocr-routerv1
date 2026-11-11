@@ -231,6 +231,11 @@ have a fast failure than a late result gets one. Expiry applies **only to `queue
 a worker holds the lease the job runs to completion, because killing work already paid for
 in worker time helps nobody.
 
+> **Amended 2026-11-11 (F11, branch `fix/claim-token-f11`).** `0` now means the
+> router's `--default-job-ttl` (168h; `0` there is the old "no deadline"), and a
+> deactivated owner's queued jobs expire on the reaper's next pass. See README
+> "Priority and deadlines".
+
 Aging bounds waiting; the deadline bounds it absolutely. **What would falsify the pair:** a
 job whose effective priority never rises (aging broken), or a job claimed after its
 deadline (expiry racing the claim). Both are asserted in T2, and the claim statement

@@ -91,6 +91,10 @@ a fourth.
 | `priority` | any integer | Nothing. Higher wins; ADR-0001 made it an integer rather than a named tier so adding a tier is an `UPDATE` |
 | `job_ttl_secs` | ≥ 0 | Negative. Zero means **no deadline** and is a real, common choice |
 
+> **Amended 2026-11-11 (F11).** A stored `0` now means the router's
+> `--default-job-ttl` (168h by default), not "no deadline"; the operator gets
+> "no deadline" back with `--default-job-ttl 0`.
+
 ### 4. `active` gets its first caller
 
 A toggle in the customer row, calling `identity.SetActive`. ADR-0001 called deactivation "the blunt
