@@ -15,39 +15,46 @@ import (
 // behaviour: the lease lapses and the reaper reclaims the job.
 const releaseTimeout = 3 * time.Second
 
-// inflight is the set of jobs this worker currently holds a lease on.
+// inflight is the set of claims this worker currently holds a lease on.
 //
 // It exists only so shutdown knows what to hand back. The package comment says
 // the agent holds no durable state and that is still true — this is in-memory,
 // and losing it costs a lease expiry rather than a job.
+//
+// Keyed by the CLAIM (job id and lease token, ADR-0013), not the job id: two
+// slots can hold the same job under two claims after a reclaim, and the stale
+// slot finishing must not erase the current slot's entry.
 type inflight struct {
-	mu  sync.Mutex
-	ids map[string]struct{}
+	mu     sync.Mutex
+	claims map[claim]struct{}
 }
 
-func newInflight() *inflight { return &inflight{ids: map[string]struct{}{}} }
+// claim is one lease: the job and the token the router gave for it.
+type claim struct{ jobID, lease string }
 
-func (i *inflight) add(id string) {
+func newInflight() *inflight { return &inflight{claims: map[claim]struct{}{}} }
+
+func (i *inflight) add(jobID, lease string) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	i.ids[id] = struct{}{}
+	i.claims[claim{jobID, lease}] = struct{}{}
 }
 
-// done drops a job whose outcome has already been reported. A reported job must
-// NOT be released: the lease is gone, and the release would 409 for a job that
-// completed perfectly well.
-func (i *inflight) done(id string) {
+// done drops a claim whose outcome has already been reported. A reported job
+// must NOT be released: the lease is gone, and the release would 409 for a job
+// that completed perfectly well.
+func (i *inflight) done(jobID, lease string) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	delete(i.ids, id)
+	delete(i.claims, claim{jobID, lease})
 }
 
-func (i *inflight) snapshot() []string {
+func (i *inflight) snapshot() []claim {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	out := make([]string, 0, len(i.ids))
-	for id := range i.ids {
-		out = append(out, id)
+	out := make([]claim, 0, len(i.claims))
+	for c := range i.claims {
+		out = append(out, c)
 	}
 	return out
 }
@@ -58,37 +65,37 @@ func (i *inflight) snapshot() []string {
 // triggered this — and a request built on it would fail before it left the
 // process, which would look exactly like a release the router refused.
 func (a *Agent) releaseAll() {
-	ids := a.inflight.snapshot()
-	if len(ids) == 0 {
+	claims := a.inflight.snapshot()
+	if len(claims) == 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
 	defer cancel()
 
-	for _, id := range ids {
-		a.release(ctx, id)
+	for _, c := range claims {
+		a.release(ctx, c)
 	}
 }
 
 // release hands one lease back. Every failure is logged and none is fatal: the
 // lease expiry is still the safety net, so the worst case of a failed release is
 // the behaviour that existed before this route.
-func (a *Agent) release(ctx context.Context, jobID string) {
-	req, err := a.newRequest(ctx, http.MethodPost, "/release?job_id="+jobID, nil)
+func (a *Agent) release(ctx context.Context, c claim) {
+	req, err := a.newRequest(ctx, http.MethodPost, withLease("/release?job_id="+c.jobID, c.lease), nil)
 	if err != nil {
-		a.Log("job %s: building release: %v", jobID, err)
+		a.Log("job %s: building release: %v", c.jobID, err)
 		return
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {
-		a.Log("job %s: releasing: %v", jobID, err)
+		a.Log("job %s: releasing: %v", c.jobID, err)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
-		a.Log("job %s: router refused the release (%s)", jobID, resp.Status)
+		a.Log("job %s: router refused the release (%s)", c.jobID, resp.Status)
 		return
 	}
-	a.inflight.done(jobID)
-	a.Log("job %s: handed back to the queue", jobID)
+	a.inflight.done(c.jobID, c.lease)
+	a.Log("job %s: handed back to the queue", c.jobID)
 }

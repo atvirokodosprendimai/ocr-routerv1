@@ -16,6 +16,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,6 +224,22 @@ type claimResponse struct {
 	Filename string            `json:"filename"`
 	Params   map[string]string `json:"params"`
 	HasBlob  bool              `json:"has_blob"`
+	// Lease is this claim's token (ADR-0013), sent back on every request about
+	// the job. Empty from a router that predates it, and then sent nowhere.
+	Lease string `json:"lease"`
+}
+
+// withLease appends the claim's token to a path's query, or leaves the path
+// alone when the router gave none (an older router).
+func withLease(path, lease string) string {
+	if lease == "" {
+		return path
+	}
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + "lease=" + url.QueryEscape(lease)
 }
 
 func (a *Agent) claim(ctx context.Context) (claimResponse, bool, error) {
@@ -257,10 +274,10 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 	a.Log("job %s (%s) started", job.ID(), job.Label)
 	// Registered BEFORE any work: a cancellation arriving one instruction later
 	// must still find this job, or the handover silently misses it.
-	a.inflight.add(job.JobID)
+	a.inflight.add(job.JobID, job.Lease)
 	// Every exit path below has reported an outcome, and a reported job has no
 	// lease left to give back — releasing it would 409 for work that finished.
-	defer a.inflight.done(job.JobID)
+	defer a.inflight.done(job.JobID, job.Lease)
 
 	inputPath, cleanup, err := a.materialise(ctx, job)
 	// ⚠ The cleanup is deferred IMMEDIATELY and unconditionally, before any
@@ -270,7 +287,7 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 	defer cleanup()
 	if err != nil {
 		// nil: fetching the input never ran a command, so there is no exit status.
-		a.report(ctx, job.JobID, nil, fmt.Sprintf("fetching input: %v", err), nil)
+		a.report(ctx, job.JobID, job.Lease, nil, fmt.Sprintf("fetching input: %v", err), nil)
 		return
 	}
 
@@ -303,11 +320,11 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 		out, runErr := a.run.RunRaw(ctx, rj)
 		if runErr != nil {
 			a.Log("job %s failed: %v", job.JobID, runErr)
-			a.report(ctx, job.JobID, nil, runErr.Error(), exitCodeOf(runErr))
+			a.report(ctx, job.JobID, job.Lease, nil, runErr.Error(), exitCodeOf(runErr))
 			return
 		}
 		a.Log("job %s produced %d byte(s)", job.JobID, len(out))
-		a.reportRaw(ctx, job.JobID, out)
+		a.reportRaw(ctx, job.JobID, job.Lease, out)
 		return
 	}
 
@@ -316,12 +333,12 @@ func (a *Agent) process(ctx context.Context, job claimResponse) {
 		// A failed job is reported and the agent carries on. One malformed
 		// document must not stop a worker serving every other customer.
 		a.Log("job %s failed: %v", job.JobID, runErr)
-		a.report(ctx, job.JobID, nil, runErr.Error(), exitCodeOf(runErr))
+		a.report(ctx, job.JobID, job.Lease, nil, runErr.Error(), exitCodeOf(runErr))
 		return
 	}
 
 	a.Log("job %s produced %d unit(s)", job.JobID, len(units))
-	a.report(ctx, job.JobID, units, "", nil)
+	a.report(ctx, job.JobID, job.Lease, units, "", nil)
 }
 
 // maxInputExt bounds the extension a client can contribute, dot included.
@@ -422,7 +439,7 @@ func (a *Agent) materialise(ctx context.Context, job claimResponse) (string, fun
 		_ = os.Remove(path)
 	}
 
-	req, err := a.newRequest(ctx, http.MethodGet, "/files/"+job.JobID, nil)
+	req, err := a.newRequest(ctx, http.MethodGet, withLease("/files/"+job.JobID, job.Lease), nil)
 	if err != nil {
 		return "", cleanup, err
 	}
@@ -444,7 +461,9 @@ func (a *Agent) materialise(ctx context.Context, job claimResponse) (string, fun
 }
 
 type resultBody struct {
-	JobID string   `json:"job_id"`
+	JobID string `json:"job_id"`
+	// Lease is the claim's token (ADR-0013); omitted when the router gave none.
+	Lease string   `json:"lease,omitempty"`
 	Units []string `json:"units,omitempty"`
 	Error string   `json:"error,omitempty"`
 	// ExitCode is omitted when the failure never reached one — a timeout, an
@@ -478,13 +497,13 @@ func rawParam(raw bool) string {
 // A FAILURE still goes through report() as JSON in both modes: a failure is a
 // reason string, which is text whatever the service emits, and giving failures
 // two encodings would double the router's parse surface for nothing.
-func (a *Agent) reportRaw(ctx context.Context, jobID string, out []byte) {
+func (a *Agent) reportRaw(ctx context.Context, jobID, lease string, out []byte) {
 	// Same fresh, bounded context as report, and for the same reason: a result
 	// that is never reported costs the customer a full lease timeout.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 
-	req, err := a.newRequest(ctx, http.MethodPost, "/upload?job_id="+jobID, bytes.NewReader(out))
+	req, err := a.newRequest(ctx, http.MethodPost, withLease("/upload?job_id="+jobID, lease), bytes.NewReader(out))
 	if err != nil {
 		a.Log("job %s: building raw report: %v", jobID, err)
 		return
@@ -503,14 +522,14 @@ func (a *Agent) reportRaw(ctx context.Context, jobID string, out []byte) {
 }
 
 // report posts the outcome back to the router.
-func (a *Agent) report(ctx context.Context, jobID string, units []string, failure string, exitCode *int) {
+func (a *Agent) report(ctx context.Context, jobID, lease string, units []string, failure string, exitCode *int) {
 	// A fresh context with its own bound: the caller's may already be cancelled
 	// (a shutting-down worker), and a result that is not reported costs the
 	// customer a full lease timeout before anyone retries.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 
-	body, err := json.Marshal(resultBody{JobID: jobID, Units: units, Error: failure, ExitCode: exitCode})
+	body, err := json.Marshal(resultBody{JobID: jobID, Lease: lease, Units: units, Error: failure, ExitCode: exitCode})
 	if err != nil {
 		a.Log("job %s: encoding result: %v", jobID, err)
 		return

@@ -47,10 +47,17 @@ type fakeRouter struct {
 	// answered. releaseStatus defaults to 0, read as 204.
 	released      []string
 	releaseStatus int
+
+	// ADR-0013: the lease the fake handed out on each claim ("lease-"+id) and
+	// what came back, as "route lease" per request.
+	leasesSeen []string
+	// noLease makes the fake an OLDER router, whose claim answer has no lease.
+	noLease bool
 }
 
 type report struct {
 	JobID string   `json:"job_id"`
+	Lease string   `json:"lease"`
 	Units []string `json:"units"`
 	Error string   `json:"error"`
 }
@@ -131,16 +138,21 @@ func (f *fakeRouter) handler() http.Handler {
 		f.queued = f.queued[1:]
 		_, hasBlob := f.blobs[id]
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		answer := map[string]any{
 			"job_id": id, "label": "test", "has_blob": hasBlob,
 			"filename": f.filenames[id],
 			"params":   map[string]string{"n": id},
-		})
+		}
+		if !f.noLease {
+			answer["lease"] = "lease-" + id
+		}
+		_ = json.NewEncoder(w).Encode(answer)
 	})
 
 	mux.HandleFunc("/release", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.released = append(f.released, r.URL.Query().Get("job_id"))
+		f.leasesSeen = append(f.leasesSeen, "release "+r.URL.Query().Get("lease"))
 		status := f.releaseStatus
 		f.mu.Unlock()
 		if status == 0 {
@@ -153,6 +165,7 @@ func (f *fakeRouter) handler() http.Handler {
 		id := filepath.Base(r.URL.Path)
 		f.mu.Lock()
 		blob, ok := f.blobs[id]
+		f.leasesSeen = append(f.leasesSeen, "files "+r.URL.Query().Get("lease"))
 		f.mu.Unlock()
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -169,6 +182,7 @@ func (f *fakeRouter) handler() http.Handler {
 			f.mu.Lock()
 			f.rawBodies = append(f.rawBodies, body)
 			f.rawJobIDs = append(f.rawJobIDs, r.URL.Query().Get("job_id"))
+			f.leasesSeen = append(f.leasesSeen, "raw "+r.URL.Query().Get("lease"))
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -177,6 +191,7 @@ func (f *fakeRouter) handler() http.Handler {
 		_ = json.NewDecoder(r.Body).Decode(&rep)
 		f.mu.Lock()
 		f.reports = append(f.reports, rep)
+		f.leasesSeen = append(f.leasesSeen, "report "+rep.Lease)
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	})
