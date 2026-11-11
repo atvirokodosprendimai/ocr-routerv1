@@ -14,6 +14,9 @@ import (
 // test written before ADR-0002 unchanged.
 type Logger interface {
 	Transition(TransitionEvent)
+	// Warn reports something an operator should act on that is not a job
+	// moving: today, a worker using a protocol path due for removal.
+	Warn(msg string, args ...any)
 }
 
 // TransitionEvent is one movement of a job between states.
@@ -61,6 +64,7 @@ type TransitionEvent struct {
 type nopLogger struct{}
 
 func (nopLogger) Transition(TransitionEvent) {}
+func (nopLogger) Warn(string, ...any)        {}
 
 // SetLogger attaches a structured logger to the service.
 func (s *Service) SetLogger(l Logger) {

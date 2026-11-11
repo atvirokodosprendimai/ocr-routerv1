@@ -66,7 +66,7 @@ func TestCountersIncrementOnTransitions(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"p1", "p2"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"p1", "p2"}, base); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	if _, err := h.svc.Deliver(ctx, "u", j.ID, base); err != nil {
@@ -98,7 +98,7 @@ func TestCreditsDebitedCounterMatchesLedger(t *testing.T) {
 		for i := range units {
 			units[i] = "page"
 		}
-		if err := h.svc.Complete(ctx, "w1", j.ID, units, base); err != nil {
+		if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, units, base); err != nil {
 			t.Fatalf("Complete: %v", err)
 		}
 		if _, err := h.svc.Deliver(ctx, "u", j.ID, base); err != nil {
@@ -187,7 +187,7 @@ func TestServiceWithoutACounterStillWorks(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("Claim with no counter attached: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"p"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"p"}, base); err != nil {
 		t.Fatalf("Complete with no counter attached: %v", err)
 	}
 }

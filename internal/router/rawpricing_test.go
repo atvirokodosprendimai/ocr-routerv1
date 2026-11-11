@@ -21,7 +21,7 @@ func rawJobDone(t *testing.T, h *harness, label, body string) string {
 	if _, err := h.svc.Claim(ctx, "w1", label, base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader(body), base); err != nil {
+	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, j.LeaseToken, strings.NewReader(body), base); err != nil {
 		t.Fatalf("CompleteRaw: %v", err)
 	}
 	return j.ID
@@ -80,7 +80,7 @@ func TestFailedRawJobCostsNothing(t *testing.T) {
 		if _, err := h.svc.Claim(ctx, "w1", "convert", base); err != nil {
 			break
 		}
-		if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, base); err != nil {
+		if err := h.svc.Fail(ctx, "w1", j.ID, j.LeaseToken, "boom", nil, base); err != nil {
 			t.Fatalf("Fail: %v", err)
 		}
 	}
@@ -109,7 +109,7 @@ func TestUnitsPricingUnchanged(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"a", "b", "c", "d"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"a", "b", "c", "d"}, base); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	before, _ := h.repo.UserByID(ctx, "u")
@@ -144,7 +144,7 @@ func TestRawStageAddsNothingToTheAccrual(t *testing.T) {
 		if _, err := h.db.Write.Exec(`UPDATE jobs SET accrued_credits = 5 WHERE id = ?`, j.ID); err != nil {
 			t.Fatalf("forcing the accrual: %v", err)
 		}
-		if err := h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader("out"), base); err != nil {
+		if err := h.svc.CompleteRaw(ctx, "w1", j.ID, j.LeaseToken, strings.NewReader("out"), base); err != nil {
 			t.Fatalf("CompleteRaw: %v", err)
 		}
 		got, _ := h.repo.JobByID(ctx, j.ID)

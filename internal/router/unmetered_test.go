@@ -124,7 +124,7 @@ func deliveredUnitsJob(t *testing.T, h *harness, userID string, pages int) strin
 	for i := range units {
 		units[i] = "page"
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, units, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, units, base); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	return j.ID

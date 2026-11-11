@@ -114,6 +114,9 @@ func (r routerLogger) Transition(e router.TransitionEvent) {
 	})
 }
 
+// Warn passes a router warning to the process log unchanged.
+func (r routerLogger) Warn(msg string, args ...any) { r.log.Warn(msg, args...) }
+
 // buildApp constructs the whole dependency graph.
 //
 // ⚠ THIS IS THE COMPOSITION ROOT, AND IT EXISTS AS A FUNCTION SO THE TESTS CAN

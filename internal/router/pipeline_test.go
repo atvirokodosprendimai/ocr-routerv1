@@ -39,7 +39,7 @@ func TestPipelineAdvancesWithoutNotifyingClient(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "crawl", base); err != nil {
 		t.Fatalf("claim crawl: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"<html>hi</html>"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"<html>hi</html>"}, base); err != nil {
 		t.Fatalf("complete crawl: %v", err)
 	}
 
@@ -60,7 +60,7 @@ func TestPipelineAdvancesWithoutNotifyingClient(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w2", "strip-html", base); err != nil {
 		t.Fatalf("claim strip-html: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w2", j.ID, []string{"hi"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w2", j.ID, j.LeaseToken, []string{"hi"}, base); err != nil {
 		t.Fatalf("complete strip-html: %v", err)
 	}
 
@@ -95,7 +95,7 @@ func TestPipelineIntermediateBecomesNextInput(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "crawl", base); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"<html>page</html>"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"<html>page</html>"}, base); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 
@@ -131,7 +131,7 @@ func TestPipelineMultiElementIntermediateIsJoined(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "a", base); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"one", "two"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"one", "two"}, base); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 
@@ -161,7 +161,7 @@ func TestPipelinePreservesQueuedAtAcrossStages(t *testing.T) {
 	// not rewritten to the completion time. Completing past the lease is
 	// correctly refused, so this cannot use a larger offset.
 	later := base.Add(time.Minute)
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"x"}, later); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"x"}, later); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 
@@ -198,14 +198,14 @@ func TestPipelineAccruesPerStageRate(t *testing.T) {
 		t.Fatalf("claim crawl: %v", err)
 	}
 	// One crawled document, at rate 0 → accrues nothing.
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"<html/>"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"<html/>"}, base); err != nil {
 		t.Fatalf("complete crawl: %v", err)
 	}
 	if _, err := h.svc.Claim(ctx, "w2", "ocr", base); err != nil {
 		t.Fatalf("claim ocr: %v", err)
 	}
 	// Three pages at rate 2 → 6.
-	if err := h.svc.Complete(ctx, "w2", j.ID, []string{"p1", "p2", "p3"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w2", j.ID, j.LeaseToken, []string{"p1", "p2", "p3"}, base); err != nil {
 		t.Fatalf("complete ocr: %v", err)
 	}
 
@@ -264,7 +264,7 @@ func TestHugeRateNeverCreditsTheCustomer(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	_ = h.svc.Complete(ctx, "w1", j.ID, []string{"a", "b", "c"}, base)
+	_ = h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"a", "b", "c"}, base)
 	_, _ = h.svc.Deliver(ctx, "u", j.ID, base)
 
 	u, _ := h.repo.UserByID(ctx, "u")

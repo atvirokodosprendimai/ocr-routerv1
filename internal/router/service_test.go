@@ -195,7 +195,7 @@ func TestUploadBufferLimitFreesOnDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", claimed.ID, []string{"page"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", claimed.ID, claimed.LeaseToken, []string{"page"}, base); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	// Still in flight: a done-but-uncollected job holds its slot.
@@ -348,7 +348,7 @@ func TestCompleteRequiresLease(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w2", j.ID, []string{"stolen"}, base); !errors.Is(err, core.ErrConflict) {
+	if err := h.svc.Complete(ctx, "w2", j.ID, j.LeaseToken, []string{"stolen"}, base); !errors.Is(err, core.ErrConflict) {
 		t.Errorf("a worker without the lease completing = %v, want core.ErrConflict", err)
 	}
 	if _, ok := h.results.Peek(j.ID); ok {
@@ -369,7 +369,7 @@ func TestCompleteRejectsExpiredLease(t *testing.T) {
 	// Past the lease: the reaper may already have requeued this job and another
 	// worker may be running it, so a late result must not be accepted.
 	late := base.Add(10 * time.Minute)
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"late"}, late); !errors.Is(err, core.ErrConflict) {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"late"}, late); !errors.Is(err, core.ErrConflict) {
 		t.Errorf("completing past the lease = %v, want core.ErrConflict", err)
 	}
 }
@@ -384,7 +384,7 @@ func TestDeliverChargesOncePerUnit(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"1", "2", "3", "4", "5", "6", "7"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"1", "2", "3", "4", "5", "6", "7"}, base); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -565,7 +565,7 @@ func TestFailRequeuesUntilMaxAttempts(t *testing.T) {
 		if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 			t.Fatalf("claim %d: %v", i, err)
 		}
-		if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, base); err != nil {
+		if err := h.svc.Fail(ctx, "w1", j.ID, j.LeaseToken, "boom", nil, base); err != nil {
 			t.Fatalf("fail %d: %v", i, err)
 		}
 		got, _ := h.repo.JobByID(ctx, j.ID)
@@ -576,7 +576,7 @@ func TestFailRequeuesUntilMaxAttempts(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("claim 3: %v", err)
 	}
-	if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, base); err != nil {
+	if err := h.svc.Fail(ctx, "w1", j.ID, j.LeaseToken, "boom", nil, base); err != nil {
 		t.Fatalf("fail 3: %v", err)
 	}
 	got, _ := h.repo.JobByID(ctx, j.ID)
@@ -608,7 +608,7 @@ func TestFailPreservesQueuedAt(t *testing.T) {
 	// Failing PAST the lease is correctly refused (TestCompleteRejectsExpiredLease),
 	// so this must stay within it.
 	later := base.Add(time.Minute)
-	if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, later); err != nil {
+	if err := h.svc.Fail(ctx, "w1", j.ID, j.LeaseToken, "boom", nil, later); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 	got, _ := h.repo.JobByID(ctx, j.ID)
@@ -677,10 +677,11 @@ func mustRun(t *testing.T, h *harness, jobID string, out []string) {
 	if err != nil {
 		t.Fatalf("JobByID: %v", err)
 	}
-	if _, err := h.svc.Claim(ctx, "w1", j.Label, base); err != nil {
+	c, err := h.svc.Claim(ctx, "w1", j.Label, base)
+	if err != nil {
 		t.Fatalf("Claim(%s): %v", j.Label, err)
 	}
-	if err := h.svc.Complete(ctx, "w1", jobID, out, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", jobID, c.LeaseToken, out, base); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 }

@@ -37,7 +37,7 @@ func TestFilesClientGetsResultAndIsCharged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := e.rt.Complete(ctx, "w-token", claimed.ID, []string{"p1", "p2"}, base); err != nil {
+	if err := e.rt.Complete(ctx, "w-token", claimed.ID, claimed.LeaseToken, []string{"p1", "p2"}, base); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -71,7 +71,7 @@ func TestFilesClientSecondFetchIs404(t *testing.T) {
 	j := seedJob(t, e, "ocr", "source")
 
 	claimed, _ := e.rt.Claim(ctx, "w-token", "ocr", base)
-	_ = e.rt.Complete(ctx, "w-token", claimed.ID, []string{"p1"}, base)
+	_ = e.rt.Complete(ctx, "w-token", claimed.ID, claimed.LeaseToken, []string{"p1"}, base)
 
 	if resp := e.do(t, "GET", "/files/"+j.ID, e.clientTok, nil, ""); resp.StatusCode != http.StatusOK {
 		t.Fatalf("first fetch = %d, want 200", resp.StatusCode)
@@ -107,7 +107,7 @@ func TestFilesRejectsOtherUsersJob(t *testing.T) {
 
 	j := seedJob(t, e, "ocr", "source")
 	claimed, _ := e.rt.Claim(ctx, "w-token", "ocr", base)
-	_ = e.rt.Complete(ctx, "w-token", claimed.ID, []string{"p1"}, base)
+	_ = e.rt.Complete(ctx, "w-token", claimed.ID, claimed.LeaseToken, []string{"p1"}, base)
 
 	resp := e.do(t, "GET", "/files/"+j.ID, otherTok, nil, "")
 	if resp.StatusCode != http.StatusNotFound {

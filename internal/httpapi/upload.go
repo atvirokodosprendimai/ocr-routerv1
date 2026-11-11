@@ -203,7 +203,7 @@ func (a *API) resultFromWorker(w http.ResponseWriter, r *http.Request) {
 		// The id rides the query because the body IS the payload and has no room
 		// for an envelope. Streamed under the same cap as a client upload.
 		r.Body = http.MaxBytesReader(w, r.Body, a.deps.MaxUpload)
-		if err := a.deps.Router.CompleteRaw(r.Context(), p.TokenID, jobID, r.Body, a.deps.Now()); err != nil {
+		if err := a.deps.Router.CompleteRaw(r.Context(), p.TokenID, jobID, "", r.Body, a.deps.Now()); err != nil {
 			var tooBig *http.MaxBytesError
 			if errors.As(err, &tooBig) {
 				err = fmt.Errorf("%w: result exceeds the %d byte limit", core.ErrInvalidParam, tooBig.Limit)
@@ -229,9 +229,9 @@ func (a *API) resultFromWorker(w http.ResponseWriter, r *http.Request) {
 	// naming its own id could complete a job leased to a different one.
 	var err error
 	if body.Error != "" {
-		err = a.deps.Router.Fail(r.Context(), p.TokenID, body.JobID, body.Error, body.ExitCode, a.deps.Now())
+		err = a.deps.Router.Fail(r.Context(), p.TokenID, body.JobID, "", body.Error, body.ExitCode, a.deps.Now())
 	} else {
-		err = a.deps.Router.Complete(r.Context(), p.TokenID, body.JobID, body.Units, a.deps.Now())
+		err = a.deps.Router.Complete(r.Context(), p.TokenID, body.JobID, "", body.Units, a.deps.Now())
 	}
 	if err != nil {
 		writeError(w, err)

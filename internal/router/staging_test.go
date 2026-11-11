@@ -74,7 +74,7 @@ func TestFailedAdvanceKeepsTheInput(t *testing.T) {
 	}
 	failWritesWhere(t, h, "NEW.stage > OLD.stage")
 
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"stage a output"}, base); err == nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"stage a output"}, base); err == nil {
 		t.Fatal("Complete succeeded although the advance was refused")
 	}
 	if got := readInput(t, h, j.ID); got != "original" {
@@ -100,7 +100,7 @@ func TestFailedRawAdvanceKeepsTheInput(t *testing.T) {
 	}
 	failWritesWhere(t, h, "NEW.stage > OLD.stage")
 
-	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader("converted"), base); err == nil {
+	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, j.LeaseToken, strings.NewReader("converted"), base); err == nil {
 		t.Fatal("CompleteRaw succeeded although the advance was refused")
 	}
 	if got := readInput(t, h, j.ID); got != "original" {
@@ -123,7 +123,7 @@ func TestLosingCompleteKeepsTheWinnersResult(t *testing.T) {
 	h.results.Put(j.ID, []string{"winner"}) // what the other worker stored
 	failWritesWhere(t, h, "NEW.state = 'done'")
 
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"loser"}, base); err == nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"loser"}, base); err == nil {
 		t.Fatal("Complete succeeded although the completion was refused")
 	}
 	res, ok := h.results.Peek(j.ID)
@@ -151,7 +151,7 @@ func TestLosingRawCompleteKeepsTheWinnersFile(t *testing.T) {
 	}
 	failWritesWhere(t, h, "NEW.state = 'done'")
 
-	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader("loser"), base); err == nil {
+	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, j.LeaseToken, strings.NewReader("loser"), base); err == nil {
 		t.Fatal("CompleteRaw succeeded although the completion was refused")
 	}
 	b, err := os.ReadFile(filepath.Join(h.blobs.Dir(), j.ID[:2], j.ID+".out"))
@@ -183,7 +183,7 @@ func TestStaleHolderNeverSwapsTheInput(t *testing.T) {
 	}
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- h.svc.CompleteRaw(ctx, "w1", j.ID, pr, base) }()
+	go func() { done <- h.svc.CompleteRaw(ctx, "w1", j.ID, j.LeaseToken, pr, base) }()
 	defer pw.Close()
 	if _, err := pw.Write([]byte("A-")); err != nil { // w1 is inside Stage, past its lease check
 		t.Fatal(err)

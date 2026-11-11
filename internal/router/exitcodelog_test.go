@@ -30,7 +30,7 @@ func TestFailureLogCarriesTheExitCode(t *testing.T) {
 		t.Fatalf("Claim: %v", err)
 	}
 	code := 3
-	if err := h.svc.Fail(ctx, "w1", j.ID, "exit status 3: boom", &code, base); err != nil {
+	if err := h.svc.Fail(ctx, "w1", j.ID, j.LeaseToken, "exit status 3: boom", &code, base); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 

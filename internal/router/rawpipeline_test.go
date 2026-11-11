@@ -42,7 +42,7 @@ func TestRawStageBridgesWithoutJoinUnits(t *testing.T) {
 	// Bytes with an embedded NEWLINE and a non-UTF-8 lead: joinUnits would mangle
 	// the first, and JSON the second.
 	const stage1 = "\x89PNG\nsecond line\n\x1a"
-	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader(stage1), base); err != nil {
+	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, j.LeaseToken, strings.NewReader(stage1), base); err != nil {
 		t.Fatalf("CompleteRaw: %v", err)
 	}
 
@@ -99,7 +99,7 @@ func TestRawStageModeMismatchFailsTheJob(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "convert", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader("\x89PNG"), base); err != nil {
+	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, j.LeaseToken, strings.NewReader("\x89PNG"), base); err != nil {
 		t.Fatalf("CompleteRaw: %v", err)
 	}
 
@@ -137,7 +137,7 @@ func TestRawStageModeMismatchIsNotRetried(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "convert", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	_ = h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader("\x89PNG"), base)
+	_ = h.svc.CompleteRaw(ctx, "w1", j.ID, j.LeaseToken, strings.NewReader("\x89PNG"), base)
 
 	got, _ := h.repo.JobByID(ctx, j.ID)
 	if got.State != core.JobDead {
@@ -167,7 +167,7 @@ func TestUnitsStageIntoRawStageFailsTheJob(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	_ = h.svc.Complete(ctx, "w1", j.ID, []string{"text"}, base)
+	_ = h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"text"}, base)
 
 	got, _ := h.repo.JobByID(ctx, j.ID)
 	if got.State != core.JobDead || !strings.Contains(got.LastError, "convert") {

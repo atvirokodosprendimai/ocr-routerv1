@@ -119,7 +119,7 @@ func TestFailureStillSpendsAnAttempt(t *testing.T) {
 		t.Fatalf("Claim: %v", err)
 	}
 	code := 9
-	if err := h.svc.Fail(ctx, "w1", j.ID, "exit status 9: nope", &code, base); err != nil {
+	if err := h.svc.Fail(ctx, "w1", j.ID, j.LeaseToken, "exit status 9: nope", &code, base); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 

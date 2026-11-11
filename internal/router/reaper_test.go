@@ -201,7 +201,7 @@ func TestRecoverOnBootRequeues(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w2", "ocr", base); err != nil {
 		t.Fatalf("claim 2: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w2", done.ID, []string{"a"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w2", done.ID, done.LeaseToken, []string{"a"}, base); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 
@@ -279,10 +279,11 @@ func drain(ch <-chan bus.Event) {
 func rerunAndDeliver(t *testing.T, h *harness, jobID string, out []string, at time.Time) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := h.svc.Claim(ctx, "w2", "ocr", at); err != nil {
+	c, err := h.svc.Claim(ctx, "w2", "ocr", at)
+	if err != nil {
 		t.Fatalf("second Claim: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w2", jobID, out, at); err != nil {
+	if err := h.svc.Complete(ctx, "w2", jobID, c.LeaseToken, out, at); err != nil {
 		t.Fatalf("second Complete: %v", err)
 	}
 	if _, err := h.svc.Deliver(ctx, "u", jobID, at); err != nil {
@@ -396,7 +397,7 @@ func TestSweptPipelineKeepsItsEarlierStages(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "crawl", base); err != nil {
 		t.Fatalf("claim crawl: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"<html/>"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"<html/>"}, base); err != nil {
 		t.Fatalf("complete crawl: %v", err)
 	}
 	mustRun(t, h, j.ID, []string{"a", "b", "c"}) // ocr: 3 x 2

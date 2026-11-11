@@ -265,7 +265,7 @@ func TestRateEditPersistsAndChangesTheCharge(t *testing.T) {
 	if _, err := e.rt.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := e.rt.Complete(ctx, "w1", j.ID, []string{"a", "b"}, base); err != nil {
+	if err := e.rt.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"a", "b"}, base); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	before, _ := e.repo.UserByID(ctx, e.clientID)

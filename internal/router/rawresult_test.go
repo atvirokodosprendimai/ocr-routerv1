@@ -54,7 +54,7 @@ func TestExpiredRawJobDropsItsResultBlob(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "convert", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader("\x89PNG"), base); err != nil {
+	if err := h.svc.CompleteRaw(ctx, "w1", j.ID, j.LeaseToken, strings.NewReader("\x89PNG"), base); err != nil {
 		t.Fatalf("CompleteRaw: %v", err)
 	}
 	if got := rawResultFiles(t, h.blobs.Dir()); got != 1 {
@@ -94,7 +94,7 @@ func TestDeadRawJobDropsItsResultBlob(t *testing.T) {
 			t.Fatalf("Claim %d: %v", i, err)
 		}
 		if i == 0 {
-			if err := h.svc.CompleteRaw(ctx, "w1", j.ID, strings.NewReader("\x89PNG"), base); err != nil {
+			if err := h.svc.CompleteRaw(ctx, "w1", j.ID, j.LeaseToken, strings.NewReader("\x89PNG"), base); err != nil {
 				t.Fatalf("CompleteRaw: %v", err)
 			}
 			// Put it back into the queue so the next claim can fail it.
@@ -103,7 +103,7 @@ func TestDeadRawJobDropsItsResultBlob(t *testing.T) {
 			}
 			continue
 		}
-		if err := h.svc.Fail(ctx, "w1", j.ID, "boom", nil, base); err != nil {
+		if err := h.svc.Fail(ctx, "w1", j.ID, j.LeaseToken, "boom", nil, base); err != nil {
 			t.Fatalf("Fail %d: %v", i, err)
 		}
 	}

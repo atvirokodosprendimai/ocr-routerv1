@@ -26,6 +26,9 @@ func (r *recordingLogger) Transition(e router.TransitionEvent) {
 	r.events = append(r.events, e)
 }
 
+// Warn is dropped: these tests assert transitions.
+func (*recordingLogger) Warn(string, ...any) {}
+
 func (r *recordingLogger) all() []router.TransitionEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -54,7 +57,7 @@ func TestTransitionIsLoggedForEveryStateChange(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"p1"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"p1"}, base); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	if _, err := h.svc.Deliver(ctx, "u", j.ID, base); err != nil {
@@ -178,7 +181,7 @@ func TestServiceWithNoLoggerStillWorks(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "ocr", base); err != nil {
 		t.Fatalf("Claim with no logger: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"p"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"p"}, base); err != nil {
 		t.Fatalf("Complete with no logger: %v", err)
 	}
 }
@@ -224,7 +227,7 @@ func TestTransitionLogNeverContainsAParamValue(t *testing.T) {
 	if _, err := h.svc.Claim(ctx, "w1", "crawl", base); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := h.svc.Complete(ctx, "w1", j.ID, []string{"page"}, base); err != nil {
+	if err := h.svc.Complete(ctx, "w1", j.ID, j.LeaseToken, []string{"page"}, base); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -284,6 +287,9 @@ func (a adapter) Transition(e router.TransitionEvent) {
 		Stage: e.Stage, Params: e.Params, Reason: e.Reason, InState: e.InState,
 	})
 }
+
+// Warn is dropped: the adapter under test renders transitions.
+func (adapter) Warn(string, ...any) {}
 
 // TestReclaimLogSaysReclaimed keeps the log honest about which thing happened.
 //

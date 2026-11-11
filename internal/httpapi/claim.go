@@ -84,7 +84,7 @@ func (a *API) handleRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, core.ErrInvalidParam)
 		return
 	}
-	if err := a.deps.Router.ReleaseLease(r.Context(), p.TokenID, jobID, a.deps.Now()); err != nil {
+	if err := a.deps.Router.ReleaseLease(r.Context(), p.TokenID, jobID, "", a.deps.Now()); err != nil {
 		writeError(w, err)
 		return
 	}

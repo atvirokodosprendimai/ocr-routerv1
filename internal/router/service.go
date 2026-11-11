@@ -278,16 +278,48 @@ func (s *Service) Claim(ctx context.Context, workerID, label string, now time.Ti
 	return job, nil
 }
 
-// holdsLease reports whether this worker may still act on this job.
+// checkLease reports whether this claim may still act on this job: nil, or a
+// core.ErrConflict (409) that says why, so a worker's log names the reason.
 //
 // A worker whose lease expired mid-run is refused: the reaper has already
 // requeued the job and another worker may be running it, so accepting a late
 // result could deliver one worker's output for a job another is still doing.
-func holdsLease(j core.Job, workerID string, now time.Time) bool {
+//
+// `lease` is the token the claim was given (ADR-0013). workerID alone is the
+// worker's TOKEN id, and one worker token can hold the same job twice — two
+// slots of one process after a reclaim — so the token is what tells the
+// current claim from a stale one. An EMPTY lease is a worker built before the
+// token: it is judged on workerID and the expiry alone, for one release (see
+// CheckLease).
+func checkLease(j core.Job, workerID, lease string, now time.Time) error {
 	if j.State != core.JobProcessing || j.WorkerID != workerID {
-		return false
+		return fmt.Errorf("%w: job %s is not held by this worker", core.ErrConflict, j.ID)
 	}
-	return j.LeaseExpiresAt.IsZero() || j.LeaseExpiresAt.After(now)
+	if lease != "" && lease != j.LeaseToken {
+		return fmt.Errorf("%w: lease %s is not the current claim on job %s: it was taken back and "+
+			"claimed again, so drop this result", core.ErrConflict, lease, j.ID)
+	}
+	if !j.LeaseExpiresAt.IsZero() && !j.LeaseExpiresAt.After(now) {
+		return fmt.Errorf("%w: the lease on job %s expired at %s", core.ErrConflict, j.ID,
+			j.LeaseExpiresAt.Format(time.RFC3339))
+	}
+	return nil
+}
+
+// CheckLease is checkLease for a worker request, and the one place the
+// token-less compatibility path is visible: a worker that sends no lease is
+// accepted (ADR-0013, one release only) and the operator is told which worker
+// token to upgrade. Exported for the worker's input download, which reads
+// the job itself.
+func (s *Service) CheckLease(j core.Job, workerID, lease string, now time.Time) error {
+	if err := checkLease(j, workerID, lease, now); err != nil {
+		return err
+	}
+	if lease == "" {
+		s.logger.Warn("worker sent no lease token; accepted for this release only (ADR-0013), upgrade the worker",
+			"worker", workerID, "job", j.ID)
+	}
+	return nil
 }
 
 // Complete accepts a worker's output for the stage it holds.
@@ -296,14 +328,15 @@ func holdsLease(j core.Job, workerID string, now time.Time) bool {
 // the job is requeued under the next label — WITHOUT notifying the client, since
 // a pipeline is one job from the client's point of view. Only the last stage
 // produces a result and a `ready`.
-func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []string, now time.Time) error {
+func (s *Service) Complete(ctx context.Context, workerID, jobID, lease string, out []string, now time.Time) error {
 	job, err := s.repo.JobByID(ctx, jobID)
 	if err != nil {
 		return err
 	}
-	if !holdsLease(job, workerID, now) {
-		return core.ErrConflict
+	if err := s.CheckLease(job, workerID, lease, now); err != nil {
+		return err
 	}
+
 	// The mirror of CompleteRaw's check, and it has to be here rather than at the
 	// HTTP boundary: the job's STAMPED mode decides the result's shape, so a
 	// worker posting a unit list for a raw job is refused whatever Content-Type
@@ -356,7 +389,7 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 		if err != nil {
 			return err
 		}
-		unlock, err := s.lockHolder(ctx, job.ID, workerID, now)
+		unlock, err := s.lockHolder(ctx, job.ID, workerID, job.LeaseToken, now)
 		if err != nil {
 			st.Abort()
 			return err
@@ -421,13 +454,13 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 // at delivery (DeliverRaw), and a raw stage ADDS 0 to the accrual, what an
 // empty unit list accrues. The SQL adds its argument, so passing the job's
 // running total here doubled it (F10, REPORT 2026-11-10).
-func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body io.Reader, now time.Time) error {
+func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID, lease string, body io.Reader, now time.Time) error {
 	job, err := s.repo.JobByID(ctx, jobID)
 	if err != nil {
 		return err
 	}
-	if !holdsLease(job, workerID, now) {
-		return core.ErrConflict
+	if err := s.CheckLease(job, workerID, lease, now); err != nil {
+		return err
 	}
 	if !job.Raw {
 		return fmt.Errorf("%w: job %s is a units job and its result must be a JSON unit list",
@@ -505,7 +538,7 @@ func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, worker
 
 	// Swapped before the advance and undone if it loses, as in Complete (F6),
 	// and only by a caller that still holds the job, checked under its lock.
-	unlock, err := s.lockHolder(ctx, job.ID, workerID, now)
+	unlock, err := s.lockHolder(ctx, job.ID, workerID, job.LeaseToken, now)
 	if err != nil {
 		st.Abort()
 		return err
@@ -629,13 +662,13 @@ func joinUnits(out []string) string {
 }
 
 // Fail records a worker's failure, retrying until the attempt budget is spent.
-func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, exitCode *int, now time.Time) error {
+func (s *Service) Fail(ctx context.Context, workerID, jobID, lease, reason string, exitCode *int, now time.Time) error {
 	job, err := s.repo.JobByID(ctx, jobID)
 	if err != nil {
 		return err
 	}
-	if !holdsLease(job, workerID, now) {
-		return core.ErrConflict
+	if err := s.CheckLease(job, workerID, lease, now); err != nil {
+		return err
 	}
 	return s.failJob(ctx, job, "worker", reason, exitCode, now)
 }
@@ -699,16 +732,16 @@ func (s *Service) killJob(ctx context.Context, job core.Job, actor, reason strin
 // said so itself, which is strictly better information than the reaper's
 // inference from silence.
 //
-// ⚠ holdsLease FIRST, and this is the THIRD place that guard appears — beside
+// ⚠ CheckLease FIRST, and this is the THIRD place that guard appears — beside
 // Complete and Fail. Without it any worker could requeue a job another one is
 // actively running, which is the same two-writer bug from the other end.
-func (s *Service) ReleaseLease(ctx context.Context, workerID, jobID string, now time.Time) error {
+func (s *Service) ReleaseLease(ctx context.Context, workerID, jobID, lease string, now time.Time) error {
 	job, err := s.repo.JobByID(ctx, jobID)
 	if err != nil {
 		return err
 	}
-	if !holdsLease(job, workerID, now) {
-		return core.ErrConflict
+	if err := s.CheckLease(job, workerID, lease, now); err != nil {
+		return err
 	}
 	// RequeueJob would spend an attempt and ReclaimJob a reclaim, so neither
 	// writer fits: this is the only requeue in the system that costs the job
@@ -1004,16 +1037,20 @@ func (s *Service) lockJob(jobID string) func() {
 // this worker, and the reaper cannot reclaim it while the lock is held. It
 // returns core.ErrConflict, with the lock released, when the caller no longer
 // holds the job.
-func (s *Service) lockHolder(ctx context.Context, jobID, workerID string, now time.Time) (func(), error) {
+//
+// `lease` is the token of the snapshot the caller already checked, never the
+// one the worker presented: a token-less worker is then still held to the
+// claim it was checked under (ADR-0013).
+func (s *Service) lockHolder(ctx context.Context, jobID, workerID, lease string, now time.Time) (func(), error) {
 	unlock := s.lockJob(jobID)
 	cur, err := s.repo.JobByID(ctx, jobID)
 	if err != nil {
 		unlock()
 		return nil, err
 	}
-	if !holdsLease(cur, workerID, now) {
+	if err := checkLease(cur, workerID, lease, now); err != nil {
 		unlock()
-		return nil, core.ErrConflict
+		return nil, err
 	}
 	return unlock, nil
 }
