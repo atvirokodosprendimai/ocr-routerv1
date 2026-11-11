@@ -265,7 +265,7 @@ func (s *Service) Upload(ctx context.Context, userID string, in UploadInput, now
 // cannot both believe they won.
 func (s *Service) Claim(ctx context.Context, workerID, label string, now time.Time) (core.Job, error) {
 	s.noteLabel(label, now)
-	job, err := s.repo.ClaimOneQueued(ctx, label, workerID, now, now.Add(s.cfg.Lease), s.cfg.AgingStep)
+	job, err := s.repo.ClaimOneQueued(ctx, label, workerID, core.NewID(), now, now.Add(s.cfg.Lease), s.cfg.AgingStep)
 	if err != nil {
 		return core.Job{}, err
 	}
@@ -366,7 +366,7 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 		if err != nil {
 			return err
 		}
-		if err := s.repo.AdvanceStage(ctx, job.ID, job.WorkerID, next, accrue, now); err != nil {
+		if err := s.repo.AdvanceStage(ctx, job.ID, job.WorkerID, job.LeaseToken, next, accrue, now); err != nil {
 			_ = swap.Undo()
 			return lostLease(err)
 		}
@@ -393,7 +393,7 @@ func (s *Service) Complete(ctx context.Context, workerID, jobID string, out []st
 	// Drop erased it, leaving a `done` job with nothing to deliver. Put after,
 	// a loser touches nothing; a delivery in the instant between gets a 404 and
 	// retries.
-	if err := s.repo.CompleteJob(ctx, job.ID, job.WorkerID, len(out), accrue, now); err != nil {
+	if err := s.repo.CompleteJob(ctx, job.ID, job.WorkerID, job.LeaseToken, len(out), accrue, now); err != nil {
 		return lostLease(err)
 	}
 	s.results.Put(job.ID, out)
@@ -453,7 +453,7 @@ func (s *Service) CompleteRaw(ctx context.Context, workerID, jobID string, body 
 	// Under the job's lock, so the reaper's result sweep cannot requeue and
 	// delete between the two (branch review).
 	defer s.lockJob(job.ID)()
-	if err := s.repo.CompleteJob(ctx, job.ID, job.WorkerID, 1, 0, now); err != nil {
+	if err := s.repo.CompleteJob(ctx, job.ID, job.WorkerID, job.LeaseToken, 1, 0, now); err != nil {
 		st.Abort()
 		return lostLease(err)
 	}
@@ -515,7 +515,7 @@ func (s *Service) bridgeRawStage(ctx context.Context, job core.Job, next, worker
 	if err != nil {
 		return err
 	}
-	if err := s.repo.AdvanceStage(ctx, job.ID, job.WorkerID, next, 0, now); err != nil {
+	if err := s.repo.AdvanceStage(ctx, job.ID, job.WorkerID, job.LeaseToken, next, 0, now); err != nil {
 		_ = swap.Undo()
 		return lostLease(err)
 	}
@@ -647,7 +647,7 @@ func (s *Service) Fail(ctx context.Context, workerID, jobID, reason string, exit
 // and mean entirely different things to whoever is debugging.
 func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason string, exitCode *int, now time.Time) error {
 	if job.Attempts+1 < s.cfg.MaxAttempts {
-		if err := s.repo.RequeueJob(ctx, job.ID, job.WorkerID, reason, exitCode, now); err != nil {
+		if err := s.repo.RequeueJob(ctx, job.ID, job.WorkerID, job.LeaseToken, reason, exitCode, now); err != nil {
 			return lostLease(err)
 		}
 		// The retry is the transition nothing else records: a job that succeeds
@@ -669,7 +669,7 @@ func (s *Service) failJob(ctx context.Context, job core.Job, actor, reason strin
 // other output mode, or a rate outside the cap, fails the same way on every
 // rerun, so retrying only burns worker time up to MaxAttempts.
 func (s *Service) killJob(ctx context.Context, job core.Job, actor, reason string, exitCode *int, now time.Time) error {
-	if err := s.repo.FailJobDead(ctx, job.ID, job.WorkerID, reason, exitCode, now); err != nil {
+	if err := s.repo.FailJobDead(ctx, job.ID, job.WorkerID, job.LeaseToken, reason, exitCode, now); err != nil {
 		return lostLease(err)
 	}
 	// Counted only once the row is dead: a write that lost a race is not a death.
@@ -714,7 +714,7 @@ func (s *Service) ReleaseLease(ctx context.Context, workerID, jobID string, now 
 	// writer fits: this is the only requeue in the system that costs the job
 	// nothing. The lease and worker_id still have to go, or the releasing
 	// worker's subprocess could land a late result on a job somebody else holds.
-	if err := s.repo.ReleaseJob(ctx, jobID, workerID, "released by its worker", now); err != nil {
+	if err := s.repo.ReleaseJob(ctx, jobID, workerID, job.LeaseToken, "released by its worker", now); err != nil {
 		return lostLease(err)
 	}
 	s.logFailureTransition(job, job.State, core.JobQueued, job.UpdatedAt,
@@ -755,7 +755,7 @@ func (s *Service) reclaimJob(ctx context.Context, job core.Job, reason string, n
 	// advance (or undo) before the job can change hands.
 	defer s.lockJob(job.ID)()
 	if job.Reclaims+1 < s.cfg.MaxReclaims {
-		if err := s.repo.ReclaimJob(ctx, job.ID, job.WorkerID, reason, now); err != nil {
+		if err := s.repo.ReclaimJob(ctx, job.ID, job.WorkerID, job.LeaseToken, reason, now); err != nil {
 			return err
 		}
 		s.logFailureTransition(job, job.State, core.JobQueued, job.UpdatedAt,
@@ -770,7 +770,7 @@ func (s *Service) reclaimJob(ctx context.Context, job core.Job, reason string, n
 	// operator who reads one and concludes the other goes looking for a broken
 	// command when the problem is a host that keeps losing workers.
 	dead := reason + ": abandoned too many times"
-	if err := s.repo.FailJobDead(ctx, job.ID, job.WorkerID, dead, nil, now); err != nil {
+	if err := s.repo.FailJobDead(ctx, job.ID, job.WorkerID, job.LeaseToken, dead, nil, now); err != nil {
 		return err
 	}
 	s.counter.Inc(metricJobsTotal, map[string]string{"state": string(core.JobDead)})

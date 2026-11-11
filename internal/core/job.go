@@ -67,7 +67,12 @@ type Job struct {
 	// stage's own rate. It is debited once, at delivery.
 	AccruedCredits int
 
-	WorkerID       string
+	WorkerID string
+	// LeaseToken names the CLAIM, where WorkerID names the worker token that
+	// made it (ADR-0013). One worker token can hold the same job twice — two
+	// slots of one process after a reclaim — and only the current claim may
+	// finish it. Empty whenever the job is not `processing`.
+	LeaseToken     string
 	LeaseExpiresAt time.Time
 	LastError      string
 

@@ -68,7 +68,7 @@ func TestClaimSkipsADeactivatedCustomer(t *testing.T) {
 	if err := r.UpdateUser(ctx, u); err != nil {
 		t.Fatalf("UpdateUser: %v", err)
 	}
-	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep); !errors.Is(err, core.ErrNotFound) {
+	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", "lease-w1", base, base.Add(time.Minute), agingStep); !errors.Is(err, core.ErrNotFound) {
 		t.Errorf("ClaimOneQueued for a deactivated owner = %v, want core.ErrNotFound", err)
 	}
 	// Reactivated, the job is claimable again: it was skipped, not dropped.
@@ -76,7 +76,7 @@ func TestClaimSkipsADeactivatedCustomer(t *testing.T) {
 	if err := r.UpdateUser(ctx, u); err != nil {
 		t.Fatalf("UpdateUser: %v", err)
 	}
-	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep); err != nil {
+	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", "lease-w1", base, base.Add(time.Minute), agingStep); err != nil {
 		t.Errorf("ClaimOneQueued after reactivation = %v, want the job", err)
 	}
 }
@@ -111,7 +111,7 @@ func TestClaimPrefersHigherPriority(t *testing.T) {
 	mkJob(t, r, "j-bulk", "bulk", "ocr", base, time.Time{})
 	mkJob(t, r, "j-vip", "vip", "ocr", base, time.Time{})
 
-	got, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep)
+	got, err := r.ClaimOneQueued(ctx, "ocr", "w1", "lease-w1", base, base.Add(time.Minute), agingStep)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestClaimAgingOvertakesPriority(t *testing.T) {
 	mkJob(t, r, "j-bulk-old", "bulk", "ocr", base.Add(-200*time.Minute), time.Time{})
 	mkJob(t, r, "j-vip-new", "vip", "ocr", base, time.Time{})
 
-	got, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep)
+	got, err := r.ClaimOneQueued(ctx, "ocr", "w1", "lease-w1", base, base.Add(time.Minute), agingStep)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestClaimAgingDoesNotOvertakeTooSoon(t *testing.T) {
 	mkJob(t, r, "j-bulk", "bulk", "ocr", base.Add(-10*time.Minute), time.Time{})
 	mkJob(t, r, "j-vip", "vip", "ocr", base, time.Time{})
 
-	got, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep)
+	got, err := r.ClaimOneQueued(ctx, "ocr", "w1", "lease-w1", base, base.Add(time.Minute), agingStep)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestClaimIsFifoWithinATier(t *testing.T) {
 	mkJob(t, r, first, "u", "ocr", base, time.Time{})
 	mkJob(t, r, second, "u", "ocr", base, time.Time{})
 
-	got, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep)
+	got, err := r.ClaimOneQueued(ctx, "ocr", "w1", "lease-w1", base, base.Add(time.Minute), agingStep)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestClaimFiltersByLabel(t *testing.T) {
 	mkJob(t, r, "j-ocr", "vip", "ocr", base.Add(-500*time.Minute), time.Time{})
 	mkJob(t, r, "j-strip", "bulk", "strip-html", base, time.Time{})
 
-	got, err := r.ClaimOneQueued(ctx, "strip-html", "w1", base, base.Add(time.Minute), agingStep)
+	got, err := r.ClaimOneQueued(ctx, "strip-html", "w1", "lease-w1", base, base.Add(time.Minute), agingStep)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestClaimLabelEmptyQueue(t *testing.T) {
 	mkUser(t, r, "u", 0, 10)
 	mkJob(t, r, "j-ocr", "u", "ocr", base, time.Time{})
 
-	_, err := r.ClaimOneQueued(ctx, "strip-html", "w1", base, base.Add(time.Minute), agingStep)
+	_, err := r.ClaimOneQueued(ctx, "strip-html", "w1", "lease-w1", base, base.Add(time.Minute), agingStep)
 	if err != core.ErrNotFound {
 		t.Errorf("claim on a label with no work = %v, want core.ErrNotFound — it must not "+
 			"fall through to another label's queue", err)
@@ -239,7 +239,7 @@ func TestClaimSkipsExpired(t *testing.T) {
 	mkJob(t, r, "j-expired", "vip", "ocr", base.Add(-999*time.Minute), base.Add(-time.Second))
 	mkJob(t, r, "j-live", "u", "ocr", base, time.Time{})
 
-	got, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep)
+	got, err := r.ClaimOneQueued(ctx, "ocr", "w1", "lease-w1", base, base.Add(time.Minute), agingStep)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestClaimOneQueuedIsAtomic(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			j, err := r.ClaimOneQueued(ctx, "ocr", "w", base, base.Add(time.Minute), agingStep)
+			j, err := r.ClaimOneQueued(ctx, "ocr", "w", "lease-w", base, base.Add(time.Minute), agingStep)
 			if err == nil {
 				mu.Lock()
 				winners = append(winners, j.ID)
@@ -282,7 +282,7 @@ func TestClaimOneQueuedIsAtomic(t *testing.T) {
 
 func TestClaimOneQueuedEmpty(t *testing.T) {
 	r := newRepo(t)
-	_, err := r.ClaimOneQueued(context.Background(), "ocr", "w1", base, base.Add(time.Minute), agingStep)
+	_, err := r.ClaimOneQueued(context.Background(), "ocr", "w1", "lease-w1", base, base.Add(time.Minute), agingStep)
 	if err != core.ErrNotFound {
 		t.Errorf("claim on an empty queue = %v, want core.ErrNotFound (not a zero-value job)", err)
 	}
@@ -303,10 +303,10 @@ func TestAdvanceStagePreservesQueuedAt(t *testing.T) {
 	if err := r.CreateJob(ctx, j); err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
-	if _, err := r.ClaimOneQueued(ctx, "crawl", "w1", base, base.Add(time.Minute), agingStep); err != nil {
+	if _, err := r.ClaimOneQueued(ctx, "crawl", "w1", "lease-w1", base, base.Add(time.Minute), agingStep); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if err := r.AdvanceStage(ctx, "p1", "w1", "strip-html", 3, base); err != nil {
+	if err := r.AdvanceStage(ctx, "p1", "w1", "lease-w1", "strip-html", 3, base); err != nil {
 		t.Fatalf("AdvanceStage: %v", err)
 	}
 
@@ -342,10 +342,10 @@ func TestRequeuePreservesQueuedAt(t *testing.T) {
 	queued := base.Add(-45 * time.Minute)
 	mkJob(t, r, "j1", "u", "ocr", queued, time.Time{})
 
-	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Minute), agingStep); err != nil {
+	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", "lease-w1", base, base.Add(time.Minute), agingStep); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if err := r.RequeueJob(ctx, "j1", "w1", "boom", nil, base); err != nil {
+	if err := r.RequeueJob(ctx, "j1", "w1", "lease-w1", "boom", nil, base); err != nil {
 		t.Fatalf("RequeueJob: %v", err)
 	}
 	got, _ := r.JobByID(ctx, "j1")
@@ -373,7 +373,7 @@ func TestExpireOverdueLeavesProcessing(t *testing.T) {
 	mkJob(t, r, "j-queued", "u", "ocr", base.Add(-time.Hour), deadline)
 	mkJob(t, r, "j-running", "u", "other", base.Add(-time.Hour), deadline)
 
-	if _, err := r.ClaimOneQueued(ctx, "other", "w1", base, sweepAt.Add(time.Hour), agingStep); err != nil {
+	if _, err := r.ClaimOneQueued(ctx, "other", "w1", "lease-w1", base, sweepAt.Add(time.Hour), agingStep); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 
@@ -399,10 +399,10 @@ func TestDeliverJobChargesOnceAndIsAtomic(t *testing.T) {
 	mkUser(t, r, "u", 0, 100)
 	mkJob(t, r, "j1", "u", "ocr", base, time.Time{})
 
-	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Hour), agingStep); err != nil {
+	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", "lease-w1", base, base.Add(time.Hour), agingStep); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if err := r.CompleteJob(ctx, "j1", "w1", 7, 7, base); err != nil {
+	if err := r.CompleteJob(ctx, "j1", "w1", "lease-w1", 7, 7, base); err != nil {
 		t.Fatalf("CompleteJob: %v", err)
 	}
 
@@ -437,10 +437,10 @@ func TestDeliverJobMayOverdraw(t *testing.T) {
 	ctx := context.Background()
 	mkUser(t, r, "u", 0, 2) // only 2 credits
 	mkJob(t, r, "j1", "u", "ocr", base, time.Time{})
-	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", base, base.Add(time.Hour), agingStep); err != nil {
+	if _, err := r.ClaimOneQueued(ctx, "ocr", "w1", "lease-w1", base, base.Add(time.Hour), agingStep); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if err := r.CompleteJob(ctx, "j1", "w1", 9, 9, base); err != nil {
+	if err := r.CompleteJob(ctx, "j1", "w1", "lease-w1", 9, 9, base); err != nil {
 		t.Fatalf("CompleteJob: %v", err)
 	}
 	if err := r.DeliverJob(ctx, "j1", "u", 9, base); err != nil {
@@ -502,13 +502,13 @@ func TestCountInFlightCountsTheRightStates(t *testing.T) {
 	mkJob(t, r, "a", "u", "ocr", base, time.Time{})   // queued
 	mkJob(t, r, "b", "u", "other", base, time.Time{}) // -> processing
 	mkJob(t, r, "c", "u", "third", base, time.Time{}) // -> done
-	if _, err := r.ClaimOneQueued(ctx, "other", "w", base, base.Add(time.Hour), agingStep); err != nil {
+	if _, err := r.ClaimOneQueued(ctx, "other", "w", "lease-w", base, base.Add(time.Hour), agingStep); err != nil {
 		t.Fatalf("claim b: %v", err)
 	}
-	if _, err := r.ClaimOneQueued(ctx, "third", "w", base, base.Add(time.Hour), agingStep); err != nil {
+	if _, err := r.ClaimOneQueued(ctx, "third", "w", "lease-w", base, base.Add(time.Hour), agingStep); err != nil {
 		t.Fatalf("claim c: %v", err)
 	}
-	if err := r.CompleteJob(ctx, "c", "w", 1, 1, base); err != nil {
+	if err := r.CompleteJob(ctx, "c", "w", "lease-w", 1, 1, base); err != nil {
 		t.Fatalf("complete c: %v", err)
 	}
 
@@ -536,13 +536,13 @@ func TestResetInFlightOnBoot(t *testing.T) {
 	mkUser(t, r, "u", 0, 100)
 	mkJob(t, r, "a", "u", "ocr", base, time.Time{})
 	mkJob(t, r, "b", "u", "other", base, time.Time{})
-	if _, err := r.ClaimOneQueued(ctx, "ocr", "w", base, base.Add(time.Hour), agingStep); err != nil {
+	if _, err := r.ClaimOneQueued(ctx, "ocr", "w", "lease-w", base, base.Add(time.Hour), agingStep); err != nil {
 		t.Fatalf("claim a: %v", err)
 	}
-	if _, err := r.ClaimOneQueued(ctx, "other", "w", base, base.Add(time.Hour), agingStep); err != nil {
+	if _, err := r.ClaimOneQueued(ctx, "other", "w", "lease-w", base, base.Add(time.Hour), agingStep); err != nil {
 		t.Fatalf("claim b: %v", err)
 	}
-	if err := r.CompleteJob(ctx, "b", "w", 2, 2, base); err != nil {
+	if err := r.CompleteJob(ctx, "b", "w", "lease-w", 2, 2, base); err != nil {
 		t.Fatalf("complete b: %v", err)
 	}
 

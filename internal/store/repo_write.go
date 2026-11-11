@@ -177,9 +177,13 @@ func (r *Repo) insertJob(ctx context.Context, j core.Job, where string, whereArg
 // stops every token at once (ADR-0004), so their results could not be
 // collected, and running them only holds workers. They stay queued, and run
 // if the customer is reactivated before their deadline.
+//
+// `lease` is the claim's own token (ADR-0013), minted by the caller and
+// stored with the lease. worker_id says WHO holds the job; the token says WHICH
+// claim, because one worker token can claim the same job twice after a reclaim.
 func (r *Repo) ClaimOneQueued(
 	ctx context.Context,
-	label, workerID string,
+	label, workerID, lease string,
 	now, leaseUntil time.Time,
 	agingStep time.Duration,
 ) (core.Job, error) {
@@ -192,7 +196,7 @@ func (r *Repo) ClaimOneQueued(
 
 	var id string
 	err := r.write.QueryRowContext(ctx,
-		`UPDATE jobs SET state = 'processing', worker_id = ?, lease_expires_at = ?, updated_at = ?
+		`UPDATE jobs SET state = 'processing', worker_id = ?, lease_token = ?, lease_expires_at = ?, updated_at = ?
 		 WHERE id = (
 		     SELECT j.id FROM jobs j JOIN users u ON u.id = j.user_id
 		     WHERE j.state = 'queued' AND u.active = 1
@@ -202,7 +206,7 @@ func (r *Repo) ClaimOneQueued(
 		     LIMIT 1
 		 )
 		 RETURNING id`,
-		workerID, leaseUntil.Unix(), now.Unix(),
+		workerID, lease, leaseUntil.Unix(), now.Unix(),
 		label, now.Unix(),
 		now.Unix(), step,
 	).Scan(&id)
@@ -225,15 +229,17 @@ func (r *Repo) ClaimOneQueued(
 // workerID with a lease that has not lapsed at now. The router's lease check is
 // a read, and between it and this write the reaper can take the job back and
 // another worker claim it; a state-only guard then accepted the old worker's
-// output on the new worker's row.
-func (r *Repo) CompleteJob(ctx context.Context, jobID, workerID string, units, accrue int, now time.Time) error {
+// output on the new worker's row. And on the claim's lease token (ADR-0013):
+// the same worker token may have claimed the job again since, and that newer
+// claim's row is not the older claim's to finish.
+func (r *Repo) CompleteJob(ctx context.Context, jobID, workerID, lease string, units, accrue int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
 		`UPDATE jobs SET state = 'done', units = ?, accrued_credits = accrued_credits + ?,
 		        last_stage_accrued = ?,
-		        worker_id = '', lease_expires_at = NULL, updated_at = ?
-		 WHERE id = ? AND state = 'processing' AND worker_id = ?
+		        worker_id = '', lease_token = '', lease_expires_at = NULL, updated_at = ?
+		 WHERE id = ? AND state = 'processing' AND worker_id = ? AND lease_token = ?
 		   AND (lease_expires_at IS NULL OR lease_expires_at > ?)`,
-		units, accrue, accrue, now.Unix(), jobID, workerID, now.Unix())
+		units, accrue, accrue, now.Unix(), jobID, workerID, lease, now.Unix())
 	return affectedOne(res, err)
 }
 
@@ -244,15 +250,16 @@ func (r *Repo) CompleteJob(ctx context.Context, jobID, workerID string, units, a
 // resetting it would send every stage to the back of the aged queue and starve
 // long pipelines under load.
 //
-// Guarded on the holder and its lease, as CompleteJob is (F5).
-func (r *Repo) AdvanceStage(ctx context.Context, jobID, workerID, nextLabel string, accrue int, now time.Time) error {
+// Guarded on the holder, its lease token and its lease, as CompleteJob is (F5,
+// ADR-0013).
+func (r *Repo) AdvanceStage(ctx context.Context, jobID, workerID, lease, nextLabel string, accrue int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
 		`UPDATE jobs SET state = 'queued', label = ?, stage = stage + 1,
-		        accrued_credits = accrued_credits + ?, worker_id = '',
+		        accrued_credits = accrued_credits + ?, worker_id = '', lease_token = '',
 		        lease_expires_at = NULL, updated_at = ?
-		 WHERE id = ? AND state = 'processing' AND worker_id = ?
+		 WHERE id = ? AND state = 'processing' AND worker_id = ? AND lease_token = ?
 		   AND (lease_expires_at IS NULL OR lease_expires_at > ?)`,
-		nextLabel, accrue, now.Unix(), jobID, workerID, now.Unix())
+		nextLabel, accrue, now.Unix(), jobID, workerID, lease, now.Unix())
 	return affectedOne(res, err)
 }
 
@@ -279,13 +286,15 @@ func (r *Repo) MarkHasBlob(ctx context.Context, jobID string) error {
 // not be moved back to `queued` — the next delivery would charge it again.
 // They are guarded on worker_id = workerID as well (F5): the job may have been
 // reclaimed and claimed by another worker since that read, and the new
-// holder's row is not this caller's to move.
-func (r *Repo) RequeueJob(ctx context.Context, jobID, workerID, lastErr string, exitCode *int, now time.Time) error {
+// holder's row is not this caller's to move. And on lease_token = lease
+// (ADR-0013): the SAME worker token may have claimed it again, and the newer
+// claim's row is not the older claim's to move either.
+func (r *Repo) RequeueJob(ctx context.Context, jobID, workerID, lease, lastErr string, exitCode *int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
-		`UPDATE jobs SET state = 'queued', attempts = attempts + 1, worker_id = '',
+		`UPDATE jobs SET state = 'queued', attempts = attempts + 1, worker_id = '', lease_token = '',
 		        lease_expires_at = NULL, last_error = ?, exit_code = ?, updated_at = ?
-		 WHERE id = ? AND state = 'processing' AND worker_id = ?`,
-		lastErr, nullableInt(exitCode), now.Unix(), jobID, workerID)
+		 WHERE id = ? AND state = 'processing' AND worker_id = ? AND lease_token = ?`,
+		lastErr, nullableInt(exitCode), now.Unix(), jobID, workerID, lease)
 	return affectedOne(res, err)
 }
 
@@ -321,12 +330,12 @@ func (r *Repo) RequeueDone(ctx context.Context, jobID, lastErr string, now time.
 //
 // It records no exit code. A lease taken back is not a command that exited —
 // that distinction is ADR-0007's, and inventing a 0 here would undo it.
-func (r *Repo) ReclaimJob(ctx context.Context, jobID, workerID, reason string, now time.Time) error {
+func (r *Repo) ReclaimJob(ctx context.Context, jobID, workerID, lease, reason string, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
-		`UPDATE jobs SET state = 'queued', reclaims = reclaims + 1, worker_id = '',
+		`UPDATE jobs SET state = 'queued', reclaims = reclaims + 1, worker_id = '', lease_token = '',
 		        lease_expires_at = NULL, last_error = ?, updated_at = ?
-		 WHERE id = ? AND state = 'processing' AND worker_id = ?`,
-		reason, now.Unix(), jobID, workerID)
+		 WHERE id = ? AND state = 'processing' AND worker_id = ? AND lease_token = ?`,
+		reason, now.Unix(), jobID, workerID, lease)
 	return affectedOne(res, err)
 }
 
@@ -339,22 +348,22 @@ func (r *Repo) ReclaimJob(ctx context.Context, jobID, workerID, reason string, n
 // because the worker said, while still holding the lease, that it was stopping.
 //
 // The lease and worker_id are cleared for the same reason as the other two.
-func (r *Repo) ReleaseJob(ctx context.Context, jobID, workerID, reason string, now time.Time) error {
+func (r *Repo) ReleaseJob(ctx context.Context, jobID, workerID, lease, reason string, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
-		`UPDATE jobs SET state = 'queued', worker_id = '',
+		`UPDATE jobs SET state = 'queued', worker_id = '', lease_token = '',
 		        lease_expires_at = NULL, last_error = ?, updated_at = ?
-		 WHERE id = ? AND state = 'processing' AND worker_id = ?`,
-		reason, now.Unix(), jobID, workerID)
+		 WHERE id = ? AND state = 'processing' AND worker_id = ? AND lease_token = ?`,
+		reason, now.Unix(), jobID, workerID, lease)
 	return affectedOne(res, err)
 }
 
 // FailJobDead marks a job beyond retry. It is never charged.
-func (r *Repo) FailJobDead(ctx context.Context, jobID, workerID, lastErr string, exitCode *int, now time.Time) error {
+func (r *Repo) FailJobDead(ctx context.Context, jobID, workerID, lease, lastErr string, exitCode *int, now time.Time) error {
 	res, err := r.write.ExecContext(ctx,
-		`UPDATE jobs SET state = 'dead', attempts = attempts + 1, worker_id = '',
+		`UPDATE jobs SET state = 'dead', attempts = attempts + 1, worker_id = '', lease_token = '',
 		        lease_expires_at = NULL, last_error = ?, exit_code = ?, updated_at = ?
-		 WHERE id = ? AND state = 'processing' AND worker_id = ?`,
-		lastErr, nullableInt(exitCode), now.Unix(), jobID, workerID)
+		 WHERE id = ? AND state = 'processing' AND worker_id = ? AND lease_token = ?`,
+		lastErr, nullableInt(exitCode), now.Unix(), jobID, workerID, lease)
 	return affectedOne(res, err)
 }
 
@@ -451,7 +460,7 @@ func (r *Repo) LeaseExpired(ctx context.Context, now time.Time) ([]core.Job, err
 // is 0. So a restart costs repeated work — never a double charge.
 func (r *Repo) ResetInFlightOnBoot(ctx context.Context, now time.Time) (int, error) {
 	res, err := r.write.ExecContext(ctx,
-		`UPDATE jobs SET state = 'queued', worker_id = '', lease_expires_at = NULL, updated_at = ?,
+		`UPDATE jobs SET state = 'queued', worker_id = '', lease_token = '', lease_expires_at = NULL, updated_at = ?,
 		        accrued_credits = accrued_credits - last_stage_accrued, last_stage_accrued = 0
 		 WHERE state IN ('processing','done')`, now.Unix())
 	if err != nil {

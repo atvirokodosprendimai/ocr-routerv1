@@ -205,7 +205,7 @@ func (r *Repo) ListTokens(ctx context.Context, userID string) ([]core.Token, err
 }
 
 const jobColumns = `id, user_id, filename, size_byte, label, pipeline, stage, params,
-	has_blob, raw, state, attempts, reclaims, units, accrued_credits, worker_id, lease_expires_at,
+	has_blob, raw, state, attempts, reclaims, units, accrued_credits, worker_id, lease_token, lease_expires_at,
 	exit_code,
 	last_error, queued_at, expires_at, created_at, updated_at`
 
@@ -225,7 +225,7 @@ func scanJob(row interface{ Scan(...any) error }) (core.Job, error) {
 	)
 	err := row.Scan(&j.ID, &j.UserID, &j.Filename, &j.SizeByte, &j.Label, &pipeline,
 		&j.Stage, &params, &hasBlob, &raw, &j.State, &j.Attempts, &j.Reclaims, &j.Units, &j.AccruedCredits,
-		&j.WorkerID, &lease, &exitCode,
+		&j.WorkerID, &j.LeaseToken, &lease, &exitCode,
 		&j.LastError, &queued, &expires, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return core.Job{}, core.ErrNotFound
