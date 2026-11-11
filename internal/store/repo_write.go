@@ -194,8 +194,12 @@ func (r *Repo) ClaimOneQueued(
 		step = 1
 	}
 
-	var id string
-	err := r.write.QueryRowContext(ctx,
+	// The row comes back from the UPDATE itself (RETURNING the job's columns),
+	// not from a second read: a read after the statement could already show a
+	// LATER claim's row — reclaimed and claimed again in between — and the
+	// router would then hand this worker that claim's lease token (commit-2
+	// review, ADR-0013).
+	return scanJob(r.write.QueryRowContext(ctx,
 		`UPDATE jobs SET state = 'processing', worker_id = ?, lease_token = ?, lease_expires_at = ?, updated_at = ?
 		 WHERE id = (
 		     SELECT j.id FROM jobs j JOIN users u ON u.id = j.user_id
@@ -205,18 +209,11 @@ func (r *Repo) ClaimOneQueued(
 		     ORDER BY (u.priority + (? - j.queued_at) / ?) DESC, j.id ASC
 		     LIMIT 1
 		 )
-		 RETURNING id`,
+		 RETURNING `+jobColumns,
 		workerID, lease, leaseUntil.Unix(), now.Unix(),
 		label, now.Unix(),
 		now.Unix(), step,
-	).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return core.Job{}, core.ErrNotFound
-	}
-	if err != nil {
-		return core.Job{}, err
-	}
-	return r.JobByID(ctx, id)
+	))
 }
 
 // CompleteJob marks the FINAL stage done and records its output size and cost.
