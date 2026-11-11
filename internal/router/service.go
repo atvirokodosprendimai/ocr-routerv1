@@ -308,15 +308,18 @@ func checkLease(j core.Job, workerID, lease string, now time.Time) error {
 
 // CheckLease is checkLease for a worker request, and the one place the
 // token-less compatibility path is visible: a worker that sends no lease is
-// accepted (ADR-0013, one release only) and the operator is told which worker
-// token to upgrade. Exported for the worker's input download, which reads
-// the job itself.
+// let past this check (ADR-0013, one release only) and the operator is told
+// which worker token to upgrade. Exported for the worker's input download
+// (httpapi blobToWorker), which reads the job itself.
+//
+// The warning says "without a lease token", not "accepted": the request may
+// still be refused by a later check (a mode mismatch, a lost write).
 func (s *Service) CheckLease(j core.Job, workerID, lease string, now time.Time) error {
 	if err := checkLease(j, workerID, lease, now); err != nil {
 		return err
 	}
 	if lease == "" {
-		s.logger.Warn("worker sent no lease token; accepted for this release only (ADR-0013), upgrade the worker",
+		s.logger.Warn("worker request without a lease token; the next release refuses it (ADR-0013), upgrade the worker",
 			"worker", workerID, "job", j.ID)
 	}
 	return nil
@@ -758,7 +761,7 @@ func (s *Service) ReleaseLease(ctx context.Context, workerID, jobID, lease strin
 }
 
 // lostLease reports a guarded writer that matched no row as the worker having
-// lost its lease (core.ErrConflict, 409), the answer holdsLease gives for the
+// lost its lease (core.ErrConflict, 409), the answer checkLease gives for the
 // same fact a moment earlier. Since F4/F5 the writers act only on the
 // holder's `processing` row, so zero rows means the job moved on between the read
 // and the write — a 404 would tell the worker the job does not exist.
