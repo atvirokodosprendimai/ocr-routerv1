@@ -52,6 +52,10 @@ type Config struct {
 	// store enforces it for units results; the reaper enforces the SAME window
 	// for raw results, which live on disk and are invisible to that store.
 	ResultTTL time.Duration
+	// DefaultJobTTL is the queued deadline given to a job whose owner has no
+	// TTL of their own (job_ttl_secs = 0). Zero means no deadline, which is
+	// how a job nobody can run stayed queued forever (F11, REPORT 2026-11-10).
+	DefaultJobTTL time.Duration
 }
 
 // Service is the write API. There is exactly one per process.
@@ -226,8 +230,12 @@ func (s *Service) Upload(ctx context.Context, userID string, in UploadInput, now
 	if job.Params == nil {
 		job.Params = map[string]string{}
 	}
-	if u.JobTTLSecs > 0 {
+	// The customer's own TTL wins; otherwise the router's default (F11).
+	switch {
+	case u.JobTTLSecs > 0:
 		job.ExpiresAt = now.Add(time.Duration(u.JobTTLSecs) * time.Second)
+	case s.cfg.DefaultJobTTL > 0:
+		job.ExpiresAt = now.Add(s.cfg.DefaultJobTTL)
 	}
 
 	if in.Body != nil {

@@ -83,6 +83,12 @@ func configFlags() []cli.Flag {
 			Usage: "how long an uncollected result is kept in memory before its job is requeued"},
 		&cli.DurationFlag{Name: "lease", Value: 5 * time.Minute,
 			Usage: "how long a worker holds a job before the reaper takes it back"},
+		// ⚠ 7 days, not 0 (F11, REPORT 2026-11-10). With no deadline a job
+		// nobody can run — its owner deactivated, its label's workers gone —
+		// stayed queued forever. A week is longer than any wait a customer
+		// would choose, so it only ends jobs that were never going to run.
+		&cli.DurationFlag{Name: "default-job-ttl", Value: 7 * 24 * time.Hour,
+			Usage: "queued deadline for a job whose customer has no job TTL of their own; 0 = no deadline"},
 		&cli.IntFlag{Name: "max-attempts", Value: 3,
 			Usage: "attempts before a job is abandoned as dead"},
 		// ⚠ 10, not 3, and the task file records why. ADR-0008-T2 wrote "default
@@ -141,6 +147,7 @@ func configFrom(c *cli.Command) Config {
 		BlobDir:         c.String("blobs"),
 		ResultTTL:       c.Duration("result-ttl"),
 		Lease:           c.Duration("lease"),
+		DefaultJobTTL:   c.Duration("default-job-ttl"),
 		MaxAttempts:     c.Int("max-attempts"),
 		MaxReclaims:     c.Int("max-reclaims"),
 		AgingStep:       c.Duration("aging-step"),

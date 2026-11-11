@@ -38,8 +38,9 @@ type User struct {
 	// deploy.
 	Priority int
 	// JobTTLSecs is the queued deadline applied to this customer's jobs at
-	// upload. Zero means no deadline — some customers would rather wait than
-	// fail, and some would rather fail fast than get a stale answer.
+	// upload. Zero means the router's --default-job-ttl (F11), which may itself
+	// be zero for no deadline — some customers would rather wait than fail, and
+	// some would rather fail fast than get a stale answer.
 	JobTTLSecs int
 
 	Active    bool

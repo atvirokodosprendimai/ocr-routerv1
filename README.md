@@ -363,6 +363,11 @@ so a long-waiting low-priority job eventually overtakes a fresh high-priority
 one and nothing starves. A job still queued past its deadline is `expired`,
 uncharged. A job a worker has already started runs to completion regardless.
 
+A customer whose `job_ttl_secs` is 0 gets the router's `--default-job-ttl`
+(7 days) instead, so no job waits forever for a worker that never comes; set
+the flag to `0` for the old "no deadline" behaviour. It applies to jobs
+uploaded after the upgrade; rows already queued keep the deadline they had.
+
 ## Flags
 
 ```
@@ -371,6 +376,7 @@ uncharged. A job a worker has already started runs to completion regardless.
 --blobs          directory for source files                       (blobs)
 --result-ttl     how long an uncollected result is held           (1h)
 --lease          how long a worker holds a job                    (5m)
+--default-job-ttl  queued deadline when a customer has none, 0 = none (168h)
 --max-attempts   attempts before a job is abandoned               (3)
 --aging-step     waiting time worth one point of priority         (1m)
 --label-grace    how long a service outlives its last worker      (5m)

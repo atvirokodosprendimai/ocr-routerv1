@@ -25,18 +25,19 @@ import (
 
 // Config is everything the binary needs to build itself.
 type Config struct {
-	Addr         string
-	DBPath       string
-	BlobDir      string
-	ResultTTL    time.Duration
-	Lease        time.Duration
-	MaxAttempts  int
-	MaxReclaims  int
-	AgingStep    time.Duration
-	LabelGrace   time.Duration
-	ReapInterval time.Duration
-	MaxUpload    int64
-	DefaultLabel string
+	Addr          string
+	DBPath        string
+	BlobDir       string
+	ResultTTL     time.Duration
+	Lease         time.Duration
+	DefaultJobTTL time.Duration
+	MaxAttempts   int
+	MaxReclaims   int
+	AgingStep     time.Duration
+	LabelGrace    time.Duration
+	ReapInterval  time.Duration
+	MaxUpload     int64
+	DefaultLabel  string
 	// PingInterval is the SSE keepalive cadence. Zero means the API's default.
 	// It is configurable chiefly so the end-to-end test can observe a ping
 	// without waiting fifteen seconds — a fence that runs three times per task
@@ -161,6 +162,8 @@ func buildApp(cfg Config) (*App, error) {
 		AgingStep:    cfg.AgingStep,
 		LabelGrace:   cfg.LabelGrace,
 		DefaultLabel: cfg.DefaultLabel,
+		// A job whose owner set no TTL still gets a deadline (F11).
+		DefaultJobTTL: cfg.DefaultJobTTL,
 		// The SAME window the in-memory result store uses. A raw result lives on
 		// disk instead, so the reaper enforces it there — and if these two ever
 		// disagree, one class of result outlives the other for no stated reason.

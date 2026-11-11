@@ -374,6 +374,7 @@ func TestConfigFromReadsEveryNewFlag(t *testing.T) {
 		"--rate-idle", "3m",
 		"--log-level", "warn",
 		"--log-format", "text",
+		"--default-job-ttl", "19h",
 	}
 	if err := cmd.Run(context.Background(), args); err != nil {
 		t.Fatalf("running with the new flags: %v", err)
@@ -393,6 +394,7 @@ func TestConfigFromReadsEveryNewFlag(t *testing.T) {
 		{"rate-idle", got.RateIdle, 3 * time.Minute},
 		{"log-level", got.LogLevel, "warn"},
 		{"log-format", got.LogFormat, "text"},
+		{"default-job-ttl", got.DefaultJobTTL, 19 * time.Hour},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
